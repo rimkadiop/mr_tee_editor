@@ -1,0 +1,699 @@
+/**
+ * Mr. Tee Editor - Frontend Styles (Monsieur TSHIRT Style)
+ *
+ * Implements the crisp, clean light-blue cards, floating labels, font pills,
+ * count drawer modal, mushroom accordions, and unedited warning modal.
+ */
+
+/* Container */
+.mr-tee-editor-container {
+	margin: 20px 0;
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+	color: #111827;
+}
+
+/* 1. Main Card: PERSONNALISER */
+.mr-tee-card.mr-tee-main-card {
+	background: #edf5fc;
+	border: 1px solid #d9e8f5;
+	border-radius: 18px;
+	padding: 24px 20px;
+	box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+}
+
+.mr-tee-card-header {
+	margin-bottom: 16px;
+}
+
+.mr-tee-card-title {
+	margin: 0;
+	font-size: 13.5px;
+	font-weight: 800;
+	letter-spacing: 0.6px;
+	color: #154694;
+	text-transform: uppercase;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.mr-tee-badge-number {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	border-radius: 50%;
+	background: #154694;
+	color: #ffffff;
+	font-size: 11px;
+	font-weight: 700;
+}
+
+/* Floating Label Inputs */
+.mr-tee-field-group {
+	margin-bottom: 14px;
+}
+
+.mr-tee-floating-label-wrap {
+	position: relative;
+	background: #ffffff;
+	border: 1.5px solid #cbd5e1;
+	border-radius: 12px;
+	padding: 0 16px;
+	height: 56px;
+	display: flex;
+	align-items: center;
+	transition: all 0.2s ease;
+}
+
+.mr-tee-floating-label-wrap:focus-within {
+	border-color: #154694;
+	box-shadow: 0 0 0 3px rgba(21, 70, 148, 0.12);
+}
+
+.mr-tee-text-input {
+	width: 100% !important;
+	border: none !important;
+	outline: none !important;
+	background: transparent !important;
+	padding: 18px 50px 4px 0 !important;
+	font-size: 15px !important;
+	font-weight: 600 !important;
+	color: #0f172a !important;
+	box-shadow: none !important;
+}
+
+.mr-tee-floating-label {
+	position: absolute;
+	left: 16px;
+	top: 18px;
+	color: #64748b;
+	font-size: 14px;
+	font-weight: 500;
+	pointer-events: none;
+	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+	transform-origin: left top;
+}
+
+.mr-tee-text-input:focus ~ .mr-tee-floating-label,
+.mr-tee-text-input:not(:placeholder-shown) ~ .mr-tee-floating-label {
+	top: 7px;
+	font-size: 11px;
+	font-weight: 700;
+	color: #154694;
+}
+
+.mr-tee-char-counter {
+	position: absolute;
+	right: 14px;
+	top: 18px;
+	font-size: 12px;
+	font-weight: 600;
+	color: #94a3b8;
+}
+
+.mr-tee-floating-label-wrap:has(.mr-tee-textarea) {
+	height: auto;
+	min-height: 80px;
+	padding-top: 14px;
+	padding-bottom: 10px;
+	align-items: flex-start;
+}
+
+.mr-tee-textarea {
+	resize: vertical;
+	min-height: 52px;
+	line-height: 1.4 !important;
+	padding-top: 10px !important;
+}
+
+/* Color Swatch Picker */
+.mr-tee-color-swatches-wrap {
+	margin-top: 10px;
+	margin-bottom: 8px;
+}
+
+.mr-tee-color-swatches-list {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 6px;
+}
+
+.mr-tee-color-swatch-pill {
+	width: 28px;
+	height: 28px;
+	border-radius: 50%;
+	cursor: pointer;
+	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+	position: relative;
+	padding: 0;
+}
+
+.mr-tee-color-swatch-pill:hover {
+	transform: scale(1.15);
+}
+
+.mr-tee-color-swatch-pill.is-active {
+	transform: scale(1.2);
+	outline: 2.5px solid #154694;
+	outline-offset: 2px;
+	box-shadow: 0 2px 6px rgba(21, 70, 148, 0.35);
+}
+
+/* Font Pills */
+.mr-tee-font-selector-row {
+	margin-top: 8px;
+}
+
+.mr-tee-font-pills {
+	display: flex;
+	gap: 8px;
+	overflow-x: auto;
+	padding-bottom: 4px;
+	scrollbar-width: thin;
+}
+
+.mr-tee-font-pill {
+	border: 1.5px solid #cbd5e1;
+	background: #ffffff;
+	border-radius: 99px;
+	padding: 6px 14px;
+	font-size: 13px;
+	color: #334155;
+	cursor: pointer;
+	white-space: nowrap;
+	transition: all 0.15s ease;
+}
+
+.mr-tee-font-pill:hover {
+	border-color: #94a3b8;
+}
+
+.mr-tee-font-pill.is-active {
+	border-color: #154694;
+	background: #154694;
+	color: #ffffff;
+	font-weight: 600;
+	box-shadow: 0 2px 6px rgba(21, 70, 148, 0.25);
+}
+
+/* 2. Repeater Trigger Button */
+.mr-tee-repeater-trigger-card {
+	margin-top: 18px;
+	margin-bottom: 14px;
+}
+
+.mr-tee-repeater-trigger-btn {
+	width: 100%;
+	background: #ffffff;
+	border: 1.5px solid #cbd5e1;
+	border-radius: 14px;
+	padding: 14px 18px;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	cursor: pointer;
+	transition: all 0.2s ease;
+	text-align: left;
+}
+
+.mr-tee-repeater-trigger-btn:hover {
+	border-color: #154694;
+	box-shadow: 0 3px 10px rgba(0, 0, 0, 0.05);
+}
+
+.mr-tee-trigger-left {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.mr-tee-trigger-title {
+	display: block;
+	font-size: 14px;
+	color: #0f172a;
+	font-weight: 700;
+}
+
+.mr-tee-trigger-subtitle {
+	display: block;
+	font-size: 12px;
+	color: #64748b;
+}
+
+.mr-tee-trigger-right {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.mr-tee-active-count-badge {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 32px;
+	height: 32px;
+	border-radius: 50%;
+	background: #154694;
+	color: #ffffff;
+	font-size: 14px;
+	font-weight: 800;
+}
+
+/* 3. Individual Mushroom Accordions */
+.mr-tee-repeater-item-card {
+	background: #ffffff;
+	border: 1.5px solid #e2e8f0;
+	border-radius: 14px;
+	margin-bottom: 10px;
+	overflow: hidden;
+	transition: all 0.2s ease;
+}
+
+.mr-tee-repeater-item-card.is-hidden {
+	display: none !important;
+}
+
+.mr-tee-rep-card-header {
+	padding: 12px 16px;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	cursor: pointer;
+	user-select: none;
+}
+
+.mr-tee-rep-thumb img {
+	width: 34px;
+	height: 34px;
+	object-fit: contain;
+	display: block;
+}
+
+.mr-tee-rep-name-summary {
+	flex: 1;
+	font-size: 13.5px;
+	color: #1e293b;
+}
+
+.mr-tee-rep-toggle-btn {
+	background: none;
+	border: none;
+	color: #64748b;
+	cursor: pointer;
+	padding: 4px;
+	display: flex;
+	align-items: center;
+	transition: transform 0.2s ease;
+}
+
+.mr-tee-repeater-item-card.is-open .mr-tee-rep-toggle-btn {
+	transform: rotate(180deg);
+}
+
+.mr-tee-rep-card-body {
+	display: none;
+	padding: 14px 16px 18px 16px;
+	border-top: 1px solid #f1f5f9;
+}
+
+.mr-tee-repeater-item-card.is-open .mr-tee-rep-card-body {
+	display: block;
+}
+
+/* Icon Radio Picker */
+.mr-tee-icon-picker-wrap {
+	margin-top: 14px;
+}
+
+.mr-tee-picker-label {
+	display: block;
+	font-size: 12px;
+	font-weight: 600;
+	color: #475569;
+	margin-bottom: 8px;
+}
+
+.mr-tee-icon-options {
+	display: flex;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+
+.mr-tee-icon-option {
+	width: 44px;
+	height: 44px;
+	border: 2px solid #e2e8f0;
+	border-radius: 10px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	position: relative;
+	transition: all 0.15s ease;
+}
+
+.mr-tee-icon-option:hover {
+	border-color: #cbd5e1;
+}
+
+.mr-tee-icon-option.is-selected {
+	border-color: #154694;
+	background: #eff6ff;
+	box-shadow: 0 0 0 2px #ffffff inset, 0 2px 6px rgba(21, 70, 148, 0.2);
+}
+
+.mr-tee-icon-option input[type="radio"] {
+	position: absolute;
+	opacity: 0;
+	pointer-events: none;
+}
+
+.mr-tee-icon-option img {
+	width: 28px;
+	height: 28px;
+	object-fit: contain;
+}
+
+/* 4. Modals (Count Drawer & Warning Modal) */
+.mr-tee-modal-backdrop {
+	position: fixed;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background: rgba(15, 23, 42, 0.65);
+	backdrop-filter: blur(4px);
+	z-index: 999999;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 20px;
+}
+
+.mr-tee-modal-dialog {
+	background: #ffffff;
+	border-radius: 20px;
+	max-width: 440px;
+	width: 100%;
+	padding: 24px;
+	box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+	animation: mrTeeSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes mrTeeSlideUp {
+	from { transform: translateY(20px); opacity: 0; }
+	to { transform: translateY(0); opacity: 1; }
+}
+
+.mr-tee-modal-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	margin-bottom: 16px;
+}
+
+.mr-tee-modal-title {
+	margin: 0;
+	font-size: 17px;
+	font-weight: 800;
+	color: #0f172a;
+}
+
+.mr-tee-modal-close-btn {
+	background: none;
+	border: none;
+	font-size: 24px;
+	line-height: 1;
+	color: #94a3b8;
+	cursor: pointer;
+}
+
+.mr-tee-modal-desc {
+	font-size: 14px;
+	color: #475569;
+	margin-bottom: 20px;
+}
+
+.mr-tee-count-stepper {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 20px;
+	margin-bottom: 20px;
+}
+
+.mr-tee-step-btn {
+	width: 50px;
+	height: 50px;
+	border-radius: 50%;
+	border: 2px solid #cbd5e1;
+	background: #ffffff;
+	font-size: 24px;
+	font-weight: 700;
+	color: #1e293b;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	transition: all 0.15s ease;
+}
+
+.mr-tee-step-btn:hover {
+	border-color: #154694;
+	color: #154694;
+}
+
+.mr-tee-step-val-display {
+	font-size: 38px;
+	font-weight: 900;
+	color: #154694;
+	min-width: 60px;
+	text-align: center;
+}
+
+.mr-tee-count-dots {
+	display: flex;
+	justify-content: center;
+	gap: 8px;
+	margin-bottom: 24px;
+}
+
+.mr-tee-count-dot-btn {
+	width: 40px;
+	height: 40px;
+	border-radius: 50%;
+	border: 1.5px solid #cbd5e1;
+	background: #ffffff;
+	font-size: 14px;
+	font-weight: 700;
+	color: #334155;
+	cursor: pointer;
+	transition: all 0.15s ease;
+}
+
+.mr-tee-count-dot-btn.is-active {
+	border-color: #154694;
+	background: #154694;
+	color: #ffffff;
+}
+
+.mr-tee-modal-footer {
+	display: flex;
+	gap: 12px;
+	justify-content: flex-end;
+}
+
+.mr-tee-btn-confirm-count,
+.mr-tee-btn-ignore-warning {
+	background: #154694 !important;
+	border-color: #154694 !important;
+	color: #ffffff !important;
+	border-radius: 99px !important;
+	padding: 10px 24px !important;
+	font-size: 14px !important;
+	font-weight: 700 !important;
+}
+
+.mr-tee-btn-cancel-warning {
+	border-radius: 99px !important;
+	padding: 10px 20px !important;
+	font-size: 14px !important;
+	font-weight: 600 !important;
+}
+
+/* Warning Header */
+.mr-tee-warning-header {
+	gap: 10px;
+	justify-content: flex-start;
+}
+
+.mr-tee-warn-icon {
+	color: #eab308;
+	font-size: 24px;
+	width: 24px;
+	height: 24px;
+}
+
+/* ==========================================================================
+   Mobile Responsive & Live Preview Enhancements (v2.0.2)
+   ========================================================================== */
+
+/* 1. Complete suppression of WooCommerce raw zoom on customizer products */
+.has-mr-tee-editor .zoomImg,
+.woocommerce-product-gallery__image .zoomImg,
+.mr-tee-live-stage-overlay ~ .zoomImg {
+	display: none !important;
+	pointer-events: none !important;
+	opacity: 0 !important;
+	visibility: hidden !important;
+}
+
+/* 2. Live Stage Overlay Positioning */
+.has-mr-tee-editor .woocommerce-product-gallery__image {
+	position: relative !important;
+}
+
+.mr-tee-live-stage-overlay {
+	position: absolute !important;
+	pointer-events: none !important;
+	z-index: 50 !important;
+	display: flex !important;
+	align-items: center !important;
+	justify-content: center !important;
+}
+
+.mr-tee-live-svg-container {
+	width: 100% !important;
+	height: 100% !important;
+	display: flex !important;
+	align-items: center !important;
+	justify-content: center !important;
+}
+
+.mr-tee-live-svg {
+	width: 100% !important;
+	height: 100% !important;
+	overflow: visible !important;
+}
+
+/* 3. Inline Typography Preview Pill */
+.mr-tee-inline-typography-preview {
+	margin-top: 8px;
+	padding: 8px 14px;
+	background: #ffffff;
+	border: 1px dashed #cbd5e1;
+	border-radius: 10px;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	font-size: 13px;
+	color: #64748b;
+}
+
+.mr-tee-inline-preview-label {
+	font-size: 11px;
+	text-transform: uppercase;
+	font-weight: 700;
+	color: #94a3b8;
+	letter-spacing: 0.5px;
+	white-space: nowrap;
+}
+
+.mr-tee-inline-preview-text {
+	font-size: 16px;
+	color: #154694;
+	letter-spacing: 0.08em;
+	word-break: break-word;
+	flex: 1;
+}
+
+/* 4. Mobile Sticky Live Preview Bar */
+@media (max-width: 768px) {
+	.mr-tee-mobile-sticky-preview {
+		position: sticky;
+		top: 12px;
+		z-index: 99;
+		margin: -10px 0 16px 0;
+		background: rgba(255, 255, 255, 0.96);
+		backdrop-filter: blur(8px);
+		border: 1.5px solid #154694;
+		border-radius: 14px;
+		padding: 8px 12px;
+		box-shadow: 0 8px 24px rgba(21, 70, 148, 0.14);
+		transition: all 0.25s ease;
+	}
+
+	.mr-tee-sticky-inner {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+
+	.mr-tee-sticky-thumb-box {
+		width: 48px;
+		height: 48px;
+		background: #f1f5f9;
+		border-radius: 8px;
+		overflow: hidden;
+		position: relative;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border: 1px solid #e2e8f0;
+		flex-shrink: 0;
+	}
+
+	.mr-tee-mobile-overlay-mini {
+		width: 100%;
+		height: 100%;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.mr-tee-mobile-overlay-mini svg {
+		width: 100%;
+		height: 100%;
+	}
+
+	.mr-tee-sticky-meta {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.mr-tee-sticky-tag {
+		font-size: 10px;
+		font-weight: 800;
+		color: #154694;
+		text-transform: uppercase;
+		letter-spacing: 0.5px;
+	}
+
+	.mr-tee-sticky-title {
+		font-size: 12px;
+		font-weight: 600;
+		color: #1e293b;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.mr-tee-sticky-btn-scroll {
+		width: 32px;
+		height: 32px;
+		border-radius: 50%;
+		border: none;
+		background: #edf5fc;
+		color: #154694;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		cursor: pointer;
+	}
+}

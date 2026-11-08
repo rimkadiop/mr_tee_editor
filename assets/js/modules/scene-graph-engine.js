@@ -1,0 +1,301 @@
+/**
+ * Mr. Tee Editor - Scene-Graph Layout Engine Module
+ *
+ * Implements Monsieur TSHIRT's exact layout algorithms:
+ * - `getLayersMergedWithRefs`: Declarative scene-graph merging with reference registry
+ * - 2-Row Mushroom Layout: `Ligne 1` (items 1..3) and `Ligne 2` (items 4..6)
+ * - Dynamic Row Centering: horizontally balances 1, 2, or 3 items per row
+ * - `getAllLayersBBox`: Computes accurate bounding box of all visible layers
+ * - `getAreaTransformValuesZoom`: Auto-scales & vertically centers the composite visual
+ *
+ * @package MrTeeEditor\Assets\Modules
+ */
+
+export class SceneGraphEngine {
+	/**
+	 * Deeply merge references into layers tree (matching Monsieur TSHIRT's `getLayersMergedWithRefs`).
+	 *
+	 * @param {Array} layers Scene-graph layers array.
+	 * @param {Array} references Flat or nested references registry.
+	 * @return {Array} Merged layers tree ready for rendering.
+	 */
+	static getLayersMergedWithRefs(layers, references) {
+		const refMap = this.createRefsMap(references);
+		const clone = JSON.parse(JSON.stringify(layers || []));
+
+		const mergeNode = (node) => {
+			if (!node || typeof node !== 'object') return node;
+
+			// If node binds to a reference
+			if (node.reference && refMap.has(node.reference)) {
+				const ref = refMap.get(node.reference);
+				if (ref.type === 'TEXT') {
+					node.value = (ref.value !== undefined) ? ref.value : node.value;
+					if (ref.fontFamily) node.fontFamily = ref.fontFamily;
+					if (ref.fontId) node.fontId = ref.fontId;
+					if (ref.colorRefId && refMap.has(ref.colorRefId)) {
+						node.colorReference = ref.colorRefId;
+					}
+				} else if (ref.type === 'IMAGE') {
+					node.url = ref.url || node.url;
+					node.iconKey = ref.iconKey || node.iconKey;
+				}
+			}
+
+			// Color reference merge
+			const colorRefKey = node.colorReference || node.colorRefId;
+			if (colorRefKey && refMap.has(colorRefKey)) {
+				const cRef = refMap.get(colorRefKey);
+				node.colorSet = cRef;
+				if (cRef.colorHex) {
+					node.fill = cRef.colorHex;
+				}
+			}
+
+			// Visibility reference merge
+			if (node.visibility && node.visibility.reference && refMap.has(node.visibility.reference)) {
+				const vRef = refMap.get(node.visibility.reference);
+				node.hide = (vRef.visible === false);
+			}
+
+			// Recurse children
+			if (Array.isArray(node.items)) {
+				node.items = node.items.map(mergeNode);
+			}
+
+			return node;
+		};
+
+		return clone.map(mergeNode);
+	}
+
+	/**
+	 * Build fast ID lookup map for references.
+	 *
+	 * @param {Array} references References list.
+	 * @return {Map<string, Object>}
+	 */
+	static createRefsMap(references) {
+		const map = new Map();
+		const recurse = (list) => {
+			if (!Array.isArray(list)) return;
+			for (const r of list) {
+				if (r && r.id) map.set(r.id, r);
+				if (r && Array.isArray(r.items)) recurse(r.items);
+			}
+		};
+		recurse(references);
+		return map;
+	}
+
+	/**
+	 * Apply 2-Row Dynamic Mushroom Centering.
+	 *
+	 * Rows:
+	 * - Ligne 1: holds up to 3 mushrooms (1..3).
+	 * - Ligne 2: holds up to 3 mushrooms (4..6).
+	 *
+	 * When a row has:
+	 * - 1 active item: centered at X = 50.0%
+	 * - 2 active items: centered at X = 40.0% and X = 60.0%
+	 * - 3 active items: centered at X = 30.0%, X = 50.0%, X = 70.0%
+	 *
+	 * @param {Array} layers Merged scene-graph layers.
+	 * @param {number} totalActiveCount Total number of visible mushrooms (0..6).
+	 * @return {Array} Adjusted layers tree.
+	 */
+	static applyRowCentering(layers, totalActiveCount) {
+		const count = parseInt(totalActiveCount, 10) || 0;
+		const r1Count = Math.min(count, 3);
+		const r2Count = Math.max(0, Math.min(count - 3, 3));
+
+		const getRowXPositions = (numItems) => {
+			switch (numItems) {
+				case 1:
+					return [50.0];
+				case 2:
+					return [40.0, 60.0];
+				case 3:
+					return [30.0, 50.0, 70.0];
+				default:
+					return [];
+			}
+		};
+
+		const r1Positions = getRowXPositions(r1Count);
+		const r2Positions = getRowXPositions(r2Count);
+
+		for (const layer of layers) {
+			if (layer.type === 'GROUP' && (layer.name === 'Ligne 1' || layer.rowNumber === 1)) {
+				let activeIndex = 0;
+				for (const champ of (layer.items || [])) {
+					if (!champ.hide && activeIndex < r1Positions.length) {
+						const targetX = r1Positions[activeIndex];
+						this.repositionMushroom(champ, targetX);
+						activeIndex++;
+					}
+				}
+			} else if (layer.type === 'GROUP' && (layer.name === 'Ligne 2' || layer.rowNumber === 2)) {
+				let activeIndex = 0;
+				for (const champ of (layer.items || [])) {
+					if (!champ.hide && activeIndex < r2Positions.length) {
+						const targetX = r2Positions[activeIndex];
+						this.repositionMushroom(champ, targetX);
+						activeIndex++;
+					}
+				}
+			}
+		}
+
+		return layers;
+	}
+
+	/**
+	 * Reposition a single mushroom group around a target center X coordinate.
+	 *
+	 * @param {Object} champGroup Group node containing text and image children.
+	 * @param {number} centerX Target center X coordinate.
+	 */
+	static repositionMushroom(champGroup, centerX) {
+		if (!champGroup || !Array.isArray(champGroup.items)) return;
+
+		for (const item of champGroup.items) {
+			if (item.type === 'TEXT') {
+				item.x = centerX;
+			} else if (item.type === 'IMAGE') {
+				item.centerX = centerX;
+				const w = parseFloat(item.width) || 21.0;
+				item.x = centerX - (w / 2.0);
+			}
+		}
+	}
+
+	/**
+	 * Measure accurate bounding box of all visible layers.
+	 * Implements Monsieur TSHIRT's `getAllLayersBBox`.
+	 *
+	 * @param {Array} layers Merged & row-centered layers tree.
+	 * @return {Object} { xMin, xMax, yMin, yMax, xCenter, yCenter, width, height }
+	 */
+	static getAllLayersBBox(layers) {
+		let xMin = 100, xMax = 0, yMin = 100, yMax = 0;
+		let hasVisible = false;
+
+		const measureNode = (node) => {
+			if (!node || node.hide) return;
+
+			if (node.type === 'TEXT') {
+				const fontSize = parseFloat(node.fontSize) || 12;
+				const textVal = String(node.value || '');
+				const lines = textVal.split('\n');
+				const numLines = Math.max(1, lines.length);
+				const lineHeight = parseFloat(node.lineHeight) || 0.95;
+				const totalHeight = fontSize + ((numLines - 1) * fontSize * lineHeight);
+
+				let maxLineLen = 0;
+				for (const l of lines) {
+					if (l.length > maxLineLen) maxLineLen = l.length;
+				}
+
+				const charW = fontSize * 0.58;
+				const estimatedWidth = Math.min(parseFloat(node.maxWidth) || 84, Math.max(fontSize, maxLineLen * charW));
+				const centerX = parseFloat(node.x) || 50;
+				const centerY = parseFloat(node.y) || 20;
+
+				const left = centerX - (estimatedWidth / 2);
+				const right = centerX + (estimatedWidth / 2);
+				const top = centerY - (totalHeight / 2);
+				const bottom = centerY + (totalHeight / 2);
+
+				xMin = Math.min(xMin, left);
+				xMax = Math.max(xMax, right);
+				yMin = Math.min(yMin, top);
+				yMax = Math.max(yMax, bottom);
+				hasVisible = true;
+			} else if (node.type === 'IMAGE') {
+				const x = parseFloat(node.x) || 30;
+				const y = parseFloat(node.y) || 50;
+				const w = parseFloat(node.width) || 21;
+				const h = parseFloat(node.height) || 19;
+
+				xMin = Math.min(xMin, x);
+				xMax = Math.max(xMax, x + w);
+				yMin = Math.min(yMin, y);
+				yMax = Math.max(yMax, y + h);
+				hasVisible = true;
+			} else if (node.type === 'PATH') {
+				const y = parseFloat(node.y) || 52;
+				const w = 8;
+				const h = 8;
+				xMin = Math.min(xMin, 50 - (w / 2));
+				xMax = Math.max(xMax, 50 + (w / 2));
+				yMin = Math.min(yMin, y - (h / 2));
+				yMax = Math.max(yMax, y + (h / 2));
+				hasVisible = true;
+			}
+
+			if (Array.isArray(node.items)) {
+				for (const child of node.items) {
+					measureNode(child);
+				}
+			}
+		};
+
+		for (const root of layers) {
+			measureNode(root);
+		}
+
+		if (!hasVisible) {
+			return { xMin: 10, xMax: 90, yMin: 10, yMax: 90, xCenter: 50, yCenter: 50, width: 80, height: 80 };
+		}
+
+		const width = Math.max(1, xMax - xMin);
+		const height = Math.max(1, yMax - yMin);
+		const xCenter = (xMin + xMax) / 2.0;
+		const yCenter = (yMin + yMax) / 2.0;
+
+		return {
+			xMin,
+			xMax,
+			yMin,
+			yMax,
+			xCenter,
+			yCenter,
+			width,
+			height,
+		};
+	}
+
+	/**
+	 * Compute auto-zoom and vertical auto-centering transform.
+	 * Implements Monsieur TSHIRT's `getAreaTransformValuesZoom`.
+	 *
+	 * When the user chooses 0, 1, 2, 3, 4, 5, or 6 mushrooms, the design adapts
+	 * so it never looks empty, cut off, or cramped!
+	 *
+	 * @param {Object} bbox Bounding box from getAllLayersBBox.
+	 * @param {Object} defaultTransform Base transform from area config.
+	 * @return {Object} { scale, translateX, translateY }
+	 */
+	static getAreaTransformValuesZoom(bbox, defaultTransform = {}) {
+		const maxDim = Math.max(bbox.width, bbox.height);
+		let zoomRatio = 1.0;
+
+		if (maxDim > 0) {
+			zoomRatio = 88.0 / maxDim; // Keep 6% padding inside 0..100 viewBox
+		}
+
+		// Clamp zoom ratio to reasonable bounds (0.75x .. 1.35x)
+		zoomRatio = Math.max(0.75, Math.min(1.35, zoomRatio));
+
+		// Center the bbox around (50, 50)
+		const tx = (50.0 - bbox.xCenter) * zoomRatio;
+		const ty = (50.0 - bbox.yCenter) * zoomRatio;
+
+		return {
+			scale: zoomRatio,
+			translateX: tx,
+			translateY: ty,
+		};
+	}
+}

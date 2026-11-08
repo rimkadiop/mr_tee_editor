@@ -1,0 +1,256 @@
+/**
+ * Mr. Tee Editor - Admin Metabox & Visual Stage Configurator Styles
+ */
+
+.mr-tee-admin-wrap {
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+	color: #1e293b;
+	padding: 8px 4px;
+}
+
+/* Engine Selector Cards */
+.mr-tee-engine-selector-box {
+	background: #f8fafc;
+	border: 1px solid #e2e8f0;
+	border-radius: 12px;
+	padding: 18px 20px;
+	margin-bottom: 22px;
+}
+
+.mr-tee-engine-selector-box h3 {
+	margin: 0 0 6px 0;
+	font-size: 15px;
+	font-weight: 700;
+	color: #0f172a;
+}
+
+.mr-tee-engine-options {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+	gap: 14px;
+	margin-top: 14px;
+}
+
+.mr-tee-engine-option {
+	display: block;
+	cursor: pointer;
+	position: relative;
+}
+
+.mr-tee-engine-option input[type="radio"] {
+	position: absolute;
+	top: 14px;
+	right: 14px;
+}
+
+.mr-tee-engine-card {
+	background: #ffffff;
+	border: 2px solid #cbd5e1;
+	border-radius: 12px;
+	padding: 16px;
+	transition: all 0.2s ease;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.mr-tee-engine-option:hover .mr-tee-engine-card {
+	border-color: #94a3b8;
+}
+
+.mr-tee-engine-option.is-selected .mr-tee-engine-card {
+	border-color: #154694;
+	background: #eff6ff;
+	box-shadow: 0 4px 12px rgba(21, 70, 148, 0.12);
+}
+
+.mr-tee-engine-card .dashicons {
+	font-size: 24px;
+	width: 24px;
+	height: 24px;
+	color: #154694;
+}
+
+.mr-tee-engine-card strong {
+	font-size: 14px;
+	color: #0f172a;
+}
+
+.mr-tee-engine-card span {
+	font-size: 12px;
+	color: #64748b;
+	line-height: 1.4;
+}
+
+/* Tabs */
+.mr-tee-tabs-nav {
+	display: flex;
+	gap: 8px;
+	border-bottom: 1px solid #e2e8f0;
+	margin-bottom: 20px;
+}
+
+.mr-tee-tab-btn {
+	background: none;
+	border: none;
+	border-bottom: 2px solid transparent;
+	padding: 10px 18px;
+	font-size: 13.5px;
+	font-weight: 600;
+	color: #64748b;
+	cursor: pointer;
+	transition: all 0.15s ease;
+}
+
+.mr-tee-tab-btn:hover {
+	color: #154694;
+}
+
+.mr-tee-tab-btn.is-active {
+	color: #154694;
+	border-bottom-color: #154694;
+}
+
+.mr-tee-tab-pane {
+	display: none;
+}
+
+.mr-tee-tab-pane.is-active {
+	display: block;
+}
+
+/* Visual Stage */
+.mr-tee-stage-container {
+	display: grid;
+	grid-template-columns: 1fr 340px;
+	gap: 24px;
+	align-items: flex-start;
+}
+
+.mr-tee-stage-canvas-wrap {
+	position: relative;
+	background: #f1f5f9;
+	border: 1px solid #cbd5e1;
+	border-radius: 12px;
+	overflow: hidden;
+	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
+	line-height: 0;
+	max-width: 520px;
+	margin: 0 auto;
+}
+
+.mr-tee-stage-garment-img {
+	width: 100%;
+	height: auto;
+	display: block;
+	user-select: none;
+	pointer-events: none;
+}
+
+/* Red-Dashed Visual Editor Area Box */
+.mr-tee-editor-box {
+	position: absolute;
+	border: 2px dashed #dc2626;
+	background: rgba(220, 38, 38, 0.08);
+	box-sizing: border-box;
+	cursor: move;
+	user-select: none;
+	z-index: 20;
+}
+
+.mr-tee-box-badge {
+	position: absolute;
+	top: -22px;
+	left: 0;
+	background: #dc2626;
+	color: #ffffff;
+	font-size: 9px;
+	font-weight: 800;
+	padding: 2px 6px;
+	border-radius: 4px;
+	letter-spacing: 0.5px;
+	white-space: nowrap;
+	pointer-events: none;
+}
+
+.mr-tee-box-svg-holder {
+	width: 100%;
+	height: 100%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	pointer-events: none;
+}
+
+/* Resize Handles */
+.mr-tee-handle {
+	position: absolute;
+	width: 12px;
+	height: 12px;
+	background: #ffffff;
+	border: 2px solid #dc2626;
+	border-radius: 50%;
+	z-index: 30;
+}
+
+.mr-tee-handle-nw { top: -6px; left: -6px; cursor: nwse-resize; }
+.mr-tee-handle-ne { top: -6px; right: -6px; cursor: nesw-resize; }
+.mr-tee-handle-sw { bottom: -6px; left: -6px; cursor: nesw-resize; }
+.mr-tee-handle-se { bottom: -6px; right: -6px; cursor: nwse-resize; }
+
+.mr-tee-stage-instructions {
+	text-align: center;
+	margin-top: 10px;
+	font-size: 12px;
+	color: #64748b;
+}
+
+/* Coords Controls */
+.mr-tee-stage-col-controls h4 {
+	margin: 0 0 12px 0;
+	font-size: 14px;
+	color: #0f172a;
+}
+
+.mr-tee-coords-table th {
+	width: 130px;
+	font-size: 13px;
+	padding: 8px 10px 8px 0;
+}
+
+.mr-tee-coords-table td {
+	padding: 8px 0;
+}
+
+.mr-tee-preset-actions {
+	margin-top: 16px;
+	padding-top: 14px;
+	border-top: 1px solid #e2e8f0;
+}
+
+.mr-tee-btn-reset-coords {
+	width: 100%;
+	text-align: center;
+}
+
+/* Text Lines Grid */
+.mr-tee-text-lines-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+	gap: 16px;
+}
+
+.mr-tee-line-card {
+	background: #f8fafc;
+	border: 1px solid #e2e8f0;
+	border-radius: 10px;
+	padding: 16px;
+}
+
+.mr-tee-line-card h5 {
+	margin: 0 0 10px 0;
+	font-size: 14px;
+	color: #0f172a;
+	border-bottom: 1px solid #e2e8f0;
+	padding-bottom: 8px;
+}

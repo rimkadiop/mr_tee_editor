@@ -45,10 +45,23 @@ export class SvgRenderer {
 			</filter>
 		`;
 
-		const layersMarkup = this.renderLayersMarkup(layers);
+		const hasPerLineBoxes = Boolean(options.hasPerLineBoxes) || (Array.isArray(layers) && layers.some(n => n.box_top !== undefined || (Array.isArray(n.items) && n.items.some(c => c.box_top !== undefined))));
+		const ratio = (options.aspectRatio && parseFloat(options.aspectRatio) > 0)
+			? parseFloat(options.aspectRatio)
+			: (options.realWidth && options.realHeight ? (parseFloat(options.realWidth) / parseFloat(options.realHeight)) : 1.0);
+
+		const vbWidth = 100;
+		const vbHeight = (hasPerLineBoxes && ratio > 0 && Math.abs(ratio - 1.0) > 0.001) ? Number((100 / ratio).toFixed(4)) : 100;
+		const viewBoxAttr = `viewBox="0 0 ${vbWidth} ${vbHeight}"`;
+
+		const layersMarkup = this.renderLayersMarkup(layers, { ...options, ratio, hasPerLineBoxes, vbHeight });
 		const widthAttr = (options.isExport && options.realWidth) ? `${options.realWidth}${options.unit || 'cm'}` : '100%';
 		const heightAttr = (options.isExport && options.realHeight) ? `${options.realHeight}${options.unit || 'cm'}` : '100%';
 		const realDimAttrs = (options.realWidth && options.realHeight) ? `data-real-width="${options.realWidth}" data-real-height="${options.realHeight}" data-unit="${options.unit || 'cm'}" data-dpi="${options.dpi || 300}"` : '';
+
+		const innerContent = hasPerLineBoxes
+			? layersMarkup
+			: `<g transform="translate(${tx.toFixed(3)}, ${ty.toFixed(3)}) translate(50, 50) scale(${scale.toFixed(4)}) translate(-50, -50)">${layersMarkup}</g>`;
 
 		return `
 <svg
@@ -56,7 +69,7 @@ export class SvgRenderer {
 	class="mr-tee-live-svg"
 	xmlns="http://www.w3.org/2000/svg"
 	xmlns:xlink="http://www.w3.org/1999/xlink"
-	viewBox="0 0 100 100"
+	${viewBoxAttr}
 	width="${widthAttr}"
 	height="${heightAttr}"
 	${realDimAttrs}
@@ -66,10 +79,8 @@ export class SvgRenderer {
 	<defs>
 		${defs}
 	</defs>
-	<!-- Dynamic Auto-Zoom & Auto-Centering Container -->
-	<g transform="translate(${tx.toFixed(3)}, ${ty.toFixed(3)}) translate(50, 50) scale(${scale.toFixed(4)}) translate(-50, -50)">
-		${layersMarkup}
-	</g>
+	<!-- Scene-Graph Render Container -->
+	${innerContent}
 </svg>`.trim();
 	}
 
@@ -77,25 +88,26 @@ export class SvgRenderer {
 	 * Render child layers array to SVG markup.
 	 *
 	 * @param {Array} layers List of scene-graph nodes.
+	 * @param {Object} options Rendering options.
 	 * @return {string}
 	 */
-	static renderLayersMarkup(layers) {
+	static renderLayersMarkup(layers, options = {}) {
 		let html = '';
 		for (const node of layers) {
 			if (!node || node.hide) continue;
 
 			if (node.type === 'GROUP') {
 				const groupClass = node.name ? `class="mrtee-group mrtee-group-${node.name.toLowerCase().replace(/\s+/g, '-')}"` : '';
-				const childrenHtml = this.renderLayersMarkup(node.items || []);
+				const childrenHtml = this.renderLayersMarkup(node.items || [], options);
 				html += `<g ${groupClass}>${childrenHtml}</g>\n`;
 			} else if (node.type === 'TEXT') {
-				html += this.renderTextNode(node) + '\n';
+				html += this.renderTextNode(node, options) + '\n';
 			} else if (node.type === 'IMAGE') {
-				html += this.renderImageNode(node) + '\n';
+				html += this.renderImageNode(node, options) + '\n';
 			} else if (node.type === 'PATH') {
-				html += this.renderPathNode(node) + '\n';
+				html += this.renderPathNode(node, options) + '\n';
 			} else if (node.type === 'MASK') {
-				html += this.renderMaskNode(node) + '\n';
+				html += this.renderMaskNode(node, options) + '\n';
 			}
 		}
 		return html;
@@ -148,18 +160,20 @@ export class SvgRenderer {
 	 * @param {Object} node TEXT node definition.
 	 * @return {string}
 	 */
-	static renderTextNode(node) {
+	static renderTextNode(node, options = {}) {
 		const val = String(node.value || node.text || '');
 		if (!val.trim()) return '';
 
 		const hasBox = (node.box_width !== undefined && node.box_height !== undefined);
+		const ratio = (options.ratio && options.ratio > 0) ? options.ratio : 1.0;
+		const hasPerLine = Boolean(options.hasPerLineBoxes);
 		const boxW = hasBox ? parseFloat(node.box_width) : (parseFloat(node.maxWidth) || 84.0);
 		const boxH = hasBox ? parseFloat(node.box_height) : (parseFloat(node.fontSize) ? parseFloat(node.fontSize) * 1.5 : 12.0);
 		const boxL = (node.box_left !== undefined) ? parseFloat(node.box_left) : ((parseFloat(node.x) || 50) - (boxW / 2));
 		const boxT = (node.box_top !== undefined) ? parseFloat(node.box_top) : ((parseFloat(node.y) || 50) - (boxH / 2));
 
 		const x = boxL + (boxW / 2);
-		const y = boxT + (boxH / 2);
+		const y = (hasPerLine && ratio !== 1.0) ? ((boxT + (boxH / 2)) / ratio) : (boxT + (boxH / 2));
 
 		const rawFont = node.fontFamily || 'Super Mario Wii';
 		const fontFamily = (rawFont.includes('sans-serif') || rawFont.includes('serif'))
@@ -181,7 +195,8 @@ export class SvgRenderer {
 		// Base font size derived directly from box height if box is present
 		let baseFontSize = parseFloat(node.fontSize);
 		if (isNaN(baseFontSize) || baseFontSize <= 0 || hasBox) {
-			const heightTarget = (boxH * 0.85) / (1 + (numLines - 1) * lineHeight * 0.8);
+			const effectiveBoxH = (hasPerLine && ratio !== 1.0) ? (boxH / ratio) : boxH;
+			const heightTarget = (effectiveBoxH * 0.85) / (1 + (numLines - 1) * lineHeight * 0.8);
 			baseFontSize = (!isNaN(parseFloat(node.fontSize)) && parseFloat(node.fontSize) > 0 && !hasBox)
 				? parseFloat(node.fontSize)
 				: heightTarget;
@@ -195,7 +210,7 @@ export class SvgRenderer {
 
 		// Calculate unscaled text width & height
 		const maxWidth = hasBox ? (boxW * 0.95) : (parseFloat(node.maxWidth) || 84.0);
-		const maxHeight = hasBox ? (boxH * 0.92) : (parseFloat(node.maxHeight) || 80.0);
+		const maxHeight = hasBox ? ((hasPerLine && ratio !== 1.0) ? ((boxH * 0.92) / ratio) : (boxH * 0.92)) : (parseFloat(node.maxHeight) || 80.0);
 		const estimatedRawWidth = baseFontSize * (maxLineLength * metrics.charRatio + Math.max(0, maxLineLength - 1) * letterSpacingEm);
 
 		// Calculate width scale factor
@@ -303,14 +318,19 @@ export class SvgRenderer {
 	 * @param {Object} node IMAGE node definition.
 	 * @return {string}
 	 */
-	static renderImageNode(node) {
+	static renderImageNode(node, options = {}) {
 		const url = node.url || '';
 		if (!url) return '';
 
+		const ratio = (options.ratio && options.ratio > 0) ? options.ratio : 1.0;
+		const hasPerLine = Boolean(options.hasPerLineBoxes);
+
 		const x = parseFloat(node.x) || 30;
-		const y = parseFloat(node.y) || 50;
+		const rawY = parseFloat(node.y) || 50;
+		const y = (hasPerLine && ratio !== 1.0) ? (rawY / ratio) : rawY;
 		const w = parseFloat(node.width) || 21;
-		const h = parseFloat(node.height) || 19;
+		const rawH = parseFloat(node.height) || 19;
+		const h = (hasPerLine && ratio !== 1.0) ? (rawH / ratio) : rawH;
 
 		return `
 		<image
@@ -329,9 +349,10 @@ export class SvgRenderer {
 	 * Render a PATH node (e.g. Vector Heart or Clipart divider).
 	 *
 	 * @param {Object} node PATH node definition.
+	 * @param {Object} options Rendering options.
 	 * @return {string}
 	 */
-	static renderPathNode(node) {
+	static renderPathNode(node, options = {}) {
 		const d = node.path || node.d || '';
 		if (!d) return '';
 

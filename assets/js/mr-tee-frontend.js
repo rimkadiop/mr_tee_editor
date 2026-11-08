@@ -76,11 +76,32 @@ class MrTeeFrontendApp {
 			? { scale: 1.0, translateX: 0.0, translateY: 0.0 }
 			: SceneGraphEngine.getAreaTransformValuesZoom(bbox, state.area && state.area.transform);
 
+		const realW = parseFloat(this.config.print_real_width) || 0;
+		const realH = parseFloat(this.config.print_real_height) || 0;
+		let ratio = (realW > 0 && realH > 0) ? (realW / realH) : (parseFloat(this.config.print_aspect_ratio) || 0);
+		if (!ratio || ratio <= 0) {
+			const img = document.querySelector('.woocommerce-product-gallery__image img:not(.emoji):not(.zoomImg)');
+			if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
+				ratio = img.naturalWidth / img.naturalHeight;
+			} else if (img && img.offsetWidth > 0 && img.offsetHeight > 0) {
+				ratio = img.offsetWidth / img.offsetHeight;
+			} else {
+				ratio = 1.0;
+			}
+		}
+
 		this.currentLayers = mergedLayers;
 		this.currentZoom = zoom;
 
 		// 5. Render SVG and mount into gallery stage
-		const svgMarkup = SvgRenderer.renderToString(mergedLayers, zoom);
+		const svgMarkup = SvgRenderer.renderToString(mergedLayers, zoom, {
+			aspectRatio: ratio,
+			realWidth: realW,
+			realHeight: realH,
+			unit: this.config.print_unit || 'cm',
+			dpi: this.config.dpi || 300,
+			hasPerLineBoxes: hasPerLineBoxes,
+		});
 		this.stage.updateSvg(svgMarkup);
 	}
 

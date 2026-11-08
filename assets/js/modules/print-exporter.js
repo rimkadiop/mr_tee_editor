@@ -26,6 +26,8 @@ export class PrintExporter {
 		const realH  = parseFloat(config.print_real_height) || 40.0;
 		const unit   = config.print_unit || 'cm';
 		const dpi    = parseInt(config.dpi, 10) || 300;
+		const ratio  = (realW > 0 && realH > 0) ? (realW / realH) : (parseFloat(config.print_aspect_ratio) || (printW / printH));
+		const hasPerLineBoxes = Array.isArray(config.text_lines) && config.text_lines.some(l => l.box_left !== undefined && l.box_width !== undefined);
 
 		// 1. Build self-contained, clean vector SVG markup (with physical scale attributes)
 		const svgMarkup = SvgRenderer.renderToString(layers, zoomTransform, {
@@ -34,6 +36,8 @@ export class PrintExporter {
 			realHeight: realH,
 			unit: unit,
 			dpi: dpi,
+			aspectRatio: ratio,
+			hasPerLineBoxes: hasPerLineBoxes,
 			fontFaceCss: this.extractFontFaceCss(),
 		});
 

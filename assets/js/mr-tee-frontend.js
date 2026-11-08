@@ -7,12 +7,12 @@
  * @package MrTeeEditor\Assets
  */
 
-import { StateStore } from './modules/state-store.js?ver=2.0.6';
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?ver=2.0.6';
-import { SvgRenderer } from './modules/svg-renderer.js?ver=2.0.6';
-import { GalleryStage } from './modules/gallery-stage.js?ver=2.0.6';
-import { FormController } from './modules/form-controller.js?ver=2.0.6';
-import { PrintExporter } from './modules/print-exporter.js?ver=2.0.6';
+import { StateStore } from './modules/state-store.js?ver=2.0.7';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?ver=2.0.7';
+import { SvgRenderer } from './modules/svg-renderer.js?ver=2.0.7';
+import { GalleryStage } from './modules/gallery-stage.js?ver=2.0.7';
+import { FormController } from './modules/form-controller.js?ver=2.0.7';
+import { PrintExporter } from './modules/print-exporter.js?ver=2.0.7';
 
 class MrTeeFrontendApp {
 	constructor() {

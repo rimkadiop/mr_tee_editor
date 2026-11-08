@@ -103,6 +103,7 @@ export class GalleryStage {
 			// Already properly mounted in this container!
 			this.overlayElem = overlay;
 			this.svgHolder = svgHolder;
+			this.recalibrateOverlayPosition(container, overlay);
 			if (this.currentSvgMarkup && (!this.svgHolder.innerHTML || !this.svgHolder.querySelector('svg'))) {
 				this.svgHolder.innerHTML = this.currentSvgMarkup;
 			}
@@ -115,19 +116,10 @@ export class GalleryStage {
 		});
 
 		// Create stage overlay if not already existing
-		const left = parseFloat(this.config.box_left) || 26.0;
-		const top = parseFloat(this.config.box_top) || 23.0;
-		const width = parseFloat(this.config.box_width) || 48.0;
-		const height = parseFloat(this.config.box_height) || 54.0;
-
 		if (!overlay) {
 			overlay = document.createElement('div');
 			overlay.className = 'mr-tee-live-stage-overlay';
 			overlay.style.position = 'absolute';
-			overlay.style.left = `${left}%`;
-			overlay.style.top = `${top}%`;
-			overlay.style.width = `${width}%`;
-			overlay.style.height = `${height}%`;
 			overlay.style.pointerEvents = 'none';
 			overlay.style.zIndex = '50';
 			overlay.style.display = 'flex';
@@ -146,10 +138,67 @@ export class GalleryStage {
 		this.overlayElem = overlay;
 		this.svgHolder = svgHolder;
 
+		// Calculate precise position against rendered image bounds
+		this.recalibrateOverlayPosition(container, overlay);
+
+		// Listen to image load if image is still loading
+		const img = container.querySelector('img');
+		if (img && !img.complete) {
+			img.addEventListener('load', () => this.recalibrateOverlayPosition(container, overlay), { once: true });
+		}
+
 		// Immediately restore current SVG markup if available
 		if (this.currentSvgMarkup && this.svgHolder) {
 			this.svgHolder.innerHTML = this.currentSvgMarkup;
 		}
+	}
+
+	/**
+	 * Calibrate overlay positioning strictly against the rendered garment image bounds.
+	 *
+	 * Accounts for any letterboxing, flexbox centering margins, or padding introduced
+	 * by WordPress themes, ensuring the design area remains pixel-pinned to the garment fabric.
+	 *
+	 * @param {HTMLElement} container Slide / gallery wrapper.
+	 * @param {HTMLElement} overlay Stage overlay element.
+	 */
+	recalibrateOverlayPosition(container, overlay) {
+		if (!container || !overlay) return;
+
+		const baseLeft = parseFloat(this.config.box_left) || 26.0;
+		const baseTop = parseFloat(this.config.box_top) || 23.0;
+		const baseWidth = parseFloat(this.config.box_width) || 48.0;
+		const baseHeight = parseFloat(this.config.box_height) || 54.0;
+
+		const img = container.querySelector('img.wp-post-image, .woocommerce-product-gallery__image img, img');
+		if (img && img.offsetWidth > 0 && container.offsetWidth > 0) {
+			const imgLeft = img.offsetLeft;
+			const imgTop = img.offsetTop;
+			const imgW = img.offsetWidth;
+			const imgH = img.offsetHeight;
+			const contW = container.offsetWidth;
+			const contH = container.offsetHeight;
+
+			// Check if image has offset inside container or doesn't occupy 100% of container dimensions
+			if (imgLeft !== 0 || imgTop !== 0 || Math.abs(imgW - contW) > 2 || Math.abs(imgH - contH) > 2) {
+				const leftPct = ((imgLeft + (imgW * (baseLeft / 100))) / contW) * 100;
+				const topPct = ((imgTop + (imgH * (baseTop / 100))) / contH) * 100;
+				const widthPct = ((imgW * (baseWidth / 100)) / contW) * 100;
+				const heightPct = ((imgH * (baseHeight / 100)) / contH) * 100;
+
+				overlay.style.left = `${leftPct.toFixed(3)}%`;
+				overlay.style.top = `${topPct.toFixed(3)}%`;
+				overlay.style.width = `${widthPct.toFixed(3)}%`;
+				overlay.style.height = `${heightPct.toFixed(3)}%`;
+				return;
+			}
+		}
+
+		// Direct percentage alignment
+		overlay.style.left = `${baseLeft}%`;
+		overlay.style.top = `${baseTop}%`;
+		overlay.style.width = `${baseWidth}%`;
+		overlay.style.height = `${baseHeight}%`;
 	}
 
 	/**

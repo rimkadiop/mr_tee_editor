@@ -289,8 +289,23 @@ export class SceneGraphEngine {
 		zoomRatio = Math.max(0.75, Math.min(1.35, zoomRatio));
 
 		// Center the bbox around (50, 50)
-		const tx = (50.0 - bbox.xCenter) * zoomRatio;
-		const ty = (50.0 - bbox.yCenter) * zoomRatio;
+		let tx = (50.0 - bbox.xCenter) * zoomRatio;
+		let ty = (50.0 - bbox.yCenter) * zoomRatio;
+
+		// Add admin fine-tuning offsets if configured
+		if (defaultTransform && typeof defaultTransform === 'object') {
+			if (defaultTransform.x !== undefined && !isNaN(defaultTransform.x)) {
+				tx += parseFloat(defaultTransform.x);
+			}
+			if (defaultTransform.y !== undefined && !isNaN(defaultTransform.y)) {
+				ty += parseFloat(defaultTransform.y);
+			}
+			// Apply base scale multiplier if non-standard (e.g. customized in admin)
+			const adminScale = parseFloat(defaultTransform.scale);
+			if (!isNaN(adminScale) && adminScale > 0 && adminScale !== 0.34 && adminScale !== 1.0) {
+				zoomRatio *= adminScale;
+			}
+		}
 
 		return {
 			scale: zoomRatio,

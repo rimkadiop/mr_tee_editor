@@ -181,6 +181,8 @@
 					width: w + '%',
 					height: h + '%',
 				});
+
+				self.renderAdminPreview();
 			});
 		}
 
@@ -320,14 +322,21 @@
 				`;
 			}
 
+			const rawScale = parseFloat($('#mr_tee_perso_scale').val());
+			const scale = (!isNaN(rawScale) && rawScale > 0) ? rawScale : 1.0;
+			const tx = parseFloat($('#mr_tee_perso_tx').val()) || 0.0;
+			const ty = parseFloat($('#mr_tee_perso_ty').val()) || 0.0;
+
 			const svg = `
-				<svg viewBox="0 0 100 100" width="100%" height="100%" style="overflow:visible;">
+				<svg viewBox="0 0 100 100" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" style="overflow:visible;">
 					<defs>
 						<filter id="admin-shadow">
 							<feDropShadow dx="0" dy="0.8" stdDeviation="0.4" flood-color="#000000" flood-opacity="0.35" />
 						</filter>
 					</defs>
-					${innerSvg}
+					<g transform="translate(${tx.toFixed(2)}, ${ty.toFixed(2)}) translate(50, 50) scale(${scale.toFixed(3)}) translate(-50, -50)">
+						${innerSvg}
+					</g>
 				</svg>
 			`;
 

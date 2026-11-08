@@ -3,7 +3,7 @@
  * Plugin Name: Mr. Tee Editor – Form-Based Live Product Customizer
  * Plugin URI:  https://github.com/rimkadiop/mr_tee_editor
  * Description: Monsieur TSHIRT style in-product-page live preview form customizer with 2-row scene-graph layout, relative anchors, fancy 3D fonts, visual placement stage, and WooCommerce + NBDesigner 300 DPI print export.
- * Version:     2.0.4
+ * Version:     2.0.5
  * Author:      Rimka Diop
  * Text Domain: mr-tee-editor
  * Domain Path: /languages
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin Constants
-define( 'MR_TEE_EDITOR_VERSION', '2.0.4' );
+define( 'MR_TEE_EDITOR_VERSION', '2.0.5' );
 define( 'MR_TEE_EDITOR_FILE', __FILE__ );
 define( 'MR_TEE_EDITOR_DIR', plugin_dir_path( __FILE__ ) );
 

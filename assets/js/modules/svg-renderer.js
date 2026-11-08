@@ -109,6 +109,7 @@ export class SvgRenderer {
 
 		const x = parseFloat(node.x) || 50;
 		const y = parseFloat(node.y) || 50;
+		const fontSize = parseFloat(node.fontSize) || 12;
 		const rawFont = node.fontFamily || 'Super Mario Wii';
 		const fontFamily = (rawFont.includes('sans-serif') || rawFont.includes('serif'))
 			? rawFont

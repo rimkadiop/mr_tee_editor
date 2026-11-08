@@ -200,12 +200,30 @@ export class SceneGraphEngine {
 			if (!node || node.hide) return;
 
 			if (node.type === 'TEXT') {
-				const baseFontSize = parseFloat(node.fontSize) || 12;
+				const hasBox = (node.box_width !== undefined && node.box_height !== undefined);
+				const boxW = hasBox ? parseFloat(node.box_width) : (parseFloat(node.maxWidth) || 84.0);
+				const boxH = hasBox ? parseFloat(node.box_height) : (parseFloat(node.fontSize) ? parseFloat(node.fontSize) * 1.5 : 12.0);
+				const boxL = (node.box_left !== undefined) ? parseFloat(node.box_left) : ((parseFloat(node.x) || 50) - (boxW / 2));
+				const boxT = (node.box_top !== undefined) ? parseFloat(node.box_top) : ((parseFloat(node.y) || 50) - (boxH / 2));
+
+				const centerX = boxL + (boxW / 2);
+				const centerY = boxT + (boxH / 2);
+
 				const textVal = String(node.value || node.text || '');
 				const lines = textVal.split('\n');
 				const numLines = Math.max(1, lines.length);
 				const lineHeight = parseFloat(node.lineHeight) || 0.95;
-				const maxWidth = parseFloat(node.maxWidth) || 84.0;
+
+				let baseFontSize = parseFloat(node.fontSize);
+				if (isNaN(baseFontSize) || baseFontSize <= 0 || hasBox) {
+					const heightTarget = (boxH * 0.85) / (1 + (numLines - 1) * lineHeight * 0.8);
+					baseFontSize = (!isNaN(parseFloat(node.fontSize)) && parseFloat(node.fontSize) > 0 && !hasBox)
+						? parseFloat(node.fontSize)
+						: heightTarget;
+				}
+
+				const maxWidth = hasBox ? (boxW * 0.95) : (parseFloat(node.maxWidth) || 84.0);
+				const maxHeight = hasBox ? (boxH * 0.92) : (parseFloat(node.maxHeight) || 80.0);
 
 				let maxLineLen = 0;
 				for (const l of lines) {
@@ -223,7 +241,6 @@ export class SceneGraphEngine {
 
 				let scaleH = 1.0;
 				const rawTotalHeight = baseFontSize + ((numLines - 1) * baseFontSize * lineHeight);
-				const maxHeight = parseFloat(node.maxHeight) || (node.y ? Math.min(node.y * 1.8, (100 - node.y) * 1.8) : 80.0);
 				if (rawTotalHeight > maxHeight && maxHeight > 0) {
 					scaleH = maxHeight / rawTotalHeight;
 				}
@@ -232,9 +249,6 @@ export class SceneGraphEngine {
 				const effectiveFontSize = Math.max(2.0, baseFontSize * autoFitScale);
 				const effectiveWidth = Math.min(maxWidth, estimatedRawWidth * autoFitScale);
 				const totalHeight = effectiveFontSize + ((numLines - 1) * effectiveFontSize * lineHeight);
-
-				const centerX = parseFloat(node.x) || 50;
-				const centerY = parseFloat(node.y) || 20;
 
 				const left = centerX - (effectiveWidth / 2);
 				const right = centerX + (effectiveWidth / 2);

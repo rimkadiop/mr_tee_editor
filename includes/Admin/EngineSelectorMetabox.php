@@ -343,34 +343,57 @@ class EngineSelectorMetabox {
 				$config['template_preset'] = sanitize_text_field( $raw_config['template_preset'] );
 			}
 
-			// Sanitize text lines
+			// Sanitize text lines (supports adding/deleting dynamic fields and per-line rectangles)
 			if ( isset( $raw_config['text_lines'] ) && is_array( $raw_config['text_lines'] ) ) {
+				$sanitized_lines = array();
+				$line_index      = 0;
 				foreach ( $raw_config['text_lines'] as $idx => $line_data ) {
-					if ( isset( $config['text_lines'][ $idx ] ) ) {
-						if ( isset( $line_data['label'] ) ) {
-							$config['text_lines'][ $idx ]['label'] = sanitize_text_field( $line_data['label'] );
-						}
-						if ( isset( $line_data['default_text'] ) ) {
-							$config['text_lines'][ $idx ]['default_text'] = sanitize_textarea_field( $line_data['default_text'] );
-						}
-						if ( isset( $line_data['multiline'] ) ) {
-							$config['text_lines'][ $idx ]['multiline'] = ! empty( $line_data['multiline'] );
-						}
-						if ( isset( $line_data['font'] ) ) {
-							$config['text_lines'][ $idx ]['font'] = sanitize_text_field( $line_data['font'] );
-						}
-						$config['text_lines'][ $idx ]['allow_font_pick'] = ! empty( $line_data['allow_font_pick'] );
-						if ( isset( $line_data['color_mode'] ) ) {
-							$config['text_lines'][ $idx ]['color_mode'] = sanitize_text_field( $line_data['color_mode'] );
-						}
-						if ( isset( $line_data['y_pct'] ) ) {
-							$config['text_lines'][ $idx ]['y_pct'] = floatval( $line_data['y_pct'] );
-						}
-						if ( isset( $line_data['font_size'] ) ) {
-							$config['text_lines'][ $idx ]['font_size'] = floatval( $line_data['font_size'] );
-						}
-						$config['text_lines'][ $idx ]['warning_unedited'] = ! empty( $line_data['warning_unedited'] );
-					}
+					$line_num = $line_index + 1;
+					$existing = isset( $config['text_lines'][ $idx ] ) ? $config['text_lines'][ $idx ] : array();
+
+					$label        = isset( $line_data['label'] ) ? sanitize_text_field( $line_data['label'] ) : ( isset( $existing['label'] ) ? $existing['label'] : sprintf( __( 'Champ %d', 'mr-tee-editor' ), $line_num ) );
+					$default_text = isset( $line_data['default_text'] ) ? sanitize_textarea_field( $line_data['default_text'] ) : ( isset( $existing['default_text'] ) ? $existing['default_text'] : sprintf( __( 'Texte %d', 'mr-tee-editor' ), $line_num ) );
+					$font         = isset( $line_data['font'] ) ? sanitize_text_field( $line_data['font'] ) : ( isset( $existing['font'] ) ? $existing['font'] : 'super_mario' );
+					$font_pick    = isset( $line_data['allow_font_pick'] ) ? ! empty( $line_data['allow_font_pick'] ) : ( isset( $existing['allow_font_pick'] ) ? ! empty( $existing['allow_font_pick'] ) : true );
+					$color_mode   = isset( $line_data['color_mode'] ) ? sanitize_text_field( $line_data['color_mode'] ) : ( isset( $existing['color_mode'] ) ? $existing['color_mode'] : 'multi' );
+					$warning      = isset( $line_data['warning_unedited'] ) ? ! empty( $line_data['warning_unedited'] ) : ( isset( $existing['warning_unedited'] ) ? ! empty( $existing['warning_unedited'] ) : false );
+
+					// Per-line rectangle dimensions
+					$box_l = isset( $line_data['box_left'] ) ? floatval( $line_data['box_left'] ) : ( isset( $existing['box_left'] ) ? floatval( $existing['box_left'] ) : 30.0 );
+					$box_t = isset( $line_data['box_top'] ) ? floatval( $line_data['box_top'] ) : ( isset( $existing['box_top'] ) ? floatval( $existing['box_top'] ) : ( 25.0 + $line_index * 12.0 ) );
+					$box_w = isset( $line_data['box_width'] ) ? floatval( $line_data['box_width'] ) : ( isset( $existing['box_width'] ) ? floatval( $existing['box_width'] ) : 40.0 );
+					$box_h = isset( $line_data['box_height'] ) ? floatval( $line_data['box_height'] ) : ( isset( $existing['box_height'] ) ? floatval( $existing['box_height'] ) : 8.5 );
+
+					$font_size = isset( $line_data['font_size'] ) ? floatval( $line_data['font_size'] ) : ( isset( $existing['font_size'] ) ? floatval( $existing['font_size'] ) : ( $box_h * 0.85 ) );
+					$y_pct     = isset( $line_data['y_pct'] ) ? floatval( $line_data['y_pct'] ) : ( $box_t + ( $box_h / 2.0 ) );
+
+					$sanitized_line = wp_parse_args(
+						array(
+							'id'               => ! empty( $existing['id'] ) ? $existing['id'] : 'line_' . $line_num,
+							'ref_id'           => ! empty( $existing['ref_id'] ) ? $existing['ref_id'] : 'id-ref-text-line-' . $line_num,
+							'color_ref_id'     => ! empty( $existing['color_ref_id'] ) ? $existing['color_ref_id'] : 'id-ref-color-line-' . $line_num,
+							'label'            => $label,
+							'default_text'     => $default_text,
+							'font'             => $font,
+							'allow_font_pick'  => $font_pick,
+							'color_mode'       => $color_mode,
+							'box_left'         => $box_l,
+							'box_top'          => $box_t,
+							'box_width'        => $box_w,
+							'box_height'       => $box_h,
+							'y_pct'            => $y_pct,
+							'font_size'        => $font_size,
+							'warning_unedited' => $warning,
+						),
+						$existing
+					);
+
+					$sanitized_lines[] = $sanitized_line;
+					$line_index++;
+				}
+
+				if ( ! empty( $sanitized_lines ) ) {
+					$config['text_lines'] = array_values( $sanitized_lines );
 				}
 			}
 

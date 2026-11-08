@@ -1,9 +1,9 @@
 /**
- * Mr. Tee Editor - Admin Orchestrator & Visual Stage Drag/Resize
+ * Mr. Tee Editor - Admin Orchestrator & Multi-Rectangle Stage Configurator
  *
- * Manages the engine competitor selector, tab switching, and interactive
- * placement of the Editor Area box (`box_left`, `box_top`, `box_width`, `box_height`)
- * over the garment mockup with real-time SVG preview.
+ * Manages the engine competitor selector, tab switching, and modular
+ * multi-rectangle per-field design area system. Merchants can draw, position,
+ * and resize independent design rectangles directly on the garment/product mockup.
  *
  * @package MrTeeEditor\Assets
  */
@@ -11,14 +11,23 @@
 (function($) {
 	'use strict';
 
+	const FIELD_COLORS = [
+		'#2563eb', // Blue
+		'#059669', // Emerald
+		'#7c3aed', // Purple
+		'#d97706', // Amber
+		'#db2777', // Rose
+		'#0891b2', // Cyan
+		'#dc2626', // Red
+		'#4f46e5', // Indigo
+	];
+
 	class MrTeeAdmin {
 		constructor() {
 			this.data = window.mrTeeAdminData || {};
 			this.config = this.data.config || {};
-			this.$wrap = $('.mr-tee-admin-wrap');
-			this.$box = $('#mr-tee-editor-box');
 			this.$canvasWrap = $('#mr-tee-stage-canvas-wrap');
-			this.$previewHolder = $('#mr-tee-admin-svg-preview');
+			this.activeFieldIndex = 0;
 
 			this.init();
 		}
@@ -26,10 +35,13 @@
 		init() {
 			this.bindEngineSelector();
 			this.bindTabs();
-			this.bindInteractiveBox();
-			this.bindInputs();
+			this.bindFieldSwitcher();
+			this.bindInteractiveBoxes();
+			this.bindInputSync();
+			this.bindAddField();
+			this.bindDeleteField();
 			this.bindPresetReset();
-			this.renderAdminPreview();
+			this.renderAllBoxesPreviews();
 		}
 
 		/**
@@ -53,6 +65,7 @@
 		 * Tabs Navigation.
 		 */
 		bindTabs() {
+			const self = this;
 			$('.mr-tee-tab-btn').on('click', function() {
 				const tabId = $(this).data('tab');
 				$('.mr-tee-tab-btn').removeClass('is-active');
@@ -60,48 +73,96 @@
 
 				$('.mr-tee-tab-pane').removeClass('is-active');
 				$('#' + tabId).addClass('is-active');
+
+				if (tabId === 'tab-stage') {
+					self.renderAllBoxesPreviews();
+				}
 			});
 		}
 
 		/**
-		 * Interactive Red-Dashed Box Drag & Resize.
+		 * Field Selection Switcher (Pills and direct box clicks).
 		 */
-		bindInteractiveBox() {
-			if (!this.$box.length || !this.$canvasWrap.length) return;
+		bindFieldSwitcher() {
+			const self = this;
+
+			// Click on pill
+			$(document).on('click', '.mr-tee-field-pill', function() {
+				const idx = parseInt($(this).data('field-index'), 10);
+				self.setActiveField(idx);
+			});
+
+			// Direct click on box in stage
+			$(document).on('mousedown', '.mr-tee-field-box', function(e) {
+				if ($(e.target).hasClass('mr-tee-handle')) return;
+				const idx = parseInt($(this).data('field-index'), 10);
+				if (self.activeFieldIndex !== idx) {
+					self.setActiveField(idx);
+				}
+			});
+		}
+
+		setActiveField(index) {
+			this.activeFieldIndex = index;
+
+			// Update Pills
+			$('.mr-tee-field-pill').removeClass('is-active');
+			$(`.mr-tee-field-pill[data-field-index="${index}"]`).addClass('is-active');
+
+			// Update Boxes
+			$('.mr-tee-field-box').removeClass('is-active');
+			$(`#mr-tee-field-box-${index}`).addClass('is-active');
+
+			// Update Panels
+			$('.mr-tee-field-panel').removeClass('is-active');
+			$(`#mr-tee-field-panel-${index}`).addClass('is-active');
+		}
+
+		/**
+		 * Interactive Box Drag & Resize for Multi-Rectangle System.
+		 */
+		bindInteractiveBoxes() {
+			if (!this.$canvasWrap.length) return;
 
 			const self = this;
 			let isDragging = false;
 			let isResizing = false;
 			let currentHandle = null;
 			let startX, startY, startLeft, startTop, startWidth, startHeight;
+			let currentIdx = 0;
 
-			// Dragging the box
-			this.$box.on('mousedown', function(e) {
+			// Dragging active box
+			$(document).on('mousedown', '.mr-tee-field-box.is-active', function(e) {
 				if ($(e.target).hasClass('mr-tee-handle')) return;
 				e.preventDefault();
+
+				currentIdx = parseInt($(this).data('field-index'), 10);
+				const $box = $(this);
+				const wrapRect = self.$canvasWrap[0].getBoundingClientRect();
+				const boxRect = $box[0].getBoundingClientRect();
 
 				isDragging = true;
 				startX = e.clientX;
 				startY = e.clientY;
 
-				const wrapRect = self.$canvasWrap[0].getBoundingClientRect();
-				const boxRect = self.$box[0].getBoundingClientRect();
-
 				startLeft = (boxRect.left - wrapRect.left) / wrapRect.width * 100;
 				startTop = (boxRect.top - wrapRect.top) / wrapRect.height * 100;
+
+				const curW = parseFloat($(`#mr_tee_field_width_${currentIdx}`).val()) || 40.0;
+				const curH = parseFloat($(`#mr_tee_field_height_${currentIdx}`).val()) || 8.5;
 
 				$(document).on('mousemove.mrTeeDrag', function(moveEvent) {
 					if (!isDragging) return;
 					const dx = (moveEvent.clientX - startX) / wrapRect.width * 100;
 					const dy = (moveEvent.clientY - startY) / wrapRect.height * 100;
 
-					let newLeft = Math.max(0, Math.min(100 - parseFloat($('#mr_tee_box_width').val() || 30), startLeft + dx));
-					let newTop = Math.max(0, Math.min(100 - parseFloat($('#mr_tee_box_height').val() || 30), startTop + dy));
+					let newLeft = Math.max(0, Math.min(100 - curW, startLeft + dx));
+					let newTop = Math.max(0, Math.min(100 - curH, startTop + dy));
 
 					newLeft = Math.round(newLeft * 10) / 10;
 					newTop = Math.round(newTop * 10) / 10;
 
-					self.updateBoxPosition(newLeft, newTop);
+					self.updateBoxPosition(currentIdx, newLeft, newTop);
 				});
 
 				$(document).on('mouseup.mrTeeDrag', function() {
@@ -110,18 +171,21 @@
 				});
 			});
 
-			// Resizing the box via handles
-			this.$box.find('.mr-tee-handle').on('mousedown', function(e) {
+			// Resizing active box via corner handles
+			$(document).on('mousedown', '.mr-tee-field-box.is-active .mr-tee-handle', function(e) {
 				e.preventDefault();
 				e.stopPropagation();
 
-				isResizing = true;
+				const $box = $(this).closest('.mr-tee-field-box');
+				currentIdx = parseInt($box.data('field-index'), 10);
 				currentHandle = $(this).data('handle');
-				startX = e.clientX;
-				startY = e.clientY;
 
 				const wrapRect = self.$canvasWrap[0].getBoundingClientRect();
-				const boxRect = self.$box[0].getBoundingClientRect();
+				const boxRect = $box[0].getBoundingClientRect();
+
+				isResizing = true;
+				startX = e.clientX;
+				startY = e.clientY;
 
 				startLeft = (boxRect.left - wrapRect.left) / wrapRect.width * 100;
 				startTop = (boxRect.top - wrapRect.top) / wrapRect.height * 100;
@@ -138,14 +202,14 @@
 					let newL = startLeft;
 					let newT = startTop;
 
-					if (currentHandle.includes('e')) newW = Math.max(10, Math.min(100 - startLeft, startWidth + dx));
-					if (currentHandle.includes('s')) newH = Math.max(10, Math.min(100 - startTop, startHeight + dy));
+					if (currentHandle.includes('e')) newW = Math.max(5, Math.min(100 - startLeft, startWidth + dx));
+					if (currentHandle.includes('s')) newH = Math.max(3, Math.min(100 - startTop, startHeight + dy));
 					if (currentHandle.includes('w')) {
-						newW = Math.max(10, startWidth - dx);
+						newW = Math.max(5, startWidth - dx);
 						newL = startLeft + dx;
 					}
 					if (currentHandle.includes('n')) {
-						newH = Math.max(10, startHeight - dy);
+						newH = Math.max(3, startHeight - dy);
 						newT = startTop + dy;
 					}
 
@@ -154,7 +218,7 @@
 					newL = Math.round(newL * 10) / 10;
 					newT = Math.round(newT * 10) / 10;
 
-					self.updateBoxBounds(newL, newT, newW, newH);
+					self.updateBoxBounds(currentIdx, newL, newT, newW, newH);
 				});
 
 				$(document).on('mouseup.mrTeeResize', function() {
@@ -164,183 +228,365 @@
 			});
 		}
 
-		/**
-		 * Numeric Inputs Binding (two-way sync with interactive box).
-		 */
-		bindInputs() {
-			const self = this;
-			$('.mr-tee-coord-input').on('input change', function() {
-				const l = parseFloat($('#mr_tee_box_left').val()) || 26.0;
-				const t = parseFloat($('#mr_tee_box_top').val()) || 23.0;
-				const w = parseFloat($('#mr_tee_box_width').val()) || 48.0;
-				const h = parseFloat($('#mr_tee_box_height').val()) || 54.0;
+		updateBoxPosition(idx, left, top) {
+			$(`#mr_tee_field_left_${idx}`).val(left);
+			$(`#mr_tee_field_top_${idx}`).val(top);
+			$(`#mr-tee-field-box-${idx}`).css({ left: left + '%', top: top + '%' });
+		}
 
-				self.$box.css({
+		updateBoxBounds(idx, left, top, width, height) {
+			$(`#mr_tee_field_left_${idx}`).val(left);
+			$(`#mr_tee_field_top_${idx}`).val(top);
+			$(`#mr_tee_field_width_${idx}`).val(width);
+			$(`#mr_tee_field_height_${idx}`).val(height);
+
+			$(`#mr-tee-field-box-${idx}`).css({
+				left: left + '%',
+				top: top + '%',
+				width: width + '%',
+				height: height + '%',
+			});
+
+			// Update pill dimensions
+			$(`.mr-tee-field-pill[data-field-index="${idx}"] .mr-tee-pill-dims`).text(`${width}×${height}%`);
+
+			// Re-render preview text inside this box
+			this.renderBoxPreview(idx);
+		}
+
+		/**
+		 * Two-Way Input Synchronization.
+		 */
+		bindInputSync() {
+			const self = this;
+
+			// Coords Inputs
+			$(document).on('input change', '.mr-tee-field-coord', function() {
+				const idx = parseInt($(this).data('field-index'), 10);
+				const l = parseFloat($(`#mr_tee_field_left_${idx}`).val()) || 0;
+				const t = parseFloat($(`#mr_tee_field_top_${idx}`).val()) || 0;
+				const w = parseFloat($(`#mr_tee_field_width_${idx}`).val()) || 40;
+				const h = parseFloat($(`#mr_tee_field_height_${idx}`).val()) || 8.5;
+
+				$(`#mr-tee-field-box-${idx}`).css({
 					left: l + '%',
 					top: t + '%',
 					width: w + '%',
 					height: h + '%',
 				});
 
-				self.renderAdminPreview();
+				$(`.mr-tee-field-pill[data-field-index="${idx}"] .mr-tee-pill-dims`).text(`${w}×${h}%`);
+				self.renderBoxPreview(idx);
 			});
-		}
 
-		updateBoxPosition(left, top) {
-			$('#mr_tee_box_left').val(left);
-			$('#mr_tee_box_top').val(top);
-			this.$box.css({ left: left + '%', top: top + '%' });
-		}
+			// Label Input
+			$(document).on('input change', '.mr-tee-field-label-input', function() {
+				const idx = parseInt($(this).data('field-index'), 10);
+				const val = $(this).val() || `Champ ${idx + 1}`;
+				$(`.mr-tee-field-pill[data-field-index="${idx}"] .mr-tee-pill-label`).text(val);
+				$(`#mr-tee-field-box-${idx} .mr-tee-box-badge`).text(`${idx + 1}. ${val}`);
+				$(`#mr-tee-field-panel-${idx} .mr-tee-panel-title`).text(`Champ #${idx + 1} : ${val}`);
+			});
 
-		updateBoxBounds(left, top, width, height) {
-			$('#mr_tee_box_left').val(left);
-			$('#mr_tee_box_top').val(top);
-			$('#mr_tee_box_width').val(width);
-			$('#mr_tee_box_height').val(height);
-
-			this.$box.css({
-				left: left + '%',
-				top: top + '%',
-				width: width + '%',
-				height: height + '%',
+			// Text & Font Inputs
+			$(document).on('input change', '.mr-tee-field-text-input, .mr-tee-field-font-select', function() {
+				const idx = parseInt($(this).data('field-index'), 10);
+				self.renderBoxPreview(idx);
 			});
 		}
 
 		/**
-		 * Reset coordinates to reference Monsieur TSHIRT defaults for selected preset.
+		 * Add New Field Rectangle.
 		 */
-		bindPresetReset() {
+		bindAddField() {
 			const self = this;
-			$('#mr_tee_template_preset').on('change', function() {
-				const preset = $(this).val();
-				self.applyPresetCoords(preset);
-				self.renderAdminPreview();
-			});
+			$(document).on('click', '#mr-tee-btn-add-field-pill, #mr-tee-btn-add-field', function() {
+				const newIdx = $('.mr-tee-field-box').length;
+				const color = FIELD_COLORS[newIdx % FIELD_COLORS.length];
+				const prevIdx = newIdx - 1;
 
-			$('#mr_tee_btn-reset-coords').on('click', function() {
-				const preset = $('#mr_tee_template_preset').val() || 'super_mushroom_24987';
-				self.applyPresetCoords(preset);
-				self.renderAdminPreview();
+				let prevTop = 25.0;
+				let prevHeight = 8.5;
+				if (prevIdx >= 0) {
+					prevTop = parseFloat($(`#mr_tee_field_top_${prevIdx}`).val()) || 25.0;
+					prevHeight = parseFloat($(`#mr_tee_field_height_${prevIdx}`).val()) || 8.5;
+				}
+
+				const newLeft = 30.0;
+				const newTop = Math.min(88.0, Math.round((prevTop + prevHeight + 2.0) * 10) / 10);
+				const newWidth = 40.0;
+				const newHeight = 8.5;
+				const fieldLabel = `Texte ${newIdx + 1}`;
+				const defaultText = `Ligne ${newIdx + 1}`;
+
+				// 1. Add Pill
+				const pillHtml = `
+					<button
+						type="button"
+						class="mr-tee-field-pill"
+						data-field-index="${newIdx}"
+						style="--pill-color: ${color};"
+					>
+						<span class="mr-tee-pill-badge" style="background: ${color};">${newIdx + 1}</span>
+						<span class="mr-tee-pill-label">${fieldLabel}</span>
+						<span class="mr-tee-pill-dims">${newWidth}×${newHeight}%</span>
+					</button>
+				`;
+				$('#mr-tee-pills-list').append(pillHtml);
+
+				// 2. Add Box
+				const boxHtml = `
+					<div
+						id="mr-tee-field-box-${newIdx}"
+						class="mr-tee-field-box"
+						data-field-index="${newIdx}"
+						style="left: ${newLeft}%; top: ${newTop}%; width: ${newWidth}%; height: ${newHeight}%; --field-color: ${color};"
+					>
+						<span class="mr-tee-box-badge" style="background: ${color};">
+							${newIdx + 1}. ${fieldLabel}
+						</span>
+						<div class="mr-tee-box-svg-holder" id="mr-tee-box-svg-${newIdx}"></div>
+						<div class="mr-tee-handle mr-tee-handle-nw" data-handle="nw" style="border-color: ${color};"></div>
+						<div class="mr-tee-handle mr-tee-handle-ne" data-handle="ne" style="border-color: ${color};"></div>
+						<div class="mr-tee-handle mr-tee-handle-sw" data-handle="sw" style="border-color: ${color};"></div>
+						<div class="mr-tee-handle mr-tee-handle-se" data-handle="se" style="border-color: ${color};"></div>
+					</div>
+				`;
+				$('#mr-tee-boxes-container').append(boxHtml);
+
+				// 3. Add Panel
+				const panelHtml = `
+					<div
+						class="mr-tee-field-panel"
+						id="mr-tee-field-panel-${newIdx}"
+						data-field-index="${newIdx}"
+					>
+						<div class="mr-tee-panel-badge-row">
+							<span class="mr-tee-panel-indicator" style="background: ${color};"></span>
+							<strong class="mr-tee-panel-title">Champ #${newIdx + 1} : ${fieldLabel}</strong>
+						</div>
+						<table class="form-table mr-tee-coords-table">
+							<tr>
+								<th><label>Nom du Champ</label></th>
+								<td>
+									<input type="text" name="mr_tee_config[text_lines][${newIdx}][label]" value="${fieldLabel}" class="regular-text mr-tee-field-label-input" data-field-index="${newIdx}" />
+								</td>
+							</tr>
+							<tr>
+								<th><label>Texte par Défaut</label></th>
+								<td>
+									<input type="text" name="mr_tee_config[text_lines][${newIdx}][default_text]" value="${defaultText}" class="regular-text mr-tee-field-text-input" data-field-index="${newIdx}" />
+								</td>
+							</tr>
+							<tr>
+								<th><label>Police par Défaut</label></th>
+								<td>
+									<select name="mr_tee_config[text_lines][${newIdx}][font]" class="mr-tee-field-font-select" data-field-index="${newIdx}">
+										<option value="super_mario">Super Mario</option>
+										<option value="press_start">Arcade 8-Bit (Press Start 2P)</option>
+										<option value="bungee">Bungee Pop</option>
+										<option value="luckiest_guy">Luckiest Guy Comic</option>
+										<option value="cocogoose">Cocogoose Block</option>
+										<option value="bebas">Bebas Neue Brodé</option>
+										<option value="pacifico">Pacifico Script Cursif</option>
+										<option value="cinzel">Cinzel Décoratif</option>
+										<option value="marker">Permanent Marker</option>
+										<option value="abril">Abril Serif Élégant</option>
+									</select>
+								</td>
+							</tr>
+							<tr>
+								<th><label>Position X (Left %)</label></th>
+								<td>
+									<input type="number" step="0.1" min="0" max="100" id="mr_tee_field_left_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_left]" value="${newLeft}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-left" data-field-index="${newIdx}" /> %
+								</td>
+							</tr>
+							<tr>
+								<th><label>Position Y (Top %)</label></th>
+								<td>
+									<input type="number" step="0.1" min="0" max="100" id="mr_tee_field_top_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_top]" value="${newTop}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-top" data-field-index="${newIdx}" /> %
+								</td>
+							</tr>
+							<tr>
+								<th><label>Largeur (Width %)</label></th>
+								<td>
+									<input type="number" step="0.1" min="5" max="100" id="mr_tee_field_width_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_width]" value="${newWidth}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-width" data-field-index="${newIdx}" /> %
+								</td>
+							</tr>
+							<tr>
+								<th><label>Hauteur (Height %)</label></th>
+								<td>
+									<input type="number" step="0.1" min="3" max="100" id="mr_tee_field_height_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_height]" value="${newHeight}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-height" data-field-index="${newIdx}" /> %
+								</td>
+							</tr>
+						</table>
+						<div class="mr-tee-field-actions">
+							<button type="button" class="button button-link-delete mr-tee-btn-delete-field" data-field-index="${newIdx}">
+								Supprimer ce champ
+							</button>
+						</div>
+					</div>
+				`;
+				$('#mr-tee-field-panels-container').append(panelHtml);
+
+				// Show delete buttons
+				$('.mr-tee-btn-delete-field').show();
+
+				// Activate new field
+				self.setActiveField(newIdx);
+				self.renderBoxPreview(newIdx);
 			});
 		}
 
-		applyPresetCoords(preset) {
-			switch (preset) {
-				case 'multicolor_embroidered_34225':
-					this.updateBoxBounds(31.0, 32.0, 38.0, 36.0);
-					$('#mr_tee_perso_scale').val(0.42);
-					$('#mr_tee_perso_tx').val(0.0);
-					$('#mr_tee_perso_ty').val(0.0);
-					break;
-				case 'leopard_pattern_mask_24000':
-					this.updateBoxBounds(28.0, 28.0, 44.0, 48.0);
-					$('#mr_tee_perso_scale').val(0.44);
-					$('#mr_tee_perso_tx').val(0.0);
-					$('#mr_tee_perso_ty').val(0.0);
-					break;
-				case 'vintage_date_names_34359':
-					this.updateBoxBounds(30.0, 26.0, 40.0, 48.0);
-					$('#mr_tee_perso_scale').val(0.40);
-					$('#mr_tee_perso_tx').val(0.0);
-					$('#mr_tee_perso_ty').val(0.0);
-					break;
-				case 'super_mushroom_24987':
-				default:
-					this.updateBoxBounds(26.0, 23.0, 48.0, 54.0);
-					$('#mr_tee_perso_scale').val(0.34);
-					$('#mr_tee_perso_tx').val(1.54);
-					$('#mr_tee_perso_ty').val(-0.49);
-					break;
+		/**
+		 * Delete a Field Rectangle.
+		 */
+		bindDeleteField() {
+			const self = this;
+			$(document).on('click', '.mr-tee-btn-delete-field', function() {
+				const idx = parseInt($(this).data('field-index'), 10);
+				const count = $('.mr-tee-field-box').length;
+				if (count <= 1) return;
+
+				if (!confirm('Voulez-vous vraiment supprimer ce rectangle et son champ de texte ?')) {
+					return;
+				}
+
+				// Remove elements
+				$(`.mr-tee-field-pill[data-field-index="${idx}"]`).remove();
+				$(`#mr-tee-field-box-${idx}`).remove();
+				$(`#mr-tee-field-panel-${idx}`).remove();
+
+				// Re-index remaining elements
+				self.reindexFields();
+				self.setActiveField(0);
+				self.renderAllBoxesPreviews();
+			});
+		}
+
+		reindexFields() {
+			const self = this;
+			const $pills = $('.mr-tee-field-pill');
+			const $boxes = $('.mr-tee-field-box');
+			const $panels = $('.mr-tee-field-panel');
+
+			$pills.each(function(i) {
+				const color = FIELD_COLORS[i % FIELD_COLORS.length];
+				$(this).attr('data-field-index', i);
+				$(this).css('--pill-color', color);
+				$(this).find('.mr-tee-pill-badge').text(i + 1).css('background', color);
+			});
+
+			$boxes.each(function(i) {
+				const color = FIELD_COLORS[i % FIELD_COLORS.length];
+				$(this).attr('id', `mr-tee-field-box-${i}`);
+				$(this).attr('data-field-index', i);
+				$(this).css('--field-color', color);
+				$(this).find('.mr-tee-box-badge').css('background', color);
+				$(this).find('.mr-tee-box-svg-holder').attr('id', `mr-tee-box-svg-${i}`);
+				$(this).find('.mr-tee-handle').css('border-color', color);
+			});
+
+			$panels.each(function(i) {
+				const color = FIELD_COLORS[i % FIELD_COLORS.length];
+				$(this).attr('id', `mr-tee-field-panel-${i}`);
+				$(this).attr('data-field-index', i);
+				$(this).find('.mr-tee-panel-indicator').css('background', color);
+				$(this).find('.mr-tee-field-label-input').attr('name', `mr_tee_config[text_lines][${i}][label]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-text-input').attr('name', `mr_tee_config[text_lines][${i}][default_text]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-font-select').attr('name', `mr_tee_config[text_lines][${i}][font]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-coord-left').attr('id', `mr_tee_field_left_${i}`).attr('name', `mr_tee_config[text_lines][${i}][box_left]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-coord-top').attr('id', `mr_tee_field_top_${i}`).attr('name', `mr_tee_config[text_lines][${i}][box_top]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-coord-width').attr('id', `mr_tee_field_width_${i}`).attr('name', `mr_tee_config[text_lines][${i}][box_width]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-coord-height').attr('id', `mr_tee_field_height_${i}`).attr('name', `mr_tee_config[text_lines][${i}][box_height]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-btn-delete-field').attr('data-field-index', i);
+			});
+
+			if ($boxes.length <= 1) {
+				$('.mr-tee-btn-delete-field').hide();
+			} else {
+				$('.mr-tee-btn-delete-field').show();
 			}
 		}
 
 		/**
-		 * Render live SVG inside the admin Editor Area box according to active preset.
+		 * Render live SVG inside each rectangle box.
 		 */
-		renderAdminPreview() {
-			if (!this.$previewHolder.length) return;
+		renderAllBoxesPreviews() {
+			const count = $('.mr-tee-field-box').length;
+			for (let i = 0; i < count; i++) {
+				this.renderBoxPreview(i);
+			}
+		}
 
-			const preset = $('#mr_tee_template_preset').val() || 'super_mushroom_24987';
-			let innerSvg = '';
+		renderBoxPreview(idx) {
+			const $holder = $(`#mr-tee-box-svg-${idx}`);
+			if (!$holder.length) return;
 
-			if (preset === 'multicolor_embroidered_34225') {
-				innerSvg = `
-					<text x="50" y="24" font-family="'Bebas Neue', Arial Black, sans-serif" font-size="18" text-anchor="middle" dominant-baseline="central" filter="url(#admin-shadow)">
-						<tspan fill="#e1523d">P</tspan><tspan fill="#ebb042">A</tspan><tspan fill="#6aa6a3">P</tspan><tspan fill="#395c6b">A</tspan>
-					</text>
-					<text x="50" y="44" font-family="'Bebas Neue', Arial Black, sans-serif" font-size="18" text-anchor="middle" dominant-baseline="central" filter="url(#admin-shadow)">
-						<tspan fill="#e6c1a6">D</tspan><tspan fill="#4d4038">E</tspan>
-					</text>
-					<text x="50" y="64" font-family="'Bebas Neue', Arial Black, sans-serif" font-size="18" text-anchor="middle" dominant-baseline="central" filter="url(#admin-shadow)">
-						<tspan fill="#99b39a">J</tspan><tspan fill="#2f3e46">U</tspan><tspan fill="#a8dadc">L</tspan><tspan fill="#e63946">E</tspan><tspan fill="#e1523d">S</tspan>
-					</text>
-					<text x="50" y="84" font-family="'Bebas Neue', Arial Black, sans-serif" font-size="18" text-anchor="middle" dominant-baseline="central" filter="url(#admin-shadow)">
-						<tspan fill="#ebb042">&amp; </tspan><tspan fill="#6aa6a3">L</tspan><tspan fill="#395c6b">É</tspan><tspan fill="#e6c1a6">O</tspan>
-					</text>
-				`;
-			} else if (preset === 'leopard_pattern_mask_24000') {
-				innerSvg = `
-					<mask id="admin-leopard-mask" maskUnits="userSpaceOnUse">
-						<text x="50" y="40" font-family="'Arial Black', Impact, sans-serif" font-size="24" font-weight="900" text-anchor="middle" dominant-baseline="central" fill="#ffffff">MAMAN</text>
-					</mask>
-					<image href="/wp-content/plugins/mr_tee_editor/assets/images/leopard-pattern.png" x="15" y="25" width="70" height="30" preserveAspectRatio="xMidYMid slice" mask="url(#admin-leopard-mask)" filter="url(#admin-shadow)" />
-					<text x="50" y="70" font-family="'Abril Fatface', Georgia, serif" font-size="13" text-anchor="middle" dominant-baseline="central" fill="#934a32" filter="url(#admin-shadow)">
-						Léo, Chloé, Arthur
-					</text>
-				`;
-			} else if (preset === 'vintage_date_names_34359') {
-				innerSvg = `
-					<text x="50" y="26" font-family="'Pacifico', cursive" font-size="22" text-anchor="middle" dominant-baseline="central" fill="#111827" filter="url(#admin-shadow)">
-						Maman
-					</text>
-					<text x="50" y="42" font-family="'Cinzel Decorative', serif" font-size="9" font-weight="bold" letter-spacing="0.1em" text-anchor="middle" dominant-baseline="central" fill="#111827" filter="url(#admin-shadow)">
-						DEPUIS 2021
-					</text>
-					<path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" fill="#111827" transform="translate(47.5, 49) scale(0.22)" filter="url(#admin-shadow)" />
-					<text x="50" y="66" font-family="'Abril Fatface', Georgia, serif" font-size="12" text-anchor="middle" dominant-baseline="central" fill="#111827" filter="url(#admin-shadow)">
-						Oscar
-					</text>
-					<text x="50" y="77" font-family="'Abril Fatface', Georgia, serif" font-size="12" text-anchor="middle" dominant-baseline="central" fill="#111827" filter="url(#admin-shadow)">
-						Anna
-					</text>
-					<text x="50" y="88" font-family="'Abril Fatface', Georgia, serif" font-size="12" text-anchor="middle" dominant-baseline="central" fill="#111827" filter="url(#admin-shadow)">
-						Gaby
-					</text>
-				`;
-			} else {
-				innerSvg = `
-					<text x="50" y="24" font-family="SuperMario256, Arial Black, sans-serif" font-size="15" text-anchor="middle" dominant-baseline="central" stroke="#000" stroke-width="0.7" style="paint-order:stroke fill;" filter="url(#admin-shadow)">
-						<tspan fill="#209cee">S</tspan><tspan fill="#ffdd57">U</tspan><tspan fill="#ff3860">P</tspan><tspan fill="#23d160">E</tspan><tspan fill="#ffdd57">R</tspan>
-					</text>
-					<text x="50" y="44" font-family="SuperMario256, Arial Black, sans-serif" font-size="15" text-anchor="middle" dominant-baseline="central" stroke="#000" stroke-width="0.7" style="paint-order:stroke fill;" filter="url(#admin-shadow)">
-						<tspan fill="#ff3860">P</tspan><tspan fill="#209cee">A</tspan><tspan fill="#ffdd57">P</tspan><tspan fill="#23d160">A</tspan>
-					</text>
-					<circle cx="40" cy="70" r="8" fill="#e52521" stroke="#000" stroke-width="0.8" />
-					<text x="40" y="86" font-family="Arial, sans-serif" font-size="4" font-weight="bold" text-anchor="middle">Léo</text>
-					<circle cx="60" cy="70" r="8" fill="#43b047" stroke="#000" stroke-width="0.8" />
-					<text x="60" y="86" font-family="Arial, sans-serif" font-size="4" font-weight="bold" text-anchor="middle">Emma</text>
-				`;
+			const textVal = $(`input[name="mr_tee_config[text_lines][${idx}][default_text]"]`).val() || `Texte ${idx + 1}`;
+			const fontId = $(`select[name="mr_tee_config[text_lines][${idx}][font]"]`).val() || 'super_mario';
+
+			let fontFamily = `'Super Mario Wii', 'SuperMario256', Arial Black, sans-serif`;
+			let strokeColor = '#000000';
+			let strokeWidth = '0.7';
+
+			if (fontId.includes('press_start')) {
+				fontFamily = `'Press Start 2P', monospace`;
+				strokeWidth = '0.4';
+			} else if (fontId.includes('bungee')) {
+				fontFamily = `'Bungee', sans-serif`;
+			} else if (fontId.includes('bebas')) {
+				fontFamily = `'Bebas Neue', Arial Black, sans-serif`;
+				strokeColor = 'transparent';
+			} else if (fontId.includes('pacifico')) {
+				fontFamily = `'Pacifico', cursive`;
+				strokeColor = 'transparent';
+			} else if (fontId.includes('abril')) {
+				fontFamily = `'Abril Fatface', Georgia, serif`;
+				strokeColor = 'transparent';
+			} else if (fontId.includes('cinzel')) {
+				fontFamily = `'Cinzel Decorative', serif`;
+				strokeColor = 'transparent';
 			}
 
-			const rawScale = parseFloat($('#mr_tee_perso_scale').val());
-			const scale = (!isNaN(rawScale) && rawScale > 0) ? rawScale : 1.0;
-			const tx = parseFloat($('#mr_tee_perso_tx').val()) || 0.0;
-			const ty = parseFloat($('#mr_tee_perso_ty').val()) || 0.0;
-
+			// Render pure text scaled to fit inside this box
 			const svg = `
-				<svg viewBox="0 0 100 100" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" style="overflow:visible;">
-					<defs>
-						<filter id="admin-shadow">
-							<feDropShadow dx="0" dy="0.8" stdDeviation="0.4" flood-color="#000000" flood-opacity="0.35" />
-						</filter>
-					</defs>
-					<g transform="translate(${tx.toFixed(2)}, ${ty.toFixed(2)}) translate(50, 50) scale(${scale.toFixed(3)}) translate(-50, -50)">
-						${innerSvg}
-					</g>
+				<svg viewBox="0 0 100 100" width="100%" height="100%" preserveAspectRatio="none" style="overflow:visible;">
+					<text
+						x="50"
+						y="50"
+						font-family="${fontFamily}"
+						font-size="70"
+						text-anchor="middle"
+						dominant-baseline="central"
+						fill="#ffffff"
+						stroke="${strokeColor}"
+						stroke-width="${strokeWidth}"
+						textLength="92"
+						lengthAdjust="spacingAndGlyphs"
+						style="paint-order: stroke fill;"
+					>${this.escapeXml(textVal)}</text>
 				</svg>
 			`;
 
-			this.$previewHolder.html(svg);
+			$holder.html(svg);
+		}
+
+		bindPresetReset() {
+			const self = this;
+			$('#mr_tee_template_preset').on('change', function() {
+				// Preset switched - form can be submitted or preview updated
+				self.renderAllBoxesPreviews();
+			});
+		}
+
+		escapeXml(str) {
+			return String(str)
+				.replace(/&/g, '&amp;')
+				.replace(/</g, '&lt;')
+				.replace(/>/g, '&gt;')
+				.replace(/"/g, '&quot;')
+				.replace(/'/g, '&apos;');
 		}
 	}
 

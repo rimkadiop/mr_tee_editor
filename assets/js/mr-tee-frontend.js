@@ -7,12 +7,12 @@
  * @package MrTeeEditor\Assets
  */
 
-import { StateStore } from './modules/state-store.js?ver=2.0.8';
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?ver=2.0.8';
-import { SvgRenderer } from './modules/svg-renderer.js?ver=2.0.8';
-import { GalleryStage } from './modules/gallery-stage.js?ver=2.0.8';
-import { FormController } from './modules/form-controller.js?ver=2.0.8';
-import { PrintExporter } from './modules/print-exporter.js?ver=2.0.8';
+import { StateStore } from './modules/state-store.js?ver=2.1.0';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?ver=2.1.0';
+import { SvgRenderer } from './modules/svg-renderer.js?ver=2.1.0';
+import { GalleryStage } from './modules/gallery-stage.js?ver=2.1.0';
+import { FormController } from './modules/form-controller.js?ver=2.1.0';
+import { PrintExporter } from './modules/print-exporter.js?ver=2.1.0';
 
 class MrTeeFrontendApp {
 	constructor() {
@@ -71,7 +71,10 @@ class MrTeeFrontendApp {
 		const bbox = SceneGraphEngine.getAllLayersBBox(mergedLayers);
 
 		// 4. Compute auto-zoom and vertical auto-centering
-		const zoom = SceneGraphEngine.getAreaTransformValuesZoom(bbox, state.area && state.area.transform);
+		const hasPerLineBoxes = Array.isArray(this.config.text_lines) && this.config.text_lines.some(l => l.box_left !== undefined && l.box_width !== undefined);
+		const zoom = hasPerLineBoxes
+			? { scale: 1.0, translateX: 0.0, translateY: 0.0 }
+			: SceneGraphEngine.getAreaTransformValuesZoom(bbox, state.area && state.area.transform);
 
 		this.currentLayers = mergedLayers;
 		this.currentZoom = zoom;

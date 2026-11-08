@@ -165,10 +165,12 @@ export class GalleryStage {
 	recalibrateOverlayPosition(container, overlay) {
 		if (!container || !overlay) return;
 
-		const baseLeft = parseFloat(this.config.box_left) || 26.0;
-		const baseTop = parseFloat(this.config.box_top) || 23.0;
-		const baseWidth = parseFloat(this.config.box_width) || 48.0;
-		const baseHeight = parseFloat(this.config.box_height) || 54.0;
+		const hasPerLineBoxes = Array.isArray(this.config.text_lines) && this.config.text_lines.some(l => l.box_left !== undefined && l.box_width !== undefined);
+
+		let baseLeft = hasPerLineBoxes ? 0.0 : (parseFloat(this.config.box_left) || 26.0);
+		let baseTop = hasPerLineBoxes ? 0.0 : (parseFloat(this.config.box_top) || 23.0);
+		let baseWidth = hasPerLineBoxes ? 100.0 : (parseFloat(this.config.box_width) || 48.0);
+		let baseHeight = hasPerLineBoxes ? 100.0 : (parseFloat(this.config.box_height) || 54.0);
 
 		const img = container.querySelector('img.wp-post-image, .woocommerce-product-gallery__image img, img');
 		if (img && img.offsetWidth > 0 && container.offsetWidth > 0) {
@@ -218,10 +220,11 @@ export class GalleryStage {
 				zoomWrap.style.position = 'relative';
 			}
 
-			const left = parseFloat(this.config.box_left) || 26.0;
-			const top = parseFloat(this.config.box_top) || 23.0;
-			const width = parseFloat(this.config.box_width) || 48.0;
-			const height = parseFloat(this.config.box_height) || 54.0;
+			const hasPerLineBoxes = Array.isArray(this.config.text_lines) && this.config.text_lines.some(l => l.box_left !== undefined && l.box_width !== undefined);
+			const left = hasPerLineBoxes ? 0.0 : (parseFloat(this.config.box_left) || 26.0);
+			const top = hasPerLineBoxes ? 0.0 : (parseFloat(this.config.box_top) || 23.0);
+			const width = hasPerLineBoxes ? 100.0 : (parseFloat(this.config.box_width) || 48.0);
+			const height = hasPerLineBoxes ? 100.0 : (parseFloat(this.config.box_height) || 54.0);
 
 			let pswpOverlay = zoomWrap.querySelector('.mr-tee-live-stage-overlay-pswp');
 			let pswpHolder = null;

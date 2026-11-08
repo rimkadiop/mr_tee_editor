@@ -148,9 +148,15 @@ export class SvgRenderer {
 		const val = String(node.value || node.text || '');
 		if (!val.trim()) return '';
 
-		const x = parseFloat(node.x) || 50;
-		const y = parseFloat(node.y) || 50;
-		const baseFontSize = parseFloat(node.fontSize) || 12;
+		const hasBox = (node.box_width !== undefined && node.box_height !== undefined);
+		const boxW = hasBox ? parseFloat(node.box_width) : (parseFloat(node.maxWidth) || 84.0);
+		const boxH = hasBox ? parseFloat(node.box_height) : (parseFloat(node.fontSize) ? parseFloat(node.fontSize) * 1.5 : 12.0);
+		const boxL = (node.box_left !== undefined) ? parseFloat(node.box_left) : ((parseFloat(node.x) || 50) - (boxW / 2));
+		const boxT = (node.box_top !== undefined) ? parseFloat(node.box_top) : ((parseFloat(node.y) || 50) - (boxH / 2));
+
+		const x = boxL + (boxW / 2);
+		const y = boxT + (boxH / 2);
+
 		const rawFont = node.fontFamily || 'Super Mario Wii';
 		const fontFamily = (rawFont.includes('sans-serif') || rawFont.includes('serif'))
 			? rawFont
@@ -168,6 +174,15 @@ export class SvgRenderer {
 		const isMultiLine = lines.length > 1 || node.multiLine;
 		const numLines = Math.max(1, lines.length);
 
+		// Base font size derived directly from box height if box is present
+		let baseFontSize = parseFloat(node.fontSize);
+		if (isNaN(baseFontSize) || baseFontSize <= 0 || hasBox) {
+			const heightTarget = (boxH * 0.85) / (1 + (numLines - 1) * lineHeight * 0.8);
+			baseFontSize = (!isNaN(parseFloat(node.fontSize)) && parseFloat(node.fontSize) > 0 && !hasBox)
+				? parseFloat(node.fontSize)
+				: heightTarget;
+		}
+
 		// Calculate maximum line length
 		let maxLineLength = 0;
 		for (const l of lines) {
@@ -175,7 +190,8 @@ export class SvgRenderer {
 		}
 
 		// Calculate unscaled text width & height
-		const maxWidth = parseFloat(node.maxWidth) || 84.0;
+		const maxWidth = hasBox ? (boxW * 0.95) : (parseFloat(node.maxWidth) || 84.0);
+		const maxHeight = hasBox ? (boxH * 0.92) : (parseFloat(node.maxHeight) || 80.0);
 		const estimatedRawWidth = baseFontSize * (maxLineLength * metrics.charRatio + Math.max(0, maxLineLength - 1) * letterSpacingEm);
 
 		// Calculate width scale factor
@@ -187,7 +203,6 @@ export class SvgRenderer {
 		// Calculate multi-line height constraint if applicable
 		let scaleH = 1.0;
 		const rawTotalHeight = baseFontSize + ((numLines - 1) * baseFontSize * lineHeight);
-		const maxHeight = parseFloat(node.maxHeight) || (node.y ? Math.min(node.y * 1.8, (100 - node.y) * 1.8) : 80.0);
 		if (rawTotalHeight > maxHeight && maxHeight > 0) {
 			scaleH = maxHeight / rawTotalHeight;
 		}

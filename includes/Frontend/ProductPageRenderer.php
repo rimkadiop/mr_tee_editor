@@ -42,9 +42,13 @@ class ProductPageRenderer {
 	 */
 	public static function filter_script_loader_tag( $tag, $handle, $src ) {
 		if ( 'mr-tee-frontend-js' === $handle ) {
-			$proto = is_ssl() ? 'https:' : 'http:';
-			$src   = preg_replace( '#^https?:#', $proto, $src );
-			return sprintf( '<script type="module" src="%s" id="mr-tee-frontend-js-js"></script>', esc_url( $src ) );
+			// Convert to root-relative path to completely eliminate CORS scheme mismatches
+			$parsed = wp_parse_url( $src );
+			$path   = ! empty( $parsed['path'] ) ? $parsed['path'] : $src;
+			if ( ! empty( $parsed['query'] ) ) {
+				$path .= '?' . $parsed['query'];
+			}
+			return sprintf( '<script type="module" src="%s" id="mr-tee-frontend-js-js"></script>', esc_url( $path ) );
 		}
 		return $tag;
 	}

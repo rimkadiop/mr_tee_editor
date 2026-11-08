@@ -62,6 +62,10 @@ class SceneGraphSchema {
 							'color_ref_id'     => 'id-ref-color-bebas-1',
 							'label'            => 'Texte brodé (jusqu\'à 4 lignes)',
 							'default_text'     => "PAPA\nDE\nJULES\n& LÉO",
+							'box_left'         => 31.0,
+							'box_top'          => 32.0,
+							'box_width'        => 38.0,
+							'box_height'       => 36.0,
 							'multiline'        => true,
 							'max_lines'        => 4,
 							'line_height'      => 0.88,
@@ -115,6 +119,10 @@ class SceneGraphSchema {
 							'color_ref_id'     => 'id-ref-color-mask-1',
 							'label'            => 'Texte motif léopard (ex: MAMAN, MAMIE)',
 							'default_text'     => 'MAMAN',
+							'box_left'         => 28.0,
+							'box_top'          => 28.0,
+							'box_width'        => 44.0,
+							'box_height'       => 18.0,
 							'max_chars'        => 12,
 							'font'             => 'cocogoose',
 							'allowed_fonts'    => array( 'cocogoose', 'bebas', 'bungee' ),
@@ -137,6 +145,10 @@ class SceneGraphSchema {
 							'color_ref_id'     => 'id-ref-color-script-2',
 							'label'            => 'Prénoms des enfants',
 							'default_text'     => 'Léo, Chloé, Arthur',
+							'box_left'         => 28.0,
+							'box_top'          => 48.0,
+							'box_width'        => 44.0,
+							'box_height'       => 10.0,
 							'max_chars'        => 40,
 							'font'             => 'pacifico',
 							'allowed_fonts'    => array( 'pacifico', 'abril', 'marker' ),
@@ -193,6 +205,10 @@ class SceneGraphSchema {
 							'color_ref_id'     => 'id-ref-color-shared-1',
 							'label'            => 'Titre (Calligraphie)',
 							'default_text'     => 'Maman',
+							'box_left'         => 30.0,
+							'box_top'          => 26.0,
+							'box_width'        => 40.0,
+							'box_height'       => 12.0,
 							'max_chars'        => 16,
 							'font'             => 'pacifico',
 							'allowed_fonts'    => array( 'pacifico', 'abril' ),
@@ -223,6 +239,10 @@ class SceneGraphSchema {
 							'color_ref_id'     => 'id-ref-color-shared-1',
 							'label'            => 'Sous-titre (Date)',
 							'default_text'     => 'depuis 2021',
+							'box_left'         => 35.0,
+							'box_top'          => 39.0,
+							'box_width'        => 30.0,
+							'box_height'       => 6.0,
 							'max_chars'        => 20,
 							'font'             => 'cinzel',
 							'allowed_fonts'    => array( 'cinzel', 'bebas' ),
@@ -243,6 +263,10 @@ class SceneGraphSchema {
 							'color_ref_id'     => 'id-ref-color-shared-1',
 							'label'            => 'Prénoms des enfants (1 par ligne)',
 							'default_text'     => "Oscar\nAnna\nGaby",
+							'box_left'         => 32.0,
+							'box_top'          => 48.0,
+							'box_width'        => 36.0,
+							'box_height'       => 24.0,
 							'max_chars'        => 50,
 							'max_lines'        => 4,
 							'multiline'        => true,
@@ -300,6 +324,10 @@ class SceneGraphSchema {
 							'color_ref_id'     => 'id-ref-color-line-1',
 							'label'            => 'Texte 1',
 							'default_text'     => 'Super',
+							'box_left'         => 30.0,
+							'box_top'          => 25.0,
+							'box_width'        => 40.0,
+							'box_height'       => 8.5,
 							'max_chars'        => 15,
 							'font'             => 'super_mario',
 							'allowed_fonts'    => array( 'super_mario', 'press_start', 'bungee', 'luckiest_guy', 'cocogoose', 'bebas' ),
@@ -320,6 +348,10 @@ class SceneGraphSchema {
 							'color_ref_id'     => 'id-ref-color-line-2',
 							'label'            => 'Texte 2 (Prénom)',
 							'default_text'     => 'Papa',
+							'box_left'         => 30.0,
+							'box_top'          => 34.5,
+							'box_width'        => 40.0,
+							'box_height'       => 8.5,
 							'max_chars'        => 15,
 							'font'             => 'super_mario',
 							'allowed_fonts'    => array( 'super_mario', 'press_start', 'bungee', 'luckiest_guy', 'cocogoose', 'bebas' ),
@@ -347,6 +379,10 @@ class SceneGraphSchema {
 						'default_count' => 2,
 						'max_chars'     => 12,
 						'items_per_row' => 3,
+						'box_left'      => 28.0,
+						'box_top'       => 45.0,
+						'box_width'     => 44.0,
+						'box_height'    => 28.0,
 						'row1_y_pct'    => 50.2,
 						'row1_text_y'   => 62.263,
 						'row2_y_pct'    => 73.2,
@@ -399,17 +435,54 @@ class SceneGraphSchema {
 		$config['engine']        = ! empty( $engine ) ? $engine : ( isset( $defaults['engine'] ) ? $defaults['engine'] : 'none' );
 		$config['nbd_handshake'] = isset( $saved['nbd_handshake'] ) ? (bool) $saved['nbd_handshake'] : true;
 
-		// Preset-aware text lines parsing
+		// Dynamic text lines parsing supporting arbitrary number of custom fields
 		if ( empty( $config['text_lines'] ) || ! is_array( $config['text_lines'] ) ) {
 			$config['text_lines'] = $defaults['text_lines'];
 		} else {
 			$normalized_lines = array();
-			foreach ( $defaults['text_lines'] as $idx => $def_line ) {
-				if ( isset( $config['text_lines'][ $idx ] ) ) {
-					$normalized_lines[ $idx ] = wp_parse_args( $config['text_lines'][ $idx ], $def_line );
+			$line_index = 0;
+			foreach ( $config['text_lines'] as $idx => $line_data ) {
+				$line_num = $line_index + 1;
+				$def_line = isset( $defaults['text_lines'][ $line_index ] ) ? $defaults['text_lines'][ $line_index ] : array(
+					'id'               => 'custom_line_' . $line_num,
+					'ref_id'           => 'id-ref-text-line-' . $line_num,
+					'color_ref_id'     => 'id-ref-color-line-' . $line_num,
+					'label'            => sprintf( __( 'Champ %d', 'mr-tee-editor' ), $line_num ),
+					'default_text'     => sprintf( __( 'Texte %d', 'mr-tee-editor' ), $line_num ),
+					'box_left'         => 25.0,
+					'box_top'          => 20.0 + ( $line_index * 12.0 ),
+					'box_width'        => 50.0,
+					'box_height'       => 10.0,
+					'max_chars'        => 30,
+					'font'             => 'bebas',
+					'allowed_fonts'    => array( 'bebas', 'super_mario', 'press_start', 'bungee', 'pacifico' ),
+					'allow_font_pick'  => true,
+					'allow_color_pick' => true,
+					'color_mode'       => 'solid',
+					'color_hex'        => '#111827',
+				);
+
+				$merged = wp_parse_args( $line_data, $def_line );
+
+				// Ensure per-line box coordinates exist
+				if ( ! isset( $merged['box_width'] ) || ! isset( $merged['box_height'] ) || ! isset( $merged['box_left'] ) || ! isset( $merged['box_top'] ) ) {
+					$box_w = isset( $merged['max_width'] ) ? floatval( $merged['max_width'] ) : 40.0;
+					$box_h = isset( $merged['font_size'] ) ? floatval( $merged['font_size'] ) * 1.5 : 8.5;
+					$box_l = 50.0 - ( $box_w / 2.0 );
+					$box_t = isset( $merged['y_pct'] ) ? floatval( $merged['y_pct'] ) - ( $box_h / 2.0 ) : ( 25.0 + $line_index * 12.0 );
+					$merged['box_left']   = isset( $merged['box_left'] ) ? floatval( $merged['box_left'] ) : $box_l;
+					$merged['box_top']    = isset( $merged['box_top'] ) ? floatval( $merged['box_top'] ) : $box_t;
+					$merged['box_width']  = isset( $merged['box_width'] ) ? floatval( $merged['box_width'] ) : $box_w;
+					$merged['box_height'] = isset( $merged['box_height'] ) ? floatval( $merged['box_height'] ) : $box_h;
 				} else {
-					$normalized_lines[ $idx ] = $def_line;
+					$merged['box_left']   = floatval( $merged['box_left'] );
+					$merged['box_top']    = floatval( $merged['box_top'] );
+					$merged['box_width']  = floatval( $merged['box_width'] );
+					$merged['box_height'] = floatval( $merged['box_height'] );
 				}
+
+				$normalized_lines[] = $merged;
+				$line_index++;
 			}
 			$config['text_lines'] = $normalized_lines;
 		}
@@ -545,15 +618,28 @@ class SceneGraphSchema {
 				$created_color_refs[] = $color_ref_id;
 			}
 
+			$box_w = isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : ( isset( $line['max_width'] ) ? floatval( $line['max_width'] ) : 40.0 );
+			$box_h = isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : ( isset( $line['font_size'] ) ? floatval( $line['font_size'] ) * 1.5 : 8.5 );
+			$box_l = isset( $line['box_left'] ) ? floatval( $line['box_left'] ) : ( 50.0 - ( $box_w / 2.0 ) );
+			$box_t = isset( $line['box_top'] ) ? floatval( $line['box_top'] ) : ( isset( $line['y_pct'] ) ? floatval( $line['y_pct'] ) - ( $box_h / 2.0 ) : 30.0 );
+			$center_x = $box_l + ( $box_w / 2.0 );
+			$center_y = $box_t + ( $box_h / 2.0 );
+			$font_size = isset( $line['font_size'] ) && floatval( $line['font_size'] ) > 0 ? floatval( $line['font_size'] ) : ( $box_h * 0.85 );
+
 			$text_layer = array(
 				'type'               => 'TEXT',
 				'name'               => $line['label'],
 				'reference'          => $text_ref_id,
 				'colorReference'     => $color_ref_id,
-				'x'                  => 50.0,
-				'y'                  => floatval( $line['y_pct'] ),
-				'fontSize'           => floatval( $line['font_size'] ),
-				'maxWidth'           => isset( $line['max_width'] ) ? floatval( $line['max_width'] ) : 84.0,
+				'x'                  => $center_x,
+				'y'                  => $center_y,
+				'box_left'           => $box_l,
+				'box_top'            => $box_t,
+				'box_width'          => $box_w,
+				'box_height'         => $box_h,
+				'fontSize'           => $font_size,
+				'maxWidth'           => $box_w * 0.95,
+				'maxHeight'          => $box_h * 0.92,
 				'textAnchor'         => 'middle',
 				'textAnchorVertical' => 'middle',
 				'multiLine'          => ! empty( $line['multiline'] ),
@@ -571,10 +657,10 @@ class SceneGraphSchema {
 					'type'       => 'MASK',
 					'name'       => 'Masque ' . $line['label'],
 					'textureUrl' => ! empty( $line['texture_url'] ) ? $line['texture_url'] : MR_TEE_EDITOR_URL . 'assets/images/leopard-pattern.png',
-					'x'          => 15.0,
-					'y'          => floatval( $line['y_pct'] ) - 15.0,
-					'width'      => 70.0,
-					'height'     => 30.0,
+					'x'          => $box_l,
+					'y'          => $box_t,
+					'width'      => $box_w,
+					'height'     => $box_h,
 					'items'      => array( $text_layer ),
 				);
 			} else {

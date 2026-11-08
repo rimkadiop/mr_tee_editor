@@ -42,6 +42,8 @@ class ProductPageRenderer {
 	 */
 	public static function filter_script_loader_tag( $tag, $handle, $src ) {
 		if ( 'mr-tee-frontend-js' === $handle ) {
+			$proto = is_ssl() ? 'https:' : 'http:';
+			$src   = preg_replace( '#^https?:#', $proto, $src );
 			return sprintf( '<script type="module" src="%s" id="mr-tee-frontend-js-js"></script>', esc_url( $src ) );
 		}
 		return $tag;

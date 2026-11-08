@@ -247,10 +247,10 @@ class FontRegistry {
 	}
 
 	/**
-	 * Build inline @font-face CSS declarations for all registered fonts.
+	 * Build clean inline @font-face CSS declarations for all registered fonts.
 	 *
-	 * Embeds base64 data URIs so fonts load instantaneously with zero network
-	 * latency and render perfectly on HTML5 canvas and SVG print exports.
+	 * Uses direct font URLs so fonts load asynchronously, cache in browser cache,
+	 * and eliminate massive base64 payload bloat (>4.7MB) in HTML source.
 	 * Also registers all family aliases to prevent any font mismatch.
 	 *
 	 * @return string
@@ -258,12 +258,7 @@ class FontRegistry {
 	public static function get_font_face_css() {
 		$css = '';
 		foreach ( self::get_fonts() as $font ) {
-			if ( ! empty( $font['path'] ) && file_exists( $font['path'] ) ) {
-				$font_data = file_get_contents( $font['path'] );
-				$base64    = base64_encode( $font_data );
-				$mime_type = 'font/' . ( 'truetype' === $font['format'] ? 'ttf' : $font['format'] );
-				$data_uri  = 'data:' . $mime_type . ';charset=utf-8;base64,' . $base64;
-
+			if ( ! empty( $font['url'] ) ) {
 				$font_url = esc_url( $font['url'] );
 				if ( isset( $_SERVER['HTTP_HOST'] ) ) {
 					$proto    = is_ssl() ? 'https://' : 'http://';
@@ -272,10 +267,8 @@ class FontRegistry {
 
 				// Primary font-family declaration
 				$css .= sprintf(
-					"@font-face { font-family: '%s'; src: url('%s') format('%s'), url('%s') format('%s'); font-weight: normal; font-style: normal; font-display: block; }\n",
+					"@font-face { font-family: '%s'; src: url('%s') format('%s'); font-weight: normal; font-style: normal; font-display: swap; }\n",
 					esc_attr( $font['family'] ),
-					$data_uri,
-					esc_attr( $font['format'] ),
 					$font_url,
 					esc_attr( $font['format'] )
 				);
@@ -285,9 +278,9 @@ class FontRegistry {
 					foreach ( $font['aliases'] as $alias ) {
 						if ( $alias !== $font['family'] ) {
 							$css .= sprintf(
-								"@font-face { font-family: '%s'; src: url('%s') format('%s'); font-weight: normal; font-style: normal; font-display: block; }\n",
+								"@font-face { font-family: '%s'; src: url('%s') format('%s'); font-weight: normal; font-style: normal; font-display: swap; }\n",
 								esc_attr( $alias ),
-								$data_uri,
+								$font_url,
 								esc_attr( $font['format'] )
 							);
 						}

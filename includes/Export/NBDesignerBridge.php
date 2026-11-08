@@ -67,12 +67,17 @@ class NBDesignerBridge {
 			wp_mkdir_p( $nbd_dir . '/svg' );
 		}
 
-		// 1. Artifacts: Preview images (both root design_preview.png and preview/frame_0.png)
+		// 1. Artifacts: Preview images (both root design_preview and preview/frame_0)
 		if ( ! empty( $preview_b64 ) ) {
 			$raw_b64 = strpos( $preview_b64, 'base64,' ) !== false ? explode( 'base64,', $preview_b64 )[1] : $preview_b64;
 			$decoded = base64_decode( $raw_b64 );
+			$is_jpg  = ( strpos( $preview_b64, 'image/jpeg' ) !== false || strpos( $preview_b64, 'image/jpg' ) !== false );
 			file_put_contents( trailingslashit( $nbd_dir ) . 'design_preview.png', $decoded );
 			file_put_contents( trailingslashit( $nbd_dir ) . 'preview/frame_0.png', $decoded );
+			if ( $is_jpg ) {
+				file_put_contents( trailingslashit( $nbd_dir ) . 'design_preview.jpg', $decoded );
+				file_put_contents( trailingslashit( $nbd_dir ) . 'preview/frame_0.jpg', $decoded );
+			}
 		}
 
 		// 2. Artifacts: SVG scene-graphs (root frame_0.svg, root design.svg, and svg/frame_0.svg)

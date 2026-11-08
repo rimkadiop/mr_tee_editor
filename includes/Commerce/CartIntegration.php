@@ -63,7 +63,12 @@ class CartIntegration {
 
 		// Save files to disk
 		$sub_dir     = 'designs/' . $design_key;
-		$preview_res = PrintAssetGenerator::save_base64_png( $preview_png, $sub_dir, 'design_preview.png' );
+		$is_jpeg     = ( strpos( $preview_png, 'image/jpeg' ) !== false || strpos( $preview_png, 'image/jpg' ) !== false );
+		$preview_ext = $is_jpeg ? 'design_preview.jpg' : 'design_preview.png';
+		$preview_res = PrintAssetGenerator::save_base64_png( $preview_png, $sub_dir, $preview_ext );
+		if ( $preview_res && $is_jpeg ) {
+			@copy( $preview_res['file'], dirname( $preview_res['file'] ) . '/design_preview.png' );
+		}
 		$svg_res     = PrintAssetGenerator::save_svg( $vector_svg, $sub_dir, 'design.svg' );
 		$print_res   = PrintAssetGenerator::save_base64_png( $print_300dpi, $sub_dir, 'print_300dpi.png' );
 

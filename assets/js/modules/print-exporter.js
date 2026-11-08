@@ -23,16 +23,16 @@ export class PrintExporter {
 		const printW = parseInt(config.print_width_px, 10) || 2400;
 		const printH = parseInt(config.print_height_px, 10) || 3000;
 
-		// 1. Build self-contained vector SVG markup
+		// 1. Build self-contained, clean vector SVG markup (clean @font-face URLs, no base64 bloat)
 		const svgMarkup = SvgRenderer.renderToString(layers, zoomTransform, {
 			isExport: true,
 			fontFaceCss: this.extractFontFaceCss(),
 		});
 
-		// 2. Rasterize to 300 DPI Transparent PNG
+		// 2. Rasterize to 300 DPI Transparent PNG (lossless print output)
 		const print300DpiB64 = await this.rasterizeSvgToPng(svgMarkup, printW, printH);
 
-		// 3. Render Composite Mockup Preview (Garment + Design)
+		// 3. Render Composite Mockup Preview (Garment + Design) as compact high-quality JPEG
 		const compositeB64 = await this.renderCompositePreview(svgMarkup, config);
 
 		// 4. Serialize payload
@@ -89,7 +89,7 @@ export class PrintExporter {
 	}
 
 	/**
-	 * Render composite mockup image (garment photo + overlay design).
+	 * Render composite mockup image (garment photo + overlay design) as a lightweight high-quality JPEG.
 	 *
 	 * @param {string} svgMarkup SVG markup.
 	 * @param {Object} config Product configuration.
@@ -97,14 +97,19 @@ export class PrintExporter {
 	 */
 	static renderCompositePreview(svgMarkup, config) {
 		return new Promise((resolve) => {
-			const garmentImg = document.querySelector('.woocommerce-product-gallery__image img') ||
+			const garmentImg = document.querySelector('.woocommerce-product-gallery__image img:not(.emoji):not(.zoomImg)') ||
 				document.querySelector('.mr-tee-stage-garment-img') ||
-				document.querySelector('.product .images img');
+				document.querySelector('.product .images img:not(.emoji):not(.zoomImg)');
 
+			const size = 800;
 			const canvas = document.createElement('canvas');
-			canvas.width = 1200;
-			canvas.height = 1200;
+			canvas.width = size;
+			canvas.height = size;
 			const ctx = canvas.getContext('2d');
+
+			// Solid white backdrop for JPEG export
+			ctx.fillStyle = '#ffffff';
+			ctx.fillRect(0, 0, size, size);
 
 			const drawDesign = () => {
 				const blob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
@@ -112,19 +117,19 @@ export class PrintExporter {
 				const designImg = new Image();
 
 				designImg.onload = () => {
-					const left = (parseFloat(config.box_left) || 26.0) / 100 * 1200;
-					const top = (parseFloat(config.box_top) || 23.0) / 100 * 1200;
-					const w = (parseFloat(config.box_width) || 48.0) / 100 * 1200;
-					const h = (parseFloat(config.box_height) || 54.0) / 100 * 1200;
+					const left = (parseFloat(config.box_left) || 26.0) / 100 * size;
+					const top = (parseFloat(config.box_top) || 23.0) / 100 * size;
+					const w = (parseFloat(config.box_width) || 48.0) / 100 * size;
+					const h = (parseFloat(config.box_height) || 54.0) / 100 * size;
 
 					ctx.drawImage(designImg, left, top, w, h);
 					URL.revokeObjectURL(url);
-					resolve(canvas.toDataURL('image/png'));
+					resolve(canvas.toDataURL('image/jpeg', 0.85));
 				};
 
 				designImg.onerror = () => {
 					URL.revokeObjectURL(url);
-					resolve(canvas.toDataURL('image/png'));
+					resolve(canvas.toDataURL('image/jpeg', 0.85));
 				};
 
 				designImg.src = url;
@@ -132,30 +137,29 @@ export class PrintExporter {
 
 			if (garmentImg && garmentImg.complete && garmentImg.naturalWidth > 0) {
 				try {
-					ctx.drawImage(garmentImg, 0, 0, 1200, 1200);
+					ctx.drawImage(garmentImg, 0, 0, size, size);
 					drawDesign();
 				} catch (e) {
 					// CORS or tainted canvas fallback
-					ctx.fillStyle = '#ffffff';
-					ctx.fillRect(0, 0, 1200, 1200);
 					drawDesign();
 				}
 			} else {
-				ctx.fillStyle = '#f3f4f6';
-				ctx.fillRect(0, 0, 1200, 1200);
 				drawDesign();
 			}
 		});
 	}
 
 	/**
-	 * Extract active @font-face CSS rules from page stylesheets.
+	 * Extract lightweight @font-face CSS rules from page stylesheets, strictly excluding giant base64 bloat.
 	 *
 	 * @return {string}
 	 */
 	static extractFontFaceCss() {
 		if (typeof window !== 'undefined' && window.mrTeeProductData && window.mrTeeProductData.fontFaceCss) {
-			return window.mrTeeProductData.fontFaceCss;
+			const css = window.mrTeeProductData.fontFaceCss;
+			if (!css.includes('data:font') || css.length < 50000) {
+				return css;
+			}
 		}
 
 		let css = '';
@@ -165,7 +169,10 @@ export class PrintExporter {
 					const rules = sheet.cssRules || sheet.rules;
 					for (const rule of rules) {
 						if (rule.type === CSSRule.FONT_FACE_RULE) {
-							css += rule.cssText + '\n';
+							// Filter out rules with massive embedded base64 to keep SVG payload lightweight
+							if (!rule.cssText.includes('data:font') || rule.cssText.length < 5000) {
+								css += rule.cssText + '\n';
+							}
 						}
 					}
 				} catch (e) {

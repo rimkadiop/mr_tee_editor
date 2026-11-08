@@ -63,9 +63,89 @@ class VisualPlacementStage {
 			);
 		}
 
-		$fonts = FontRegistry::get_fonts();
+		$fonts       = FontRegistry::get_fonts();
+		$unit        = ! empty( $config['print_unit'] ) ? $config['print_unit'] : 'cm';
+		$real_w      = isset( $config['print_real_width'] ) ? floatval( $config['print_real_width'] ) : 30.0;
+		$real_h      = isset( $config['print_real_height'] ) ? floatval( $config['print_real_height'] ) : 40.0;
+		$dpi         = isset( $config['dpi'] ) ? intval( $config['dpi'] ) : 300;
+		$prod_type   = ! empty( $config['product_type'] ) ? $config['product_type'] : 'garment';
+		$lock_ratio  = isset( $config['lock_aspect_ratio'] ) ? ! empty( $config['lock_aspect_ratio'] ) : ( 'flat_object' === $prod_type );
+		$ratio       = isset( $config['print_aspect_ratio'] ) ? floatval( $config['print_aspect_ratio'] ) : ( ( $real_h > 0 ) ? round( $real_w / $real_h, 4 ) : 0.75 );
+		$print_w_px  = isset( $config['print_width_px'] ) ? intval( $config['print_width_px'] ) : 2400;
+		$print_h_px  = isset( $config['print_height_px'] ) ? intval( $config['print_height_px'] ) : 3000;
 		?>
 		<div class="mr-tee-stage-wrapper">
+			<!-- Physical Dimensions & Automatic Aspect Ratio Toolbar -->
+			<div class="mr-tee-dimension-toolbar" id="mr-tee-dimension-toolbar">
+				<div class="mr-tee-dim-inputs-grid">
+					<div class="mr-tee-dim-field">
+						<label for="mr_tee_product_type"><strong><?php esc_html_e( 'Type de Produit', 'mr-tee-editor' ); ?></strong></label>
+						<select id="mr_tee_product_type" name="mr_tee_config[product_type]" class="mr-tee-dim-select">
+							<option value="garment" <?php selected( $prod_type, 'garment' ); ?>><?php esc_html_e( '👕 Vêtement / Textile (Zone sur mockup)', 'mr-tee-editor' ); ?></option>
+							<option value="flat_object" <?php selected( $prod_type, 'flat_object' ); ?>><?php esc_html_e( '📇 Objet Plat / Surface Complète (Carte, Plaque, Mug, Flyer)', 'mr-tee-editor' ); ?></option>
+						</select>
+					</div>
+
+					<div class="mr-tee-dim-field mr-tee-dim-field-unit">
+						<label for="mr_tee_print_unit"><?php esc_html_e( 'Unité', 'mr-tee-editor' ); ?></label>
+						<select id="mr_tee_print_unit" name="mr_tee_config[print_unit]" class="mr-tee-dim-select">
+							<option value="cm" <?php selected( $unit, 'cm' ); ?>>cm</option>
+							<option value="mm" <?php selected( $unit, 'mm' ); ?>>mm</option>
+							<option value="in" <?php selected( $unit, 'in' ); ?>>pouces (in)</option>
+						</select>
+					</div>
+
+					<div class="mr-tee-dim-field">
+						<label for="mr_tee_real_width"><?php esc_html_e( 'Largeur Réelle (W)', 'mr-tee-editor' ); ?></label>
+						<input type="number" step="0.1" min="0.5" id="mr_tee_real_width" name="mr_tee_config[print_real_width]" value="<?php echo esc_attr( $real_w ); ?>" class="small-text mr-tee-dim-input" />
+					</div>
+
+					<div class="mr-tee-dim-field">
+						<label for="mr_tee_real_height"><?php esc_html_e( 'Hauteur Réelle (H)', 'mr-tee-editor' ); ?></label>
+						<input type="number" step="0.1" min="0.5" id="mr_tee_real_height" name="mr_tee_config[print_real_height]" value="<?php echo esc_attr( $real_h ); ?>" class="small-text mr-tee-dim-input" />
+					</div>
+
+					<div class="mr-tee-dim-field">
+						<label for="mr_tee_dpi"><?php esc_html_e( 'DPI', 'mr-tee-editor' ); ?></label>
+						<input type="number" min="72" max="1200" id="mr_tee_dpi" name="mr_tee_config[dpi]" value="<?php echo esc_attr( $dpi ); ?>" class="small-text mr-tee-dim-input" />
+					</div>
+
+					<div class="mr-tee-dim-field mr-tee-dim-field-lock">
+						<label>
+							<input type="checkbox" id="mr_tee_lock_aspect_ratio" name="mr_tee_config[lock_aspect_ratio]" value="1" <?php checked( $lock_ratio ); ?> />
+							<strong><?php esc_html_e( 'Verrouiller le ratio sur tous les écrans', 'mr-tee-editor' ); ?></strong>
+						</label>
+						<span class="description" style="display:block; font-size:11px; color:#64748b;"><?php esc_html_e( 'Affiche l\'image dans ce ratio exact sur mobile, tablette et PC', 'mr-tee-editor' ); ?></span>
+					</div>
+				</div>
+
+				<!-- Quick Dimensions Presets -->
+				<div class="mr-tee-presets-fast-bar">
+					<span class="mr-tee-fast-label"><?php esc_html_e( 'Gabarits rapides :', 'mr-tee-editor' ); ?></span>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="garment" data-unit="cm" data-w="30" data-h="40" data-lock="0"><?php esc_html_e( 'T-Shirt Platen (30 × 40 cm)', 'mr-tee-editor' ); ?></button>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="8.9" data-h="5.1" data-lock="1"><?php esc_html_e( 'Carte de Visite (8.9 × 5.1 cm)', 'mr-tee-editor' ); ?></button>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="20" data-h="15" data-lock="1"><?php esc_html_e( 'Plaque / Cadre (20 × 15 cm)', 'mr-tee-editor' ); ?></button>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="20" data-h="9.5" data-lock="1"><?php esc_html_e( 'Mug Wrap (20 × 9.5 cm)', 'mr-tee-editor' ); ?></button>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="21" data-h="29.7" data-lock="1"><?php esc_html_e( 'Flyer / Page A4 (21 × 29.7 cm)', 'mr-tee-editor' ); ?></button>
+				</div>
+
+				<!-- Live Ratio & 300 DPI Export Badge -->
+				<div class="mr-tee-ratio-badge" id="mr-tee-ratio-badge">
+					<span class="mr-tee-badge-icon dashicons dashicons-image-crop"></span>
+					<span class="mr-tee-badge-ratio-text">
+						<strong><?php esc_html_e( 'Ratio Calculé :', 'mr-tee-editor' ); ?></strong>
+						<span id="mr-tee-badge-ratio-val"><?php echo esc_html( round( $real_w, 1 ) . ' : ' . round( $real_h, 1 ) . ' (' . round( $ratio, 3 ) . ')' ); ?></span>
+					</span>
+					<span class="mr-tee-badge-divider">|</span>
+					<span class="mr-tee-badge-px-text">
+						<strong><?php esc_html_e( 'Fichier 300 DPI :', 'mr-tee-editor' ); ?></strong>
+						<span id="mr-tee-badge-px-val"><?php echo esc_html( $print_w_px . ' × ' . $print_h_px . ' px' ); ?></span>
+					</span>
+					<span class="mr-tee-badge-divider">|</span>
+					<span class="mr-tee-badge-status-pill"><?php esc_html_e( '100% Print-Ready', 'mr-tee-editor' ); ?></span>
+				</div>
+			</div>
+
 			<!-- Header Field Pills Bar -->
 			<div class="mr-tee-stage-pills-bar" id="mr-tee-stage-pills-bar">
 				<div class="mr-tee-pills-scroll" id="mr-tee-pills-list">
@@ -95,7 +175,7 @@ class VisualPlacementStage {
 			<div class="mr-tee-stage-container">
 				<!-- Stage Canvas Column -->
 				<div class="mr-tee-stage-col-preview">
-					<div class="mr-tee-stage-canvas-wrap" id="mr-tee-stage-canvas-wrap">
+					<div class="mr-tee-stage-canvas-wrap <?php echo ( ! empty( $lock_ratio ) || 'flat_object' === $prod_type ) ? 'is-aspect-locked' : ''; ?>" id="mr-tee-stage-canvas-wrap" style="<?php echo ( ! empty( $lock_ratio ) || 'flat_object' === $prod_type ) ? 'aspect-ratio: ' . esc_attr( $ratio ) . ';' : ''; ?>">
 						<img src="<?php echo esc_url( $thumb_url ); ?>" alt="Garment Preview" class="mr-tee-stage-garment-img" id="mr-tee-stage-garment-img" />
 
 						<!-- Multi-Rectangle Design Area Boxes -->

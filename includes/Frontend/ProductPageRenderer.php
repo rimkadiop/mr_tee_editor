@@ -88,6 +88,13 @@ class ProductPageRenderer {
 	public static function filter_body_class( $classes ) {
 		if ( self::is_active() ) {
 			$classes[] = 'has-mr-tee-editor';
+			global $post;
+			if ( $post ) {
+				$config = SceneGraphSchema::get_product_config( $post->ID );
+				if ( ! empty( $config['lock_aspect_ratio'] ) || ( isset( $config['product_type'] ) && 'flat_object' === $config['product_type'] ) ) {
+					$classes[] = 'mr-tee-locked-aspect-ratio';
+				}
+			}
 		}
 		return $classes;
 	}
@@ -122,6 +129,16 @@ class ProductPageRenderer {
 		// Dynamic @font-face CSS
 		$font_face_css = FontRegistry::get_font_face_css();
 		wp_add_inline_style( 'mr-tee-frontend-style', $font_face_css );
+
+		// Dynamic Aspect Ratio CSS Variables
+		$ratio     = isset( $config['print_aspect_ratio'] ) ? floatval( $config['print_aspect_ratio'] ) : 1.0;
+		$ratio_css = sprintf(
+			':root { --mr-tee-aspect-ratio: %s; --mr-tee-real-width: %s; --mr-tee-real-height: %s; }',
+			$ratio,
+			isset( $config['print_real_width'] ) ? floatval( $config['print_real_width'] ) : 30.0,
+			isset( $config['print_real_height'] ) ? floatval( $config['print_real_height'] ) : 40.0
+		);
+		wp_add_inline_style( 'mr-tee-frontend-style', $ratio_css );
 
 		// Frontend JavaScript Orchestrator
 		wp_enqueue_script(

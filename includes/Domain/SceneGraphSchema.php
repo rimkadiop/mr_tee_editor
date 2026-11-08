@@ -44,6 +44,12 @@ class SceneGraphSchema {
 					'nbd_handshake'       => true,
 					'print_Effect3D'      => true,
 					'dpi'                 => 300,
+					'print_unit'          => 'cm',
+					'print_real_width'    => 20.0,
+					'print_real_height'   => 20.0,
+					'print_aspect_ratio'  => 1.0,
+					'product_type'        => 'garment',
+					'lock_aspect_ratio'   => false,
 					'print_width_px'      => 2400,
 					'print_height_px'     => 2400,
 					'box_left'            => 31.0,
@@ -101,6 +107,12 @@ class SceneGraphSchema {
 					'nbd_handshake'       => true,
 					'print_Effect3D'      => true,
 					'dpi'                 => 300,
+					'print_unit'          => 'cm',
+					'print_real_width'    => 30.0,
+					'print_real_height'   => 38.0,
+					'print_aspect_ratio'  => 0.7895,
+					'product_type'        => 'garment',
+					'lock_aspect_ratio'   => false,
 					'print_width_px'      => 2400,
 					'print_height_px'     => 3000,
 					'box_left'            => 28.0,
@@ -180,6 +192,12 @@ class SceneGraphSchema {
 					'nbd_handshake'       => true,
 					'print_Effect3D'      => true,
 					'dpi'                 => 300,
+					'print_unit'          => 'cm',
+					'print_real_width'    => 20.0,
+					'print_real_height'   => 20.0,
+					'print_aspect_ratio'  => 1.0,
+					'product_type'        => 'garment',
+					'lock_aspect_ratio'   => false,
 					'print_width_px'      => 2400,
 					'print_height_px'     => 2400,
 					'box_left'            => 30.0,
@@ -302,6 +320,12 @@ class SceneGraphSchema {
 					'nbd_handshake'       => true,
 					'print_Effect3D'      => true,
 					'dpi'                 => 300,
+					'print_unit'          => 'cm',
+					'print_real_width'    => 30.0,
+					'print_real_height'   => 40.0,
+					'print_aspect_ratio'  => 0.75,
+					'product_type'        => 'garment',
+					'lock_aspect_ratio'   => false,
 					'print_width_px'      => 2400,
 					'print_height_px'     => 3000,
 					// Visual Editor Area placement (% of garment image container)
@@ -505,6 +529,31 @@ class SceneGraphSchema {
 			$config['garment_colors'] = $defaults['garment_colors'];
 		}
 
+		// Physical print dimensions & responsive aspect ratio normalization
+		$print_unit   = ! empty( $config['print_unit'] ) ? sanitize_key( $config['print_unit'] ) : 'cm';
+		$real_w       = isset( $config['print_real_width'] ) ? floatval( $config['print_real_width'] ) : ( isset( $defaults['print_real_width'] ) ? floatval( $defaults['print_real_width'] ) : 30.0 );
+		$real_h       = isset( $config['print_real_height'] ) ? floatval( $config['print_real_height'] ) : ( isset( $defaults['print_real_height'] ) ? floatval( $defaults['print_real_height'] ) : 40.0 );
+		$dpi          = isset( $config['dpi'] ) ? max( 72, intval( $config['dpi'] ) ) : 300;
+		$product_type = ! empty( $config['product_type'] ) ? sanitize_key( $config['product_type'] ) : 'garment';
+		$lock_ratio   = isset( $config['lock_aspect_ratio'] ) ? ! empty( $config['lock_aspect_ratio'] ) : ( 'flat_object' === $product_type );
+
+		$computed_dims = self::compute_print_dimensions( $real_w, $real_h, $print_unit, $dpi );
+
+		$config['print_unit']         = $print_unit;
+		$config['print_real_width']   = $real_w;
+		$config['print_real_height']  = $real_h;
+		$config['dpi']                = $dpi;
+		$config['product_type']       = $product_type;
+		$config['lock_aspect_ratio']  = $lock_ratio;
+		$config['print_aspect_ratio'] = $computed_dims['aspect_ratio'];
+		$config['print_ratio_str']    = $computed_dims['ratio_str'];
+
+		// If pixel dimensions were not specifically custom-tailored, auto-derive from 300 DPI physical dimensions
+		if ( empty( $saved['print_width_px'] ) || empty( $saved['print_height_px'] ) ) {
+			$config['print_width_px']  = $computed_dims['width_px'];
+			$config['print_height_px'] = $computed_dims['height_px'];
+		}
+
 		$config['icons']        = IconSetRegistry::get_mushroom_icons();
 		$config['fonts']        = FontRegistry::get_fonts();
 		$config['color_sets']   = ColorPaletteRegistry::get_color_sets();
@@ -512,6 +561,58 @@ class SceneGraphSchema {
 		$config['perso_visual'] = self::compile_scene_graph( $config );
 
 		return $config;
+	}
+
+	/**
+	 * Compute print pixel dimensions and aspect ratio from real physical dimensions.
+	 *
+	 * @param float|int|string $width  Real width.
+	 * @param float|int|string $height Real height.
+	 * @param string           $unit   Unit ('cm', 'mm', 'in').
+	 * @param int              $dpi    DPI resolution (e.g. 300).
+	 * @return array{width_px: int, height_px: int, aspect_ratio: float, ratio_str: string}
+	 */
+	public static function compute_print_dimensions( $width, $height, $unit = 'cm', $dpi = 300 ) {
+		$dpi   = max( 72, intval( $dpi ) );
+		$w_val = floatval( $width );
+		$h_val = floatval( $height );
+		if ( $w_val <= 0 ) {
+			$w_val = 30.0;
+		}
+		if ( $h_val <= 0 ) {
+			$h_val = 40.0;
+		}
+
+		$unit = strtolower( trim( $unit ) );
+		switch ( $unit ) {
+			case 'mm':
+				$w_in = $w_val / 25.4;
+				$h_in = $h_val / 25.4;
+				break;
+			case 'in':
+			case 'inch':
+			case 'inches':
+				$w_in = $w_val;
+				$h_in = $h_val;
+				break;
+			case 'cm':
+			default:
+				$unit = 'cm';
+				$w_in = $w_val / 2.54;
+				$h_in = $h_val / 2.54;
+				break;
+		}
+
+		$px_w  = (int) round( $w_in * $dpi );
+		$px_h  = (int) round( $h_in * $dpi );
+		$ratio = ( $h_val > 0 ) ? round( $w_val / $h_val, 4 ) : 1.0;
+
+		return array(
+			'width_px'     => $px_w,
+			'height_px'    => $px_h,
+			'aspect_ratio' => $ratio,
+			'ratio_str'    => sprintf( '%s:%s', round( $w_val, 1 ), round( $h_val, 1 ) ),
+		);
 	}
 
 	/**
@@ -867,6 +968,11 @@ class SceneGraphSchema {
 			'area'             => array(
 				'width'        => intval( $config['print_width_px'] ),
 				'height'       => intval( $config['print_height_px'] ),
+				'real_width'   => isset( $config['print_real_width'] ) ? floatval( $config['print_real_width'] ) : 30.0,
+				'real_height'  => isset( $config['print_real_height'] ) ? floatval( $config['print_real_height'] ) : 40.0,
+				'unit'         => isset( $config['print_unit'] ) ? $config['print_unit'] : 'cm',
+				'aspect_ratio' => isset( $config['print_aspect_ratio'] ) ? floatval( $config['print_aspect_ratio'] ) : 0.75,
+				'product_type' => isset( $config['product_type'] ) ? $config['product_type'] : 'garment',
 				'higherAnchor' => 'top',
 				'widerAnchor'  => 'middle',
 				'transform'    => array(

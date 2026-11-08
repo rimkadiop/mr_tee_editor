@@ -72,19 +72,35 @@ class CartIntegration {
 		$svg_res     = PrintAssetGenerator::save_svg( $vector_svg, $sub_dir, 'design.svg' );
 		$print_res   = PrintAssetGenerator::save_base64_png( $print_300dpi, $sub_dir, 'print_300dpi.png' );
 
+		$config           = SceneGraphSchema::get_product_config( $product_id );
+		$dims_summary     = sprintf(
+			'%s × %s %s (Ratio: %s | 300 DPI: %s × %s px)',
+			isset( $config['print_real_width'] ) ? $config['print_real_width'] : 30.0,
+			isset( $config['print_real_height'] ) ? $config['print_real_height'] : 40.0,
+			isset( $config['print_unit'] ) ? $config['print_unit'] : 'cm',
+			isset( $config['print_aspect_ratio'] ) ? round( floatval( $config['print_aspect_ratio'] ), 3 ) : '0.75',
+			isset( $config['print_width_px'] ) ? $config['print_width_px'] : 2400,
+			isset( $config['print_height_px'] ) ? $config['print_height_px'] : 3000
+		);
+
 		$cart_item_data['mr_tee_editor'] = array(
-			'key'          => $design_key,
-			'payload'      => $payload,
-			'preview_url'  => $preview_res ? $preview_res['url'] : '',
-			'preview_file' => $preview_res ? $preview_res['file'] : '',
-			'svg_url'      => $svg_res ? $svg_res['url'] : '',
-			'svg_file'     => $svg_res ? $svg_res['file'] : '',
-			'print_url'    => $print_res ? $print_res['url'] : '',
-			'print_file'   => $print_res ? $print_res['file'] : '',
+			'key'               => $design_key,
+			'payload'           => $payload,
+			'print_dimensions'  => $dims_summary,
+			'print_real_width'  => isset( $config['print_real_width'] ) ? $config['print_real_width'] : 30.0,
+			'print_real_height' => isset( $config['print_real_height'] ) ? $config['print_real_height'] : 40.0,
+			'print_unit'        => isset( $config['print_unit'] ) ? $config['print_unit'] : 'cm',
+			'print_aspect_ratio'=> isset( $config['print_aspect_ratio'] ) ? $config['print_aspect_ratio'] : 0.75,
+			'product_type'      => isset( $config['product_type'] ) ? $config['product_type'] : 'garment',
+			'preview_url'       => $preview_res ? $preview_res['url'] : '',
+			'preview_file'      => $preview_res ? $preview_res['file'] : '',
+			'svg_url'           => $svg_res ? $svg_res['url'] : '',
+			'svg_file'          => $svg_res ? $svg_res['file'] : '',
+			'print_url'         => $print_res ? $print_res['url'] : '',
+			'print_file'        => $print_res ? $print_res['file'] : '',
 		);
 
 		// Handle NBDesigner Handshake if enabled or if NBDesigner plugin is active
-		$config           = SceneGraphSchema::get_product_config( $product_id );
 		$should_handshake = isset( $config['nbd_handshake'] ) ? ! empty( $config['nbd_handshake'] ) : NBDesignerBridge::is_nbd_active();
 		if ( $should_handshake && NBDesignerBridge::is_nbd_active() ) {
 			$nbd_meta = NBDesignerBridge::inject_nbd_artifacts(
@@ -118,6 +134,15 @@ class CartIntegration {
 		$data    = $cart_item['mr_tee_editor'];
 		$payload = $data['payload'];
 		$icons   = IconSetRegistry::get_mushroom_icons();
+
+		// Physical Print Dimensions
+		if ( ! empty( $data['print_dimensions'] ) ) {
+			$item_data[] = array(
+				'key'     => __( "Dimensions d'impression", 'mr-tee-editor' ),
+				'value'   => esc_html( $data['print_dimensions'] ),
+				'display' => esc_html( $data['print_dimensions'] ),
+			);
+		}
 
 		// Text lines
 		if ( ! empty( $payload['text_lines'] ) && is_array( $payload['text_lines'] ) ) {
@@ -217,15 +242,20 @@ class CartIntegration {
 			}
 		}
 
-		// File URLs
+		// Physical Print Dimensions & File URLs
+		if ( ! empty( $data['print_dimensions'] ) ) {
+			$item->add_meta_data( __( "Dimensions d'impression", 'mr-tee-editor' ), $data['print_dimensions'], true );
+		}
 		if ( ! empty( $data['preview_url'] ) ) {
 			$item->add_meta_data( '_mr_tee_preview_url', $data['preview_url'], true );
 		}
 		if ( ! empty( $data['svg_url'] ) ) {
 			$item->add_meta_data( '_mr_tee_svg_url', $data['svg_url'], true );
+			$item->add_meta_data( __( 'Fichier Vectoriel (SVG)', 'mr-tee-editor' ), esc_url( $data['svg_url'] ), true );
 		}
 		if ( ! empty( $data['print_url'] ) ) {
 			$item->add_meta_data( '_mr_tee_print_url', $data['print_url'], true );
+			$item->add_meta_data( __( 'Fichier HD 300 DPI (PNG)', 'mr-tee-editor' ), esc_url( $data['print_url'] ), true );
 		}
 
 		// NBDesigner native handshake meta

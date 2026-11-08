@@ -22,10 +22,18 @@ export class PrintExporter {
 	static async prepareExport(layers, zoomTransform, store, config) {
 		const printW = parseInt(config.print_width_px, 10) || 2400;
 		const printH = parseInt(config.print_height_px, 10) || 3000;
+		const realW  = parseFloat(config.print_real_width) || 30.0;
+		const realH  = parseFloat(config.print_real_height) || 40.0;
+		const unit   = config.print_unit || 'cm';
+		const dpi    = parseInt(config.dpi, 10) || 300;
 
-		// 1. Build self-contained, clean vector SVG markup (clean @font-face URLs, no base64 bloat)
+		// 1. Build self-contained, clean vector SVG markup (with physical scale attributes)
 		const svgMarkup = SvgRenderer.renderToString(layers, zoomTransform, {
 			isExport: true,
+			realWidth: realW,
+			realHeight: realH,
+			unit: unit,
+			dpi: dpi,
 			fontFaceCss: this.extractFontFaceCss(),
 		});
 
@@ -101,15 +109,20 @@ export class PrintExporter {
 				document.querySelector('.mr-tee-stage-garment-img') ||
 				document.querySelector('.product .images img:not(.emoji):not(.zoomImg)');
 
-			const size = 800;
+			const isFlatObject = config.product_type === 'flat_object';
+			const hasPerLineBoxes = Array.isArray(config.text_lines) && config.text_lines.some(l => l.box_left !== undefined && l.box_width !== undefined);
+			const ratio = (parseFloat(config.print_real_width) && parseFloat(config.print_real_height)) ? (parseFloat(config.print_real_width) / parseFloat(config.print_real_height)) : (parseFloat(config.print_aspect_ratio) || 1.0);
+
+			const canvasW = 800;
+			const canvasH = isFlatObject ? Math.max(200, Math.round(800 / ratio)) : 800;
 			const canvas = document.createElement('canvas');
-			canvas.width = size;
-			canvas.height = size;
+			canvas.width = canvasW;
+			canvas.height = canvasH;
 			const ctx = canvas.getContext('2d');
 
 			// Solid white backdrop for JPEG export
 			ctx.fillStyle = '#ffffff';
-			ctx.fillRect(0, 0, size, size);
+			ctx.fillRect(0, 0, canvasW, canvasH);
 
 			const drawDesign = () => {
 				const blob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
@@ -117,10 +130,18 @@ export class PrintExporter {
 				const designImg = new Image();
 
 				designImg.onload = () => {
-					const left = (parseFloat(config.box_left) || 26.0) / 100 * size;
-					const top = (parseFloat(config.box_top) || 23.0) / 100 * size;
-					const w = (parseFloat(config.box_width) || 48.0) / 100 * size;
-					const h = (parseFloat(config.box_height) || 54.0) / 100 * size;
+					let left, top, w, h;
+					if (isFlatObject || hasPerLineBoxes) {
+						left = 0;
+						top = 0;
+						w = canvasW;
+						h = canvasH;
+					} else {
+						left = (parseFloat(config.box_left) || 26.0) / 100 * canvasW;
+						top = (parseFloat(config.box_top) || 23.0) / 100 * canvasH;
+						w = (parseFloat(config.box_width) || 48.0) / 100 * canvasW;
+						h = (parseFloat(config.box_height) || 54.0) / 100 * canvasH;
+					}
 
 					ctx.drawImage(designImg, left, top, w, h);
 					URL.revokeObjectURL(url);
@@ -137,7 +158,7 @@ export class PrintExporter {
 
 			if (garmentImg && garmentImg.complete && garmentImg.naturalWidth > 0) {
 				try {
-					ctx.drawImage(garmentImg, 0, 0, size, size);
+					ctx.drawImage(garmentImg, 0, 0, canvasW, canvasH);
 					drawDesign();
 				} catch (e) {
 					// CORS or tainted canvas fallback

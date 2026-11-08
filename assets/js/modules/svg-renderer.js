@@ -46,6 +46,9 @@ export class SvgRenderer {
 		`;
 
 		const layersMarkup = this.renderLayersMarkup(layers);
+		const widthAttr = (options.isExport && options.realWidth) ? `${options.realWidth}${options.unit || 'cm'}` : '100%';
+		const heightAttr = (options.isExport && options.realHeight) ? `${options.realHeight}${options.unit || 'cm'}` : '100%';
+		const realDimAttrs = (options.realWidth && options.realHeight) ? `data-real-width="${options.realWidth}" data-real-height="${options.realHeight}" data-unit="${options.unit || 'cm'}" data-dpi="${options.dpi || 300}"` : '';
 
 		return `
 <svg
@@ -54,8 +57,9 @@ export class SvgRenderer {
 	xmlns="http://www.w3.org/2000/svg"
 	xmlns:xlink="http://www.w3.org/1999/xlink"
 	viewBox="0 0 100 100"
-	width="100%"
-	height="100%"
+	width="${widthAttr}"
+	height="${heightAttr}"
+	${realDimAttrs}
 	preserveAspectRatio="xMidYMid meet"
 	style="overflow:visible;"
 >

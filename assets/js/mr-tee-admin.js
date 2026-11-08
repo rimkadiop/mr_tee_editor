@@ -41,6 +41,7 @@
 			this.bindAddField();
 			this.bindDeleteField();
 			this.bindPresetReset();
+			this.bindDimensionControls();
 			this.renderAllBoxesPreviews();
 		}
 
@@ -616,6 +617,110 @@
 				// Preset switched - form can be submitted or preview updated
 				self.renderAllBoxesPreviews();
 			});
+		}
+
+		/**
+		 * Physical Dimensions & Automatic Aspect Ratio Controls.
+		 */
+		bindDimensionControls() {
+			const self = this;
+
+			// Listen to dimension inputs on Stage Toolbar
+			$(document).on('input change', '#mr_tee_real_width, #mr_tee_real_height, #mr_tee_print_unit, #mr_tee_dpi, #mr_tee_product_type, #mr_tee_lock_aspect_ratio', function() {
+				// Sync to TAB 4
+				$('#mr_tee_tab4_product_type').val($('#mr_tee_product_type').val());
+				$('#mr_tee_tab4_real_width').val($('#mr_tee_real_width').val());
+				$('#mr_tee_tab4_real_height').val($('#mr_tee_real_height').val());
+				$('#mr_tee_tab4_print_unit').val($('#mr_tee_print_unit').val());
+				$('#mr_tee_tab4_dpi').val($('#mr_tee_dpi').val());
+				$('#mr_tee_tab4_lock_ratio').prop('checked', $('#mr_tee_lock_aspect_ratio').is(':checked'));
+
+				self.recalculateDimensions();
+			});
+
+			// Listen to dimension inputs on TAB 4
+			$(document).on('input change', '#mr_tee_tab4_real_width, #mr_tee_tab4_real_height, #mr_tee_tab4_print_unit, #mr_tee_tab4_dpi, #mr_tee_tab4_product_type, #mr_tee_tab4_lock_ratio', function() {
+				// Sync to Stage Toolbar
+				$('#mr_tee_product_type').val($('#mr_tee_tab4_product_type').val());
+				$('#mr_tee_real_width').val($('#mr_tee_tab4_real_width').val());
+				$('#mr_tee_real_height').val($('#mr_tee_tab4_real_height').val());
+				$('#mr_tee_print_unit').val($('#mr_tee_tab4_print_unit').val());
+				$('#mr_tee_dpi').val($('#mr_tee_tab4_dpi').val());
+				$('#mr_tee_lock_aspect_ratio').prop('checked', $('#mr_tee_tab4_lock_ratio').is(':checked'));
+
+				self.recalculateDimensions();
+			});
+
+			// Quick Dimension Presets
+			$(document).on('click', '.mr-tee-btn-preset-dim', function(e) {
+				e.preventDefault();
+				const pType = $(this).data('type') || 'garment';
+				const pUnit = $(this).data('unit') || 'cm';
+				const pW = parseFloat($(this).data('w')) || 30;
+				const pH = parseFloat($(this).data('h')) || 40;
+				const pLock = parseInt($(this).data('lock'), 10) === 1;
+
+				$('#mr_tee_product_type').val(pType);
+				$('#mr_tee_print_unit').val(pUnit);
+				$('#mr_tee_real_width').val(pW);
+				$('#mr_tee_real_height').val(pH);
+				$('#mr_tee_lock_aspect_ratio').prop('checked', pLock);
+
+				// Sync TAB 4
+				$('#mr_tee_tab4_product_type').val(pType);
+				$('#mr_tee_tab4_print_unit').val(pUnit);
+				$('#mr_tee_tab4_real_width').val(pW);
+				$('#mr_tee_tab4_real_height').val(pH);
+				$('#mr_tee_tab4_lock_ratio').prop('checked', pLock);
+
+				self.recalculateDimensions();
+			});
+
+			// Initial calculation
+			this.recalculateDimensions();
+		}
+
+		recalculateDimensions() {
+			const w = parseFloat($('#mr_tee_real_width').val()) || 30.0;
+			const h = parseFloat($('#mr_tee_real_height').val()) || 40.0;
+			const unit = $('#mr_tee_print_unit').val() || 'cm';
+			const dpi = parseInt($('#mr_tee_dpi').val(), 10) || 300;
+			const pType = $('#mr_tee_product_type').val() || 'garment';
+			const isLocked = $('#mr_tee_lock_aspect_ratio').is(':checked') || pType === 'flat_object';
+
+			const ratio = (h > 0) ? (w / h) : 1.0;
+
+			let inchW = w / 2.54;
+			let inchH = h / 2.54;
+			if (unit === 'mm') {
+				inchW = w / 25.4;
+				inchH = h / 25.4;
+			} else if (unit === 'in') {
+				inchW = w;
+				inchH = h;
+			}
+
+			const pxW = Math.round(inchW * dpi);
+			const pxH = Math.round(inchH * dpi);
+
+			// Update Live Badge
+			$('#mr-tee-badge-ratio-val').text(`${Math.round(w * 10) / 10} : ${Math.round(h * 10) / 10} (${ratio.toFixed(3)})`);
+			$('#mr-tee-badge-px-val').text(`${pxW} × ${pxH} px`);
+
+			// Update TAB 4 pixel inputs
+			$('#mr_tee_tab4_width_px').val(pxW);
+			$('#mr_tee_tab4_height_px').val(pxH);
+
+			// Update Stage Canvas Wrap aspect-ratio
+			if (this.$canvasWrap.length) {
+				if (isLocked) {
+					this.$canvasWrap.addClass('is-aspect-locked');
+					this.$canvasWrap.css('aspect-ratio', ratio.toString());
+				} else {
+					this.$canvasWrap.removeClass('is-aspect-locked');
+					this.$canvasWrap.css('aspect-ratio', '');
+				}
+			}
 		}
 
 		escapeXml(str) {

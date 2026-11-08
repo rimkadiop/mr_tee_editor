@@ -96,18 +96,26 @@ class NBDesignerBridge {
 			file_put_contents( trailingslashit( $nbd_dir ) . 'print_300dpi.png', $decoded );
 		}
 
-		// 4. Product sides configuration
+		// 4. Product sides configuration with dynamic physical dimensions
+		$cfg    = \MrTeeEditor\Domain\SceneGraphSchema::get_product_config( $product_id );
+		$prod_w = isset( $cfg['print_real_width'] ) ? floatval( $cfg['print_real_width'] ) : 30.0;
+		$prod_h = isset( $cfg['print_real_height'] ) ? floatval( $cfg['print_real_height'] ) : 40.0;
+		$unit   = ! empty( $cfg['print_unit'] ) ? $cfg['print_unit'] : 'cm';
+		$dpi    = isset( $cfg['dpi'] ) ? intval( $cfg['dpi'] ) : 300;
+		$area_w = isset( $cfg['print_width_px'] ) ? intval( $cfg['print_width_px'] ) : 2400;
+		$area_h = isset( $cfg['print_height_px'] ) ? intval( $cfg['print_height_px'] ) : 3000;
+
 		$product_sides = array(
 			array(
 				'orientation_name'   => 'Front',
-				'product_width'      => 30,
-				'product_height'     => 40,
-				'real_width'         => 20,
-				'real_height'        => 26,
-				'real_top'           => 5,
-				'real_left'          => 5,
-				'area_design_width'  => 2400,
-				'area_design_height' => 3000,
+				'product_width'      => $prod_w,
+				'product_height'     => $prod_h,
+				'real_width'         => $prod_w,
+				'real_height'        => $prod_h,
+				'real_top'           => 0,
+				'real_left'          => 0,
+				'area_design_width'  => $area_w,
+				'area_design_height' => $area_h,
 				'img_src'            => '',
 				'bg_type'            => 'color',
 				'bg_color_value'     => '#ffffff',
@@ -123,8 +131,8 @@ class NBDesignerBridge {
 			trailingslashit( $nbd_dir ) . 'option.json',
 			serialize(
 				array(
-					'dpi'    => 300,
-					'unit'   => 'cm',
+					'dpi'    => $dpi,
+					'unit'   => $unit,
 					'layout' => 'm',
 				)
 			)
@@ -132,17 +140,17 @@ class NBDesignerBridge {
 
 		// 6. Artifact: config.json
 		$config_data = array(
-			'version'     => '2.0.0',
+			'version'     => '2.2.0',
 			'engine'      => 'mr_tee_editor',
 			'product_id'  => $product_id,
 			'created_at'  => current_time( 'mysql' ),
-			'dpi'         => 300,
-			'unit'        => 'cm',
+			'dpi'         => $dpi,
+			'unit'        => $unit,
 			'orientation' => 'front',
 			'product'     => $product_sides,
 			'stage'       => array(
-				'width'  => 2400,
-				'height' => 3000,
+				'width'  => $area_w,
+				'height' => $area_h,
 			),
 			'custom_data' => $custom_data,
 		);

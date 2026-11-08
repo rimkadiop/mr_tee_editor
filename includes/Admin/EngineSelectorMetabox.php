@@ -252,28 +252,63 @@ class EngineSelectorMetabox {
 
 				<!-- TAB 4: Export & NBDesigner Bridge -->
 				<div id="tab-export" class="mr-tee-tab-pane">
-					<h4><?php esc_html_e( 'Spécifications d\'Export Haute Définition & Bridge NBDesigner', 'mr-tee-editor' ); ?></h4>
+					<h4><?php esc_html_e( 'Spécifications Physiques d\'Impression & Bridge NBDesigner', 'mr-tee-editor' ); ?></h4>
 					<p class="description">
-						<?php esc_html_e( 'Générez des fichiers prêts pour l\'impression DTG/sérigraphie 300 DPI sans fond, et injectez-les automatiquement dans les 5 artefacts NBDesigner.', 'mr-tee-editor' ); ?>
+						<?php esc_html_e( 'Définissez les dimensions réelles du produit fini (cm/mm/pouces). Le système calcule automatiquement le ratio d\'affichage et la résolution 300 DPI pour un fichier 100% prêt à l\'impression.', 'mr-tee-editor' ); ?>
 					</p>
 					<table class="form-table">
+						<tr>
+							<th><label><?php esc_html_e( 'Type de Produit', 'mr-tee-editor' ); ?></label></th>
+							<td>
+								<select name="mr_tee_config[product_type]" id="mr_tee_tab4_product_type">
+									<option value="garment" <?php selected( isset( $config['product_type'] ) ? $config['product_type'] : 'garment', 'garment' ); ?>><?php esc_html_e( '👕 Vêtement / Textile (Zone sur mockup)', 'mr-tee-editor' ); ?></option>
+									<option value="flat_object" <?php selected( isset( $config['product_type'] ) ? $config['product_type'] : 'garment', 'flat_object' ); ?>><?php esc_html_e( '📇 Objet Plat / Surface Complète (Carte, Plaque, Mug, Flyer)', 'mr-tee-editor' ); ?></option>
+								</select>
+							</td>
+						</tr>
+						<tr>
+							<th><label><?php esc_html_e( 'Dimensions Physiques Réelles', 'mr-tee-editor' ); ?></label></th>
+							<td>
+								<label><?php esc_html_e( 'Largeur :', 'mr-tee-editor' ); ?> <input type="number" step="0.1" name="mr_tee_config[print_real_width]" id="mr_tee_tab4_real_width" value="<?php echo esc_attr( isset( $config['print_real_width'] ) ? $config['print_real_width'] : 30.0 ); ?>" class="small-text" /></label>
+								&nbsp;&nbsp;
+								<label><?php esc_html_e( 'Hauteur :', 'mr-tee-editor' ); ?> <input type="number" step="0.1" name="mr_tee_config[print_real_height]" id="mr_tee_tab4_real_height" value="<?php echo esc_attr( isset( $config['print_real_height'] ) ? $config['print_real_height'] : 40.0 ); ?>" class="small-text" /></label>
+								&nbsp;&nbsp;
+								<label><?php esc_html_e( 'Unité :', 'mr-tee-editor' ); ?>
+									<select name="mr_tee_config[print_unit]" id="mr_tee_tab4_print_unit">
+										<option value="cm" <?php selected( isset( $config['print_unit'] ) ? $config['print_unit'] : 'cm', 'cm' ); ?>>cm</option>
+										<option value="mm" <?php selected( isset( $config['print_unit'] ) ? $config['print_unit'] : 'cm', 'mm' ); ?>>mm</option>
+										<option value="in" <?php selected( isset( $config['print_unit'] ) ? $config['print_unit'] : 'cm', 'in' ); ?>>in (pouces)</option>
+									</select>
+								</label>
+							</td>
+						</tr>
+						<tr>
+							<th><label><?php esc_html_e( 'Ratio d\'Affichage Responsive', 'mr-tee-editor' ); ?></label></th>
+							<td>
+								<label>
+									<input type="checkbox" name="mr_tee_config[lock_aspect_ratio]" id="mr_tee_tab4_lock_ratio" value="1" <?php checked( ! empty( $config['lock_aspect_ratio'] ) || ( isset( $config['product_type'] ) && 'flat_object' === $config['product_type'] ) ); ?> />
+									<strong><?php esc_html_e( 'Verrouiller le ratio sur mobile, tablette et PC', 'mr-tee-editor' ); ?></strong>
+								</label>
+								<p class="description"><?php esc_html_e( 'Garantit que l\'image du produit et les rectangles de personnalisation s\'affichent exactement dans les mêmes proportions physiques sur tous les écrans.', 'mr-tee-editor' ); ?></p>
+							</td>
+						</tr>
+						<tr>
+							<th><label><?php esc_html_e( 'Résolution d\'impression (300 DPI)', 'mr-tee-editor' ); ?></label></th>
+							<td>
+								<label><?php esc_html_e( 'DPI :', 'mr-tee-editor' ); ?> <input type="number" name="mr_tee_config[dpi]" id="mr_tee_tab4_dpi" value="<?php echo esc_attr( isset( $config['dpi'] ) ? $config['dpi'] : 300 ); ?>" class="small-text" /></label>
+								&nbsp;&nbsp;
+								<label><?php esc_html_e( 'Largeur (px) :', 'mr-tee-editor' ); ?> <input type="number" name="mr_tee_config[print_width_px]" id="mr_tee_tab4_width_px" value="<?php echo esc_attr( $config['print_width_px'] ); ?>" class="small-text" /></label>
+								&nbsp;&nbsp;
+								<label><?php esc_html_e( 'Hauteur (px) :', 'mr-tee-editor' ); ?> <input type="number" name="mr_tee_config[print_height_px]" id="mr_tee_tab4_height_px" value="<?php echo esc_attr( $config['print_height_px'] ); ?>" class="small-text" /></label>
+							</td>
+						</tr>
 						<tr>
 							<th><label><?php esc_html_e( 'Bridge NBDesigner', 'mr-tee-editor' ); ?></label></th>
 							<td>
 								<label>
 									<input type="checkbox" name="mr_tee_config[nbd_handshake]" value="1" <?php checked( ! empty( $config['nbd_handshake'] ) ); ?> />
-									<?php esc_html_e( 'Générer les 5 artefacts NBDesigner à la commande (design_preview.png, design.svg, config.json, print_file_front.png, nbd_data)', 'mr-tee-editor' ); ?>
+									<?php esc_html_e( 'Générer les artefacts NBDesigner à la commande (frame_0.png, frame_0.svg, config.json, option.json, nbd_data)', 'mr-tee-editor' ); ?>
 								</label>
-							</td>
-						</tr>
-						<tr>
-							<th><label><?php esc_html_e( 'Résolution d\'impression', 'mr-tee-editor' ); ?></label></th>
-							<td>
-								<label><?php esc_html_e( 'DPI :', 'mr-tee-editor' ); ?> <input type="number" name="mr_tee_config[dpi]" value="<?php echo esc_attr( $config['dpi'] ); ?>" class="small-text" /></label>
-								&nbsp;&nbsp;
-								<label><?php esc_html_e( 'Largeur (px) :', 'mr-tee-editor' ); ?> <input type="number" name="mr_tee_config[print_width_px]" value="<?php echo esc_attr( $config['print_width_px'] ); ?>" class="small-text" /></label>
-								&nbsp;&nbsp;
-								<label><?php esc_html_e( 'Hauteur (px) :', 'mr-tee-editor' ); ?> <input type="number" name="mr_tee_config[print_height_px]" value="<?php echo esc_attr( $config['print_height_px'] ); ?>" class="small-text" /></label>
 							</td>
 						</tr>
 					</table>
@@ -428,16 +463,45 @@ class EngineSelectorMetabox {
 				}
 			}
 
-			// Export settings
+			// Physical print dimensions & responsive aspect ratio settings
 			$config['nbd_handshake'] = ! empty( $raw_config['nbd_handshake'] );
+			if ( isset( $raw_config['product_type'] ) ) {
+				$config['product_type'] = sanitize_key( $raw_config['product_type'] );
+			}
+			if ( isset( $raw_config['print_unit'] ) ) {
+				$config['print_unit'] = sanitize_key( $raw_config['print_unit'] );
+			}
+			if ( isset( $raw_config['print_real_width'] ) ) {
+				$config['print_real_width'] = max( 0.1, floatval( $raw_config['print_real_width'] ) );
+			}
+			if ( isset( $raw_config['print_real_height'] ) ) {
+				$config['print_real_height'] = max( 0.1, floatval( $raw_config['print_real_height'] ) );
+			}
 			if ( isset( $raw_config['dpi'] ) ) {
-				$config['dpi'] = intval( $raw_config['dpi'] );
+				$config['dpi'] = max( 72, intval( $raw_config['dpi'] ) );
 			}
-			if ( isset( $raw_config['print_width_px'] ) ) {
+			$config['lock_aspect_ratio'] = ! empty( $raw_config['lock_aspect_ratio'] ) || ( isset( $config['product_type'] ) && 'flat_object' === $config['product_type'] );
+
+			// Compute print dimensions and aspect ratio
+			$unit   = ! empty( $config['print_unit'] ) ? $config['print_unit'] : 'cm';
+			$real_w = isset( $config['print_real_width'] ) ? $config['print_real_width'] : 30.0;
+			$real_h = isset( $config['print_real_height'] ) ? $config['print_real_height'] : 40.0;
+			$dpi    = isset( $config['dpi'] ) ? $config['dpi'] : 300;
+
+			$computed_dims = SceneGraphSchema::compute_print_dimensions( $real_w, $real_h, $unit, $dpi );
+			$config['print_aspect_ratio'] = $computed_dims['aspect_ratio'];
+			$config['print_ratio_str']    = $computed_dims['ratio_str'];
+
+			if ( isset( $raw_config['print_width_px'] ) && intval( $raw_config['print_width_px'] ) > 0 ) {
 				$config['print_width_px'] = intval( $raw_config['print_width_px'] );
+			} else {
+				$config['print_width_px'] = $computed_dims['width_px'];
 			}
-			if ( isset( $raw_config['print_height_px'] ) ) {
+
+			if ( isset( $raw_config['print_height_px'] ) && intval( $raw_config['print_height_px'] ) > 0 ) {
 				$config['print_height_px'] = intval( $raw_config['print_height_px'] );
+			} else {
+				$config['print_height_px'] = $computed_dims['height_px'];
 			}
 
 			$config['engine'] = $engine;

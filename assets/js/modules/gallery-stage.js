@@ -140,17 +140,52 @@ export class GalleryStage {
 		this.svgHolder = svgHolder;
 
 		// Calculate precise position against rendered image bounds
+		this.applyAspectRatioLock(container);
 		this.recalibrateOverlayPosition(container, overlay);
 
 		// Listen to image load if image is still loading
 		const img = container.querySelector('img.wp-post-image, img:not(.emoji):not(.zoomImg)');
 		if (img && !img.complete) {
-			img.addEventListener('load', () => this.recalibrateOverlayPosition(container, overlay), { once: true });
+			img.addEventListener('load', () => {
+				this.applyAspectRatioLock(container);
+				this.recalibrateOverlayPosition(container, overlay);
+			}, { once: true });
 		}
 
 		// Immediately restore current SVG markup if available
 		if (this.currentSvgMarkup && this.svgHolder) {
 			this.svgHolder.innerHTML = this.currentSvgMarkup;
+		}
+	}
+
+	/**
+	 * Apply locked physical aspect ratio to gallery container and product image.
+	 *
+	 * Ensures the product image container on mobile, tablet, and desktop always
+	 * matches the exact physical aspect ratio (e.g. 8.9:5.1 for business card,
+	 * 20:15 for plaque, 30:40 for apparel), eliminating letterboxing and coordinate drift.
+	 *
+	 * @param {HTMLElement} container Gallery container element.
+	 */
+	applyAspectRatioLock(container) {
+		if (!container) return;
+
+		const isLocked = Boolean(this.config.lock_aspect_ratio) || this.config.product_type === 'flat_object';
+		if (!isLocked) return;
+
+		const realW = parseFloat(this.config.print_real_width) || 0;
+		const realH = parseFloat(this.config.print_real_height) || 0;
+		const ratio = (realW > 0 && realH > 0) ? (realW / realH) : (parseFloat(this.config.print_aspect_ratio) || 1.0);
+
+		container.style.aspectRatio = ratio.toString();
+		container.style.maxWidth = '100%';
+
+		const img = container.querySelector('img.wp-post-image, img:not(.emoji):not(.zoomImg)');
+		if (img) {
+			img.style.aspectRatio = ratio.toString();
+			img.style.width = '100%';
+			img.style.height = '100%';
+			img.style.objectFit = 'contain';
 		}
 	}
 
@@ -166,12 +201,13 @@ export class GalleryStage {
 	recalibrateOverlayPosition(container, overlay) {
 		if (!container || !overlay) return;
 
+		const isFlatObject = this.config.product_type === 'flat_object';
 		const hasPerLineBoxes = Array.isArray(this.config.text_lines) && this.config.text_lines.some(l => l.box_left !== undefined && l.box_width !== undefined);
 
-		let baseLeft = hasPerLineBoxes ? 0.0 : (parseFloat(this.config.box_left) || 26.0);
-		let baseTop = hasPerLineBoxes ? 0.0 : (parseFloat(this.config.box_top) || 23.0);
-		let baseWidth = hasPerLineBoxes ? 100.0 : (parseFloat(this.config.box_width) || 48.0);
-		let baseHeight = hasPerLineBoxes ? 100.0 : (parseFloat(this.config.box_height) || 54.0);
+		let baseLeft = (isFlatObject || hasPerLineBoxes) ? 0.0 : (parseFloat(this.config.box_left) || 26.0);
+		let baseTop = (isFlatObject || hasPerLineBoxes) ? 0.0 : (parseFloat(this.config.box_top) || 23.0);
+		let baseWidth = (isFlatObject || hasPerLineBoxes) ? 100.0 : (parseFloat(this.config.box_width) || 48.0);
+		let baseHeight = (isFlatObject || hasPerLineBoxes) ? 100.0 : (parseFloat(this.config.box_height) || 54.0);
 
 		const img = container.querySelector('img.wp-post-image, .woocommerce-product-gallery__image img:not(.emoji):not(.zoomImg), img:not(.emoji):not(.zoomImg)');
 		if (img && !img.classList.contains('emoji') && !img.classList.contains('zoomImg') && img.offsetWidth > 50 && container.offsetWidth > 0) {

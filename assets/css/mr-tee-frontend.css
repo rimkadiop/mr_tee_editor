@@ -552,9 +552,35 @@
 	visibility: hidden !important;
 }
 
-/* 2. Live Stage Overlay Positioning */
+/* 2. Live Stage Overlay Positioning & Responsive Aspect Ratio Locking */
 .has-mr-tee-editor .woocommerce-product-gallery__image {
 	position: relative !important;
+}
+
+/* Responsive Aspect Ratio Locking (Flat Object & Custom Dimensions) */
+.mr-tee-locked-aspect-ratio .woocommerce-product-gallery__image,
+.mr-tee-locked-aspect-ratio .woocommerce-product-gallery__wrapper > div,
+.mr-tee-locked-aspect-ratio .woocommerce-product-gallery .flex-viewport,
+.mr-tee-locked-aspect-ratio .woocommerce-product-gallery {
+	aspect-ratio: var(--mr-tee-aspect-ratio, 1 / 1) !important;
+	max-width: 100% !important;
+	width: 100% !important;
+	position: relative !important;
+}
+
+.mr-tee-locked-aspect-ratio .woocommerce-product-gallery__image img,
+.mr-tee-locked-aspect-ratio .woocommerce-product-gallery img:not(.zoomImg):not(.emoji) {
+	aspect-ratio: var(--mr-tee-aspect-ratio, 1 / 1) !important;
+	width: 100% !important;
+	height: 100% !important;
+	object-fit: contain !important;
+	display: block !important;
+}
+
+.mr-tee-locked-aspect-ratio .mr-tee-live-stage-overlay {
+	aspect-ratio: var(--mr-tee-aspect-ratio, 1 / 1) !important;
+	max-width: 100% !important;
+	max-height: 100% !important;
 }
 
 .mr-tee-live-stage-overlay {

@@ -181,29 +181,63 @@ export class SceneGraphEngine {
 		let xMin = 100, xMax = 0, yMin = 100, yMax = 0;
 		let hasVisible = false;
 
+		const getFontMetrics = (rawFont) => {
+			const f = String(rawFont || '').toLowerCase();
+			if (f.includes('bebas')) return { charRatio: 0.42, letterSpacingEm: 0.10 };
+			if (f.includes('press start') || f.includes('pressstart') || f.includes('arcade')) return { charRatio: 0.72, letterSpacingEm: 0.05 };
+			if (f.includes('super mario') || f.includes('mario')) return { charRatio: 0.62, letterSpacingEm: 0.15 };
+			if (f.includes('luckiest')) return { charRatio: 0.64, letterSpacingEm: 0.06 };
+			if (f.includes('bungee')) return { charRatio: 0.65, letterSpacingEm: 0.08 };
+			if (f.includes('cocogoose')) return { charRatio: 0.60, letterSpacingEm: 0.12 };
+			if (f.includes('pacifico')) return { charRatio: 0.48, letterSpacingEm: 0.02 };
+			if (f.includes('cinzel')) return { charRatio: 0.62, letterSpacingEm: 0.10 };
+			if (f.includes('marker')) return { charRatio: 0.58, letterSpacingEm: 0.05 };
+			if (f.includes('abril')) return { charRatio: 0.55, letterSpacingEm: 0.04 };
+			return { charRatio: 0.56, letterSpacingEm: 0.08 };
+		};
+
 		const measureNode = (node) => {
 			if (!node || node.hide) return;
 
 			if (node.type === 'TEXT') {
-				const fontSize = parseFloat(node.fontSize) || 12;
-				const textVal = String(node.value || '');
+				const baseFontSize = parseFloat(node.fontSize) || 12;
+				const textVal = String(node.value || node.text || '');
 				const lines = textVal.split('\n');
 				const numLines = Math.max(1, lines.length);
 				const lineHeight = parseFloat(node.lineHeight) || 0.95;
-				const totalHeight = fontSize + ((numLines - 1) * fontSize * lineHeight);
+				const maxWidth = parseFloat(node.maxWidth) || 84.0;
 
 				let maxLineLen = 0;
 				for (const l of lines) {
 					if (l.length > maxLineLen) maxLineLen = l.length;
 				}
 
-				const charW = fontSize * 0.58;
-				const estimatedWidth = Math.min(parseFloat(node.maxWidth) || 84, Math.max(fontSize, maxLineLen * charW));
+				const metrics = getFontMetrics(node.fontFamily);
+				const letterSpacingEm = node.letterSpacing !== undefined ? parseFloat(node.letterSpacing) : metrics.letterSpacingEm;
+				const estimatedRawWidth = baseFontSize * (maxLineLen * metrics.charRatio + Math.max(0, maxLineLen - 1) * letterSpacingEm);
+
+				let scaleW = 1.0;
+				if (estimatedRawWidth > maxWidth && maxWidth > 0) {
+					scaleW = maxWidth / estimatedRawWidth;
+				}
+
+				let scaleH = 1.0;
+				const rawTotalHeight = baseFontSize + ((numLines - 1) * baseFontSize * lineHeight);
+				const maxHeight = parseFloat(node.maxHeight) || (node.y ? Math.min(node.y * 1.8, (100 - node.y) * 1.8) : 80.0);
+				if (rawTotalHeight > maxHeight && maxHeight > 0) {
+					scaleH = maxHeight / rawTotalHeight;
+				}
+
+				const autoFitScale = Math.min(1.0, scaleW, scaleH);
+				const effectiveFontSize = Math.max(2.0, baseFontSize * autoFitScale);
+				const effectiveWidth = Math.min(maxWidth, estimatedRawWidth * autoFitScale);
+				const totalHeight = effectiveFontSize + ((numLines - 1) * effectiveFontSize * lineHeight);
+
 				const centerX = parseFloat(node.x) || 50;
 				const centerY = parseFloat(node.y) || 20;
 
-				const left = centerX - (estimatedWidth / 2);
-				const right = centerX + (estimatedWidth / 2);
+				const left = centerX - (effectiveWidth / 2);
+				const right = centerX + (effectiveWidth / 2);
 				const top = centerY - (totalHeight / 2);
 				const bottom = centerY + (totalHeight / 2);
 

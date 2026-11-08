@@ -98,7 +98,48 @@ export class SvgRenderer {
 	}
 
 	/**
-	 * Render a TEXT node with per-letter COLOR_SET cycling, multi-line support, and outsideOnly stroke.
+	 * Compute approximate character width ratio and letter spacing for font families.
+	 *
+	 * @param {string} rawFont Font family name or declaration.
+	 * @return {{ charRatio: number, letterSpacingEm: number }}
+	 */
+	static getFontMetrics(rawFont) {
+		const f = String(rawFont || '').toLowerCase();
+		if (f.includes('bebas')) {
+			return { charRatio: 0.42, letterSpacingEm: 0.10 };
+		}
+		if (f.includes('press start') || f.includes('pressstart') || f.includes('arcade')) {
+			return { charRatio: 0.72, letterSpacingEm: 0.05 };
+		}
+		if (f.includes('super mario') || f.includes('mario')) {
+			return { charRatio: 0.62, letterSpacingEm: 0.15 };
+		}
+		if (f.includes('luckiest')) {
+			return { charRatio: 0.64, letterSpacingEm: 0.06 };
+		}
+		if (f.includes('bungee')) {
+			return { charRatio: 0.65, letterSpacingEm: 0.08 };
+		}
+		if (f.includes('cocogoose')) {
+			return { charRatio: 0.60, letterSpacingEm: 0.12 };
+		}
+		if (f.includes('pacifico')) {
+			return { charRatio: 0.48, letterSpacingEm: 0.02 };
+		}
+		if (f.includes('cinzel')) {
+			return { charRatio: 0.62, letterSpacingEm: 0.10 };
+		}
+		if (f.includes('marker')) {
+			return { charRatio: 0.58, letterSpacingEm: 0.05 };
+		}
+		if (f.includes('abril')) {
+			return { charRatio: 0.55, letterSpacingEm: 0.04 };
+		}
+		return { charRatio: 0.56, letterSpacingEm: 0.08 };
+	}
+
+	/**
+	 * Render a TEXT node with per-letter COLOR_SET cycling, auto-fit boundary constraints, and outsideOnly stroke.
 	 *
 	 * @param {Object} node TEXT node definition.
 	 * @return {string}
@@ -109,18 +150,61 @@ export class SvgRenderer {
 
 		const x = parseFloat(node.x) || 50;
 		const y = parseFloat(node.y) || 50;
-		const fontSize = parseFloat(node.fontSize) || 12;
+		const baseFontSize = parseFloat(node.fontSize) || 12;
 		const rawFont = node.fontFamily || 'Super Mario Wii';
 		const fontFamily = (rawFont.includes('sans-serif') || rawFont.includes('serif'))
 			? rawFont
 			: `'${rawFont}', 'Super Mario Wii', 'SuperMario256', Arial Black, Impact, -apple-system, sans-serif`;
-		const letterSpacing = node.letterSpacing ? `${node.letterSpacing}em` : '0.08em';
+
+		const metrics = this.getFontMetrics(rawFont);
+		const letterSpacingEm = node.letterSpacing !== undefined ? parseFloat(node.letterSpacing) : metrics.letterSpacingEm;
+		const letterSpacing = `${letterSpacingEm}em`;
 		const casing = node.casing || (node.uppercase === false ? 'ORIGINAL' : 'UPPER');
 		const displayText = (casing === 'UPPER') ? val.toUpperCase() : val;
 		const lineHeight = parseFloat(node.lineHeight) || 0.95;
 
-		// Stroke styling
-		const strokeWidth = (node.stroke && node.stroke.width) ? parseFloat(node.stroke.width) : (node.strokeWidth !== undefined ? parseFloat(node.strokeWidth) : 0.72);
+		// Calculate text lines
+		const lines = displayText.split('\n');
+		const isMultiLine = lines.length > 1 || node.multiLine;
+		const numLines = Math.max(1, lines.length);
+
+		// Calculate maximum line length
+		let maxLineLength = 0;
+		for (const l of lines) {
+			if (l.length > maxLineLength) maxLineLength = l.length;
+		}
+
+		// Calculate unscaled text width & height
+		const maxWidth = parseFloat(node.maxWidth) || 84.0;
+		const estimatedRawWidth = baseFontSize * (maxLineLength * metrics.charRatio + Math.max(0, maxLineLength - 1) * letterSpacingEm);
+
+		// Calculate width scale factor
+		let scaleW = 1.0;
+		if (estimatedRawWidth > maxWidth && maxWidth > 0) {
+			scaleW = maxWidth / estimatedRawWidth;
+		}
+
+		// Calculate multi-line height constraint if applicable
+		let scaleH = 1.0;
+		const rawTotalHeight = baseFontSize + ((numLines - 1) * baseFontSize * lineHeight);
+		const maxHeight = parseFloat(node.maxHeight) || (node.y ? Math.min(node.y * 1.8, (100 - node.y) * 1.8) : 80.0);
+		if (rawTotalHeight > maxHeight && maxHeight > 0) {
+			scaleH = maxHeight / rawTotalHeight;
+		}
+
+		// Combined auto-fit scale factor
+		const autoFitScale = Math.min(1.0, scaleW, scaleH);
+		const effectiveFontSize = Math.max(2.0, baseFontSize * autoFitScale);
+		const effectiveLineWidth = Math.min(maxWidth, estimatedRawWidth * autoFitScale);
+
+		// SVG Native Absolute Barrier: textLength constraint when auto-scaled
+		const textLengthAttr = (autoFitScale < 0.99)
+			? `textLength="${effectiveLineWidth.toFixed(2)}" lengthAdjust="spacingAndGlyphs"`
+			: '';
+
+		// Stroke styling (scaled proportionally to font size)
+		const baseStrokeWidth = (node.stroke && node.stroke.width) ? parseFloat(node.stroke.width) : (node.strokeWidth !== undefined ? parseFloat(node.strokeWidth) : 0.72);
+		const strokeWidth = (baseStrokeWidth * autoFitScale).toFixed(3);
 		const strokeColor = (node.colorSet && node.colorSet.strokeHex) ? node.colorSet.strokeHex : (node.stroke && node.stroke.color ? node.stroke.color : '#000000');
 		const paintOrder = 'paint-order: stroke fill; stroke-linejoin: round; stroke-linecap: round;';
 
@@ -128,10 +212,6 @@ export class SvgRenderer {
 		const colorSet = node.colorSet || {};
 		const isMulti = colorSet.colorMode === 'multi' && Array.isArray(colorSet.palette) && colorSet.palette.length > 0;
 		const palette = isMulti ? colorSet.palette : [node.fill?.color?.hex || node.fill || colorSet.colorHex || '#ffffff'];
-
-		// Check for multi-line text
-		const lines = displayText.split('\n');
-		const isMultiLine = lines.length > 1 || node.multiLine;
 
 		// Filter choice: embroidery relief vs 3d shadow
 		const isEmbroidery = node.fontStyle === 'embroidery' || (colorSet.id && colorSet.id.includes('embroidery')) || strokeColor === 'transparent';
@@ -142,11 +222,11 @@ export class SvgRenderer {
 
 		if (isMultiLine) {
 			const totalLines = lines.length;
-			const startYOffset = -((totalLines - 1) / 2) * (fontSize * lineHeight);
+			const startYOffset = -((totalLines - 1) / 2) * (effectiveFontSize * lineHeight);
 
 			for (let lineIdx = 0; lineIdx < totalLines; lineIdx++) {
 				const lineText = lines[lineIdx];
-				const dy = lineIdx === 0 ? startYOffset : (fontSize * lineHeight);
+				const dy = lineIdx === 0 ? startYOffset : (effectiveFontSize * lineHeight);
 
 				let lineTspans = '';
 				for (let i = 0; i < lineText.length; i++) {
@@ -180,13 +260,14 @@ export class SvgRenderer {
 			x="${x}"
 			y="${y}"
 			font-family="${fontFamily}"
-			font-size="${fontSize}"
+			font-size="${effectiveFontSize.toFixed(2)}"
 			text-anchor="${node.textAnchor || 'middle'}"
 			dominant-baseline="central"
 			letter-spacing="${letterSpacing}"
 			stroke="${strokeColor}"
 			stroke-width="${strokeWidth}"
 			style="${paintOrder}"
+			${textLengthAttr}
 			${filterAttr}
 		>${tspans}</text>`;
 	}

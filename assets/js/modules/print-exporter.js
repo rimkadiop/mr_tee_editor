@@ -154,6 +154,10 @@ export class PrintExporter {
 	 * @return {string}
 	 */
 	static extractFontFaceCss() {
+		if (typeof window !== 'undefined' && window.mrTeeProductData && window.mrTeeProductData.fontFaceCss) {
+			return window.mrTeeProductData.fontFaceCss;
+		}
+
 		let css = '';
 		try {
 			for (const sheet of document.styleSheets) {

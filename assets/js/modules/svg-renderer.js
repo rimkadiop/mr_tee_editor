@@ -109,11 +109,10 @@ export class SvgRenderer {
 
 		const x = parseFloat(node.x) || 50;
 		const y = parseFloat(node.y) || 50;
-		const fontSize = parseFloat(node.fontSize) || 12;
-		const rawFont = node.fontFamily || 'SuperMario256';
+		const rawFont = node.fontFamily || 'Super Mario Wii';
 		const fontFamily = (rawFont.includes('sans-serif') || rawFont.includes('serif'))
 			? rawFont
-			: `'${rawFont}', 'SuperMario256', Arial Black, Impact, -apple-system, sans-serif`;
+			: `'${rawFont}', 'Super Mario Wii', 'SuperMario256', Arial Black, Impact, -apple-system, sans-serif`;
 		const letterSpacing = node.letterSpacing ? `${node.letterSpacing}em` : '0.08em';
 		const casing = node.casing || (node.uppercase === false ? 'ORIGINAL' : 'UPPER');
 		const displayText = (casing === 'UPPER') ? val.toUpperCase() : val;

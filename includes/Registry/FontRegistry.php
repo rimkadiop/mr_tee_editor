@@ -3,7 +3,8 @@
  * Mr. Tee Editor - Extensible Font Registry
  *
  * Manages fancy display fonts, multi-color COLOR_SET font pairings,
- * and @font-face CSS generation with WordPress filter hooks for scalability.
+ * and @font-face CSS generation with embedded base64 data URIs for 100%
+ * reliability across web browsers and canvas/SVG print rasterization.
  *
  * @package MrTeeEditor\Registry
  */
@@ -19,8 +20,9 @@ class FontRegistry {
 	/**
 	 * Return all registered fancy fonts.
 	 *
-	 * Third-party extensions can register custom WOFF2/TTF/SVG fonts via
-	 * the `mr_tee_registered_fonts` filter without modifying core code.
+	 * Every font in this registry is physically bundled inside assets/fonts/,
+	 * guaranteeing 100% offline availability, zero CORS issues, and identical
+	 * rendering across frontend product pages and high-resolution print exports.
 	 *
 	 * @return array<string, array<string, mixed>>
 	 */
@@ -29,7 +31,8 @@ class FontRegistry {
 			'super_mario' => array(
 				'id'                => 'super_mario',
 				'name'              => 'Super Mario (Jeu Vidéo)',
-				'family'            => 'SuperMario256',
+				'family'            => 'Super Mario Wii',
+				'aliases'           => array( 'SuperMario256', 'super_mario', 'Super Mario' ),
 				'file'              => 'SuperMario256.ttf',
 				'format'            => 'truetype',
 				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/SuperMario256.ttf',
@@ -42,113 +45,13 @@ class FontRegistry {
 				'outside_only'      => true,
 				'letter_spacing'    => 0.15,
 				'uppercase'         => true,
-			),
-			'pricedown' => array(
-				'id'                => 'pricedown',
-				'name'              => 'Grand Theft / Pricedown',
-				'family'            => 'PricedownBl',
-				'file'              => 'pricedown_bl.ttf',
-				'format'            => 'truetype',
-				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/pricedown_bl.ttf',
-				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/pricedown_bl.ttf',
-				'multi_color'       => false,
-				'default_color_set' => 'classic_white',
-				'palette'           => array( '#ffffff' ),
-				'stroke'            => '#000000',
-				'stroke_width'      => 0.78,
-				'outside_only'      => true,
-				'letter_spacing'    => 0.08,
-				'uppercase'         => true,
-			),
-			'abril' => array(
-				'id'                => 'abril',
-				'name'              => 'Abril Fatface (Rétro Chic)',
-				'family'            => 'AbrilFatface',
-				'file'              => 'AbrilFatface-Regular.ttf',
-				'format'            => 'truetype',
-				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/AbrilFatface-Regular.ttf',
-				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/AbrilFatface-Regular.ttf',
-				'multi_color'       => false,
-				'default_color_set' => 'retro_black',
-				'palette'           => array( '#111827' ),
-				'stroke'            => 'transparent',
-				'stroke_width'      => 0,
-				'outside_only'      => false,
-				'letter_spacing'    => 0.04,
-				'uppercase'         => false,
-			),
-			'cinzel' => array(
-				'id'                => 'cinzel',
-				'name'              => 'Cinzel Decorative (Prestige)',
-				'family'            => 'CinzelDecorative',
-				'file'              => 'CinzelDecorative-Bold.ttf',
-				'format'            => 'truetype',
-				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/CinzelDecorative-Bold.ttf',
-				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/CinzelDecorative-Bold.ttf',
-				'multi_color'       => false,
-				'default_color_set' => 'retro_black',
-				'palette'           => array( '#111827' ),
-				'stroke'            => 'transparent',
-				'stroke_width'      => 0,
-				'outside_only'      => false,
-				'letter_spacing'    => 0.1,
-				'uppercase'         => true,
-			),
-			'pacifico' => array(
-				'id'                => 'pacifico',
-				'name'              => 'Pacifico (Script Cursif)',
-				'family'            => 'Pacifico',
-				'file'              => 'Pacifico-Regular.ttf',
-				'format'            => 'truetype',
-				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/Pacifico-Regular.ttf',
-				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/Pacifico-Regular.ttf',
-				'multi_color'       => false,
-				'default_color_set' => 'retro_black',
-				'palette'           => array( '#111827' ),
-				'stroke'            => 'transparent',
-				'stroke_width'      => 0,
-				'outside_only'      => false,
-				'letter_spacing'    => 0.02,
-				'uppercase'         => false,
-			),
-			'marker' => array(
-				'id'                => 'marker',
-				'name'              => 'Permanent Marker (Street)',
-				'family'            => 'PermanentMarker',
-				'file'              => 'PermanentMarker-Regular.ttf',
-				'format'            => 'truetype',
-				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/PermanentMarker-Regular.ttf',
-				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/PermanentMarker-Regular.ttf',
-				'multi_color'       => false,
-				'default_color_set' => 'retro_black',
-				'palette'           => array( '#111827' ),
-				'stroke'            => 'transparent',
-				'stroke_width'      => 0,
-				'outside_only'      => false,
-				'letter_spacing'    => 0.06,
-				'uppercase'         => true,
-			),
-			'bebas' => array(
-				'id'                => 'bebas',
-				'name'              => 'Bebas Neue (Impact)',
-				'family'            => 'BebasNeue',
-				'file'              => 'BebasNeue-Regular.ttf',
-				'format'            => 'truetype',
-				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/BebasNeue-Regular.ttf',
-				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/BebasNeue-Regular.ttf',
-				'multi_color'       => false,
-				'default_color_set' => 'retro_black',
-				'palette'           => array( '#111827' ),
-				'stroke'            => 'transparent',
-				'stroke_width'      => 0,
-				'outside_only'      => false,
-				'letter_spacing'    => 0.12,
-				'uppercase'         => true,
+				'category'          => 'gaming',
 			),
 			'press_start' => array(
 				'id'                => 'press_start',
 				'name'              => 'Arcade 8-Bit (Pixel)',
-				'family'            => 'PressStart2P',
+				'family'            => 'Press Start 2P',
+				'aliases'           => array( 'PressStart2P', 'press_start', 'Press Start' ),
 				'file'              => 'PressStart2P-Regular.ttf',
 				'format'            => 'truetype',
 				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/PressStart2P-Regular.ttf',
@@ -161,91 +64,159 @@ class FontRegistry {
 				'outside_only'      => true,
 				'letter_spacing'    => 0.05,
 				'uppercase'         => true,
+				'category'          => 'gaming',
 			),
-			'bebas_brode' => array(
-				'id'                => 'bebas_brode',
-				'name'              => 'Bebas Neue Brodé (Casquette)',
-				'family'            => 'BebasNeue',
+			'bungee' => array(
+				'id'                => 'bungee',
+				'name'              => 'Bungee (Gras & Moderne)',
+				'family'            => 'Bungee',
+				'aliases'           => array( 'bungee', 'Bungee-Regular' ),
+				'file'              => 'bungee.ttf',
+				'format'            => 'truetype',
+				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/bungee.ttf',
+				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/bungee.ttf',
+				'multi_color'       => true,
+				'default_color_set' => 'super_mario_palette',
+				'palette'           => array( '#209cee', '#ffdd57', '#ff3860', '#23d160' ),
+				'stroke'            => '#000000',
+				'stroke_width'      => 0.65,
+				'outside_only'      => true,
+				'letter_spacing'    => 0.08,
+				'uppercase'         => true,
+				'category'          => 'display',
+			),
+			'luckiest_guy' => array(
+				'id'                => 'luckiest_guy',
+				'name'              => 'Luckiest Guy (Bulle BD & Fun)',
+				'family'            => 'Luckiest Guy',
+				'aliases'           => array( 'LuckiestGuy', 'luckiest_guy', 'LuckiestGuy-Regular' ),
+				'file'              => 'luckiest-guy.ttf',
+				'format'            => 'truetype',
+				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/luckiest-guy.ttf',
+				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/luckiest-guy.ttf',
+				'multi_color'       => true,
+				'default_color_set' => 'super_mario_palette',
+				'palette'           => array( '#ff3860', '#ffdd57', '#209cee', '#23d160' ),
+				'stroke'            => '#000000',
+				'stroke_width'      => 0.70,
+				'outside_only'      => true,
+				'letter_spacing'    => 0.06,
+				'uppercase'         => true,
+				'category'          => 'display',
+			),
+			'cocogoose' => array(
+				'id'                => 'cocogoose',
+				'name'              => 'Cocogoose (Caps Géométrique)',
+				'family'            => 'COCOGOOSE CAPS',
+				'aliases'           => array( 'CocogooseCaps', 'Cocogoose', 'cocogoose' ),
+				'file'              => 'cocogoose-caps.ttf',
+				'format'            => 'truetype',
+				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/cocogoose-caps.ttf',
+				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/cocogoose-caps.ttf',
+				'multi_color'       => false,
+				'default_color_set' => 'classic_white',
+				'palette'           => array( '#ffffff' ),
+				'stroke'            => '#000000',
+				'stroke_width'      => 0.65,
+				'outside_only'      => true,
+				'letter_spacing'    => 0.12,
+				'uppercase'         => true,
+				'category'          => 'headline',
+			),
+			'bebas' => array(
+				'id'                => 'bebas',
+				'name'              => 'Bebas Neue (Impact Condensé)',
+				'family'            => 'Bebas Neue',
+				'aliases'           => array( 'BebasNeue', 'bebas', 'BebasNeue-Regular' ),
 				'file'              => 'BebasNeue-Regular.ttf',
 				'format'            => 'truetype',
 				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/BebasNeue-Regular.ttf',
 				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/BebasNeue-Regular.ttf',
-				'multi_color'       => true,
-				'default_color_set' => 'embroidery_multicolor',
-				'palette'           => array( '#e1523d', '#ebb042', '#6aa6a3', '#395c6b', '#e6c1a6', '#4d4038', '#99b39a', '#2f3e46', '#a8dadc', '#e63946' ),
-				'stroke'            => 'transparent',
-				'stroke_width'      => 0,
-				'outside_only'      => false,
-				'letter_spacing'    => 0.1,
-				'uppercase'         => true,
-			),
-			'adede' => array(
-				'id'                => 'adede',
-				'name'              => 'Adédé (Script Calligraphie Maman)',
-				'family'            => 'Pacifico',
-				'file'              => 'Pacifico-Regular.ttf',
-				'format'            => 'truetype',
-				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/Pacifico-Regular.ttf',
-				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/Pacifico-Regular.ttf',
-				'multi_color'       => false,
-				'default_color_set' => 'embroidery_threads',
-				'palette'           => array( '#000000' ),
-				'stroke'            => 'transparent',
-				'stroke_width'      => 0,
-				'outside_only'      => false,
-				'letter_spacing'    => 0.02,
-				'uppercase'         => false,
-			),
-			'hanley_brode' => array(
-				'id'                => 'hanley_brode',
-				'name'              => 'Hanley Brodé (Vintage Année)',
-				'family'            => 'CinzelDecorative',
-				'file'              => 'CinzelDecorative-Bold.ttf',
-				'format'            => 'truetype',
-				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/CinzelDecorative-Bold.ttf',
-				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/CinzelDecorative-Bold.ttf',
-				'multi_color'       => false,
-				'default_color_set' => 'embroidery_threads',
-				'palette'           => array( '#000000' ),
-				'stroke'            => 'transparent',
-				'stroke_width'      => 0,
-				'outside_only'      => false,
-				'letter_spacing'    => 0.08,
-				'uppercase'         => true,
-			),
-			'villagers' => array(
-				'id'                => 'villagers',
-				'name'              => 'Villagers (Prénoms Enfants)',
-				'family'            => 'AbrilFatface',
-				'file'              => 'AbrilFatface-Regular.ttf',
-				'format'            => 'truetype',
-				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/AbrilFatface-Regular.ttf',
-				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/AbrilFatface-Regular.ttf',
-				'multi_color'       => false,
-				'default_color_set' => 'embroidery_threads',
-				'palette'           => array( '#762c14' ),
-				'stroke'            => 'transparent',
-				'stroke_width'      => 0,
-				'outside_only'      => false,
-				'letter_spacing'    => 0.03,
-				'uppercase'         => false,
-			),
-			'gunterz' => array(
-				'id'                => 'gunterz',
-				'name'              => 'Gunterz (Motif Léopard Bloc)',
-				'family'            => 'PricedownBl',
-				'file'              => 'pricedown_bl.ttf',
-				'format'            => 'truetype',
-				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/pricedown_bl.ttf',
-				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/pricedown_bl.ttf',
 				'multi_color'       => false,
 				'default_color_set' => 'retro_black',
-				'palette'           => array( '#000000' ),
+				'palette'           => array( '#111827' ),
+				'stroke'            => 'transparent',
+				'stroke_width'      => 0,
+				'outside_only'      => false,
+				'letter_spacing'    => 0.10,
+				'uppercase'         => true,
+				'category'          => 'headline',
+			),
+			'marker' => array(
+				'id'                => 'marker',
+				'name'              => 'Permanent Marker (Street Art)',
+				'family'            => 'Permanent Marker',
+				'aliases'           => array( 'PermanentMarker', 'marker', 'PermanentMarker-Regular' ),
+				'file'              => 'PermanentMarker-Regular.ttf',
+				'format'            => 'truetype',
+				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/PermanentMarker-Regular.ttf',
+				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/PermanentMarker-Regular.ttf',
+				'multi_color'       => false,
+				'default_color_set' => 'retro_black',
+				'palette'           => array( '#111827' ),
 				'stroke'            => 'transparent',
 				'stroke_width'      => 0,
 				'outside_only'      => false,
 				'letter_spacing'    => 0.05,
 				'uppercase'         => true,
+				'category'          => 'handwritten',
+			),
+			'pacifico' => array(
+				'id'                => 'pacifico',
+				'name'              => 'Pacifico (Script Cursif)',
+				'family'            => 'Pacifico',
+				'aliases'           => array( 'pacifico', 'Pacifico-Regular' ),
+				'file'              => 'Pacifico-Regular.ttf',
+				'format'            => 'truetype',
+				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/Pacifico-Regular.ttf',
+				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/Pacifico-Regular.ttf',
+				'multi_color'       => false,
+				'default_color_set' => 'retro_black',
+				'palette'           => array( '#111827' ),
+				'stroke'            => 'transparent',
+				'stroke_width'      => 0,
+				'outside_only'      => false,
+				'letter_spacing'    => 0.02,
+				'uppercase'         => false,
+				'category'          => 'script',
+			),
+			'abril' => array(
+				'id'                => 'abril',
+				'name'              => 'Abril Fatface (Rétro Chic)',
+				'family'            => 'Abril Fatface',
+				'aliases'           => array( 'AbrilFatface', 'abril', 'AbrilFatface-Regular' ),
+				'file'              => 'AbrilFatface-Regular.ttf',
+				'format'            => 'truetype',
+				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/AbrilFatface-Regular.ttf',
+				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/AbrilFatface-Regular.ttf',
+				'multi_color'       => false,
+				'default_color_set' => 'retro_black',
+				'palette'           => array( '#111827' ),
+				'stroke'            => 'transparent',
+				'stroke_width'      => 0,
+				'outside_only'      => false,
+				'letter_spacing'    => 0.04,
+				'uppercase'         => false,
+				'category'          => 'serif',
+			),
+			'cinzel' => array(
+				'id'                => 'cinzel',
+				'name'              => 'Cinzel Decorative (Prestige)',
+				'family'            => 'Cinzel Decorative',
+				'aliases'           => array( 'CinzelDecorative', 'cinzel', 'CinzelDecorative-Bold' ),
+				'file'              => 'CinzelDecorative-Bold.ttf',
+				'format'            => 'truetype',
+				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/CinzelDecorative-Bold.ttf',
+				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/CinzelDecorative-Bold.ttf',
+				'multi_color'       => false,
+				'default_color_set' => 'retro_black',
+				'palette'           => array( '#111827' ),
+				'stroke'            => 'transparent',
+				'stroke_width'      => 0,
+				'outside_only'      => false,
+				'letter_spacing'    => 0.10,
+				'uppercase'         => true,
+				'category'          => 'serif',
 			),
 		);
 
@@ -260,11 +231,27 @@ class FontRegistry {
 	 */
 	public static function get_font( $font_id ) {
 		$fonts = self::get_fonts();
-		return isset( $fonts[ $font_id ] ) ? $fonts[ $font_id ] : $fonts['super_mario'];
+		if ( isset( $fonts[ $font_id ] ) ) {
+			return $fonts[ $font_id ];
+		}
+		// Check aliases
+		foreach ( $fonts as $f ) {
+			if ( ! empty( $f['aliases'] ) && in_array( $font_id, $f['aliases'], true ) ) {
+				return $f;
+			}
+			if ( ! empty( $f['family'] ) && strcasecmp( $f['family'], $font_id ) === 0 ) {
+				return $f;
+			}
+		}
+		return $fonts['super_mario'];
 	}
 
 	/**
 	 * Build inline @font-face CSS declarations for all registered fonts.
+	 *
+	 * Embeds base64 data URIs so fonts load instantaneously with zero network
+	 * latency and render perfectly on HTML5 canvas and SVG print exports.
+	 * Also registers all family aliases to prevent any font mismatch.
 	 *
 	 * @return string
 	 */
@@ -272,7 +259,6 @@ class FontRegistry {
 		$css = '';
 		foreach ( self::get_fonts() as $font ) {
 			if ( ! empty( $font['path'] ) && file_exists( $font['path'] ) ) {
-				// Embed base64 data URI to guarantee instant loading with zero network latency, no CORS, and no SSL issues
 				$font_data = file_get_contents( $font['path'] );
 				$base64    = base64_encode( $font_data );
 				$mime_type = 'font/' . ( 'truetype' === $font['format'] ? 'ttf' : $font['format'] );
@@ -284,6 +270,7 @@ class FontRegistry {
 					$font_url = preg_replace( '#^https?://#', $proto, $font_url );
 				}
 
+				// Primary font-family declaration
 				$css .= sprintf(
 					"@font-face { font-family: '%s'; src: url('%s') format('%s'), url('%s') format('%s'); font-weight: normal; font-style: normal; font-display: block; }\n",
 					esc_attr( $font['family'] ),
@@ -292,6 +279,20 @@ class FontRegistry {
 					$font_url,
 					esc_attr( $font['format'] )
 				);
+
+				// Family aliases declarations (e.g. 'SuperMario256' for 'Super Mario Wii')
+				if ( ! empty( $font['aliases'] ) && is_array( $font['aliases'] ) ) {
+					foreach ( $font['aliases'] as $alias ) {
+						if ( $alias !== $font['family'] ) {
+							$css .= sprintf(
+								"@font-face { font-family: '%s'; src: url('%s') format('%s'); font-weight: normal; font-style: normal; font-display: block; }\n",
+								esc_attr( $alias ),
+								$data_uri,
+								esc_attr( $font['format'] )
+							);
+						}
+					}
+				}
 			}
 		}
 		return $css;

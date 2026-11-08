@@ -68,12 +68,14 @@ export class FormController {
 				pillsContainer.querySelectorAll('.mr-tee-font-pill').forEach(p => p.classList.remove('is-active'));
 				pill.classList.add('is-active');
 
-				const fonts = (window.mrTeeProductData && window.mrTeeProductData.config && window.mrTeeProductData.config.fonts) || {};
+				const fonts = (window.mrTeeProductData && window.mrTeeProductData.fonts)
+					|| (window.mrTeeProductData && window.mrTeeProductData.config && window.mrTeeProductData.config.fonts)
+					|| {};
 				const fontDef = fonts[fontId] || null;
 
 				const previewText = document.getElementById(`mr-tee-preview-text-${lineIdx}`);
 				if (previewText && fontDef) {
-					previewText.style.fontFamily = `'${fontDef.family}', 'SuperMario256', Arial Black, Impact, sans-serif`;
+					previewText.style.fontFamily = `'${fontDef.family}', Arial Black, Impact, sans-serif`;
 				}
 
 				if (lineConfig.ref_id) {

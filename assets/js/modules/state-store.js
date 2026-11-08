@@ -121,11 +121,18 @@ export class StateStore {
 	 * @param {string} fontId Font key.
 	 * @param {Object} fontDef Font definition.
 	 */
-	setTextFont(refId, fontId, fontDef) {
+	setTextFont(refId, fontId, fontDef = null) {
 		const ref = this.getReference(refId);
 		if (!ref) return;
 
 		ref.fontId = fontId;
+		if (!fontDef) {
+			const fonts = (window.mrTeeProductData && window.mrTeeProductData.fonts)
+				|| (window.mrTeeProductData && window.mrTeeProductData.config && window.mrTeeProductData.config.fonts)
+				|| {};
+			fontDef = fonts[fontId] || null;
+		}
+
 		if (fontDef) {
 			ref.fontFamily = fontDef.family;
 			if (fontDef.palette && ref.colorRefId) {
@@ -134,8 +141,15 @@ export class StateStore {
 					colorRef.palette = fontDef.palette;
 				}
 			}
+			if (fontDef.stroke !== undefined && ref.colorRefId) {
+				const colorRef = this.getReference(ref.colorRefId);
+				if (colorRef) {
+					colorRef.strokeHex = fontDef.stroke;
+				}
+			}
 		}
 
+		this.state.isDirty = true;
 		this.notify('font_change');
 	}
 

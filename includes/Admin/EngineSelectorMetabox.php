@@ -165,6 +165,15 @@ class EngineSelectorMetabox {
 										</td>
 									</tr>
 									<tr>
+										<th><label><?php esc_html_e( 'Choix de Police Client', 'mr-tee-editor' ); ?></label></th>
+										<td>
+											<label>
+												<input type="checkbox" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][allow_font_pick]" value="1" <?php checked( ! empty( $line['allow_font_pick'] ) ); ?> />
+												<?php esc_html_e( 'Afficher les pastilles de sélection de police sur la fiche produit', 'mr-tee-editor' ); ?>
+											</label>
+										</td>
+									</tr>
+									<tr>
 										<th><label><?php esc_html_e( 'Mode Couleur', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<select name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][color_mode]">
@@ -350,6 +359,7 @@ class EngineSelectorMetabox {
 						if ( isset( $line_data['font'] ) ) {
 							$config['text_lines'][ $idx ]['font'] = sanitize_text_field( $line_data['font'] );
 						}
+						$config['text_lines'][ $idx ]['allow_font_pick'] = ! empty( $line_data['allow_font_pick'] );
 						if ( isset( $line_data['color_mode'] ) ) {
 							$config['text_lines'][ $idx ]['color_mode'] = sanitize_text_field( $line_data['color_mode'] );
 						}

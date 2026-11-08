@@ -133,6 +133,7 @@ class ProductPageRenderer {
 			array(
 				'productId'   => $post->ID,
 				'config'      => $config,
+				'fonts'       => FontRegistry::get_fonts(),
 				'ajaxUrl'     => admin_url( 'admin-ajax.php', $proto ),
 				'pluginUrl'   => MR_TEE_EDITOR_URL,
 				'fontFaceCss' => $font_face_css,
@@ -262,9 +263,20 @@ class ProductPageRenderer {
 
 							<!-- Font Selector Pills (collapsible) -->
 							<?php if ( ! empty( $line['allow_font_pick'] ) ) : ?>
+								<?php
+								$allowed_font_ids = ( ! empty( $line['allowed_fonts'] ) && is_array( $line['allowed_fonts'] ) )
+									? $line['allowed_fonts']
+									: array_keys( $fonts );
+								?>
 								<div class="mr-tee-font-selector-row">
 									<div class="mr-tee-font-pills" data-line-index="<?php echo esc_attr( $idx ); ?>">
-										<?php foreach ( $fonts as $f_id => $f_data ) : ?>
+										<?php foreach ( $allowed_font_ids as $f_id ) : ?>
+											<?php
+											if ( ! isset( $fonts[ $f_id ] ) ) {
+												continue;
+											}
+											$f_data = $fonts[ $f_id ];
+											?>
 											<button
 												type="button"
 												class="mr-tee-font-pill <?php echo $line['font'] === $f_id ? 'is-active' : ''; ?>"

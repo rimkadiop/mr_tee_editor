@@ -121,10 +121,11 @@ export class GalleryStage {
 			overlay.className = 'mr-tee-live-stage-overlay';
 			overlay.style.position = 'absolute';
 			overlay.style.pointerEvents = 'none';
-			overlay.style.zIndex = '50';
+			overlay.style.zIndex = '20';
 			overlay.style.display = 'flex';
 			overlay.style.alignItems = 'center';
 			overlay.style.justifyContent = 'center';
+			overlay.style.overflow = 'hidden';
 
 			svgHolder = document.createElement('div');
 			svgHolder.className = 'mr-tee-live-svg-container';
@@ -142,7 +143,7 @@ export class GalleryStage {
 		this.recalibrateOverlayPosition(container, overlay);
 
 		// Listen to image load if image is still loading
-		const img = container.querySelector('img');
+		const img = container.querySelector('img.wp-post-image, img:not(.emoji):not(.zoomImg)');
 		if (img && !img.complete) {
 			img.addEventListener('load', () => this.recalibrateOverlayPosition(container, overlay), { once: true });
 		}
@@ -172,8 +173,8 @@ export class GalleryStage {
 		let baseWidth = hasPerLineBoxes ? 100.0 : (parseFloat(this.config.box_width) || 48.0);
 		let baseHeight = hasPerLineBoxes ? 100.0 : (parseFloat(this.config.box_height) || 54.0);
 
-		const img = container.querySelector('img.wp-post-image, .woocommerce-product-gallery__image img, img');
-		if (img && img.offsetWidth > 0 && container.offsetWidth > 0) {
+		const img = container.querySelector('img.wp-post-image, .woocommerce-product-gallery__image img:not(.emoji):not(.zoomImg), img:not(.emoji):not(.zoomImg)');
+		if (img && !img.classList.contains('emoji') && !img.classList.contains('zoomImg') && img.offsetWidth > 50 && container.offsetWidth > 0) {
 			const imgLeft = img.offsetLeft;
 			const imgTop = img.offsetTop;
 			const imgW = img.offsetWidth;

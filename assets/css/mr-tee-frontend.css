@@ -707,3 +707,19 @@
 		cursor: pointer;
 	}
 }
+
+/* 5. Desktop Sticky Gallery & Stage Overlay Protection */
+@media (min-width: 992px) {
+	.woocommerce div.product div.images,
+	.woocommerce-product-gallery {
+		position: sticky !important;
+		top: 90px !important;
+		z-index: 10 !important;
+		align-self: flex-start;
+	}
+}
+
+.mr-tee-live-stage-overlay {
+	overflow: hidden !important;
+	z-index: 20 !important;
+}

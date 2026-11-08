@@ -213,7 +213,7 @@ export class SvgRenderer {
 		const effectiveLineWidth = Math.min(maxWidth, estimatedRawWidth * autoFitScale);
 
 		// SVG Native Absolute Barrier: textLength constraint when auto-scaled
-		const textLengthAttr = (autoFitScale < 0.99)
+		const textLengthAttr = (!isMultiLine && autoFitScale < 0.99)
 			? `textLength="${effectiveLineWidth.toFixed(2)}" lengthAdjust="spacingAndGlyphs"`
 			: '';
 
@@ -243,6 +243,12 @@ export class SvgRenderer {
 				const lineText = lines[lineIdx];
 				const dy = lineIdx === 0 ? startYOffset : (effectiveFontSize * lineHeight);
 
+				// Line-level textLength constraint if line exceeds box width
+				const lineEstW = effectiveFontSize * (lineText.length * metrics.charRatio + Math.max(0, lineText.length - 1) * letterSpacingEm);
+				const lineLengthAttr = (lineEstW > maxWidth && maxWidth > 0)
+					? ` textLength="${maxWidth.toFixed(2)}" lengthAdjust="spacingAndGlyphs"`
+					: '';
+
 				let lineTspans = '';
 				for (let i = 0; i < lineText.length; i++) {
 					const char = lineText[i];
@@ -255,7 +261,7 @@ export class SvgRenderer {
 					}
 				}
 
-				tspans += `<tspan x="${x}" dy="${dy.toFixed(2)}">${lineTspans}</tspan>`;
+				tspans += `<tspan x="${x}" dy="${dy.toFixed(2)}"${lineLengthAttr}>${lineTspans}</tspan>`;
 			}
 		} else {
 			for (let i = 0; i < displayText.length; i++) {

@@ -151,22 +151,27 @@
 				const curW = parseFloat($(`#mr_tee_field_width_${currentIdx}`).val()) || 40.0;
 				const curH = parseFloat($(`#mr_tee_field_height_${currentIdx}`).val()) || 8.5;
 
+				let dragRaf = null;
 				$(document).on('mousemove.mrTeeDrag', function(moveEvent) {
 					if (!isDragging) return;
-					const dx = (moveEvent.clientX - startX) / wrapRect.width * 100;
-					const dy = (moveEvent.clientY - startY) / wrapRect.height * 100;
+					if (dragRaf) cancelAnimationFrame(dragRaf);
+					dragRaf = requestAnimationFrame(() => {
+						const dx = (moveEvent.clientX - startX) / wrapRect.width * 100;
+						const dy = (moveEvent.clientY - startY) / wrapRect.height * 100;
 
-					let newLeft = Math.max(0, Math.min(100 - curW, startLeft + dx));
-					let newTop = Math.max(0, Math.min(100 - curH, startTop + dy));
+						let newLeft = Math.max(0, Math.min(100 - curW, startLeft + dx));
+						let newTop = Math.max(0, Math.min(100 - curH, startTop + dy));
 
-					newLeft = Math.round(newLeft * 10) / 10;
-					newTop = Math.round(newTop * 10) / 10;
+						newLeft = Math.round(newLeft * 10) / 10;
+						newTop = Math.round(newTop * 10) / 10;
 
-					self.updateBoxPosition(currentIdx, newLeft, newTop);
+						self.updateBoxPosition(currentIdx, newLeft, newTop);
+					});
 				});
 
 				$(document).on('mouseup.mrTeeDrag', function() {
 					isDragging = false;
+					if (dragRaf) cancelAnimationFrame(dragRaf);
 					$(document).off('.mrTeeDrag');
 				});
 			});
@@ -192,37 +197,42 @@
 				startWidth = boxRect.width / wrapRect.width * 100;
 				startHeight = boxRect.height / wrapRect.height * 100;
 
+				let resizeRaf = null;
 				$(document).on('mousemove.mrTeeResize', function(moveEvent) {
 					if (!isResizing) return;
-					const dx = (moveEvent.clientX - startX) / wrapRect.width * 100;
-					const dy = (moveEvent.clientY - startY) / wrapRect.height * 100;
+					if (resizeRaf) cancelAnimationFrame(resizeRaf);
+					resizeRaf = requestAnimationFrame(() => {
+						const dx = (moveEvent.clientX - startX) / wrapRect.width * 100;
+						const dy = (moveEvent.clientY - startY) / wrapRect.height * 100;
 
-					let newW = startWidth;
-					let newH = startHeight;
-					let newL = startLeft;
-					let newT = startTop;
+						let newW = startWidth;
+						let newH = startHeight;
+						let newL = startLeft;
+						let newT = startTop;
 
-					if (currentHandle.includes('e')) newW = Math.max(5, Math.min(100 - startLeft, startWidth + dx));
-					if (currentHandle.includes('s')) newH = Math.max(3, Math.min(100 - startTop, startHeight + dy));
-					if (currentHandle.includes('w')) {
-						newW = Math.max(5, startWidth - dx);
-						newL = startLeft + dx;
-					}
-					if (currentHandle.includes('n')) {
-						newH = Math.max(3, startHeight - dy);
-						newT = startTop + dy;
-					}
+						if (currentHandle.includes('e')) newW = Math.max(5, Math.min(100 - startLeft, startWidth + dx));
+						if (currentHandle.includes('s')) newH = Math.max(3, Math.min(100 - startTop, startHeight + dy));
+						if (currentHandle.includes('w')) {
+							newW = Math.max(5, startWidth - dx);
+							newL = startLeft + dx;
+						}
+						if (currentHandle.includes('n')) {
+							newH = Math.max(3, startHeight - dy);
+							newT = startTop + dy;
+						}
 
-					newW = Math.round(newW * 10) / 10;
-					newH = Math.round(newH * 10) / 10;
-					newL = Math.round(newL * 10) / 10;
-					newT = Math.round(newT * 10) / 10;
+						newW = Math.round(newW * 10) / 10;
+						newH = Math.round(newH * 10) / 10;
+						newL = Math.round(newL * 10) / 10;
+						newT = Math.round(newT * 10) / 10;
 
-					self.updateBoxBounds(currentIdx, newL, newT, newW, newH);
+						self.updateBoxBounds(currentIdx, newL, newT, newW, newH);
+					});
 				});
 
 				$(document).on('mouseup.mrTeeResize', function() {
 					isResizing = false;
+					if (resizeRaf) cancelAnimationFrame(resizeRaf);
 					$(document).off('.mrTeeResize');
 				});
 			});
@@ -396,6 +406,29 @@
 								</td>
 							</tr>
 							<tr>
+								<th><label>Mode Couleur</label></th>
+								<td>
+									<select name="mr_tee_config[text_lines][${newIdx}][color_mode]" class="mr-tee-field-color-mode" data-field-index="${newIdx}">
+										<option value="multi">Multicolore (COLOR_SET cyclique)</option>
+										<option value="solid">Couleur Unie</option>
+									</select>
+								</td>
+							</tr>
+							<tr>
+								<th><label>Max Caractères</label></th>
+								<td>
+									<input type="number" min="1" max="100" name="mr_tee_config[text_lines][${newIdx}][max_chars]" value="25" class="small-text mr-tee-field-max-chars" data-field-index="${newIdx}" />
+								</td>
+							</tr>
+							<tr>
+								<th><label>Options</label></th>
+								<td>
+									<label><input type="checkbox" name="mr_tee_config[text_lines][${newIdx}][allow_font_pick]" value="1" checked class="mr-tee-field-font-pick" data-field-index="${newIdx}" /> Choix de police client</label><br />
+									<label><input type="checkbox" name="mr_tee_config[text_lines][${newIdx}][multiline]" value="1" class="mr-tee-field-multiline" data-field-index="${newIdx}" /> Autoriser retours à la ligne</label><br />
+									<label><input type="checkbox" name="mr_tee_config[text_lines][${newIdx}][warning_unedited]" value="1" class="mr-tee-field-warning" data-field-index="${newIdx}" /> Alerter si non personnalisé</label>
+								</td>
+							</tr>
+							<tr>
 								<th><label>Position X (Left %)</label></th>
 								<td>
 									<input type="number" step="0.1" min="0" max="100" id="mr_tee_field_left_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_left]" value="${newLeft}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-left" data-field-index="${newIdx}" /> %
@@ -495,6 +528,11 @@
 				$(this).find('.mr-tee-field-label-input').attr('name', `mr_tee_config[text_lines][${i}][label]`).attr('data-field-index', i);
 				$(this).find('.mr-tee-field-text-input').attr('name', `mr_tee_config[text_lines][${i}][default_text]`).attr('data-field-index', i);
 				$(this).find('.mr-tee-field-font-select').attr('name', `mr_tee_config[text_lines][${i}][font]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-color-mode').attr('name', `mr_tee_config[text_lines][${i}][color_mode]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-max-chars').attr('name', `mr_tee_config[text_lines][${i}][max_chars]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-font-pick').attr('name', `mr_tee_config[text_lines][${i}][allow_font_pick]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-multiline').attr('name', `mr_tee_config[text_lines][${i}][multiline]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-warning').attr('name', `mr_tee_config[text_lines][${i}][warning_unedited]`).attr('data-field-index', i);
 				$(this).find('.mr-tee-field-coord-left').attr('id', `mr_tee_field_left_${i}`).attr('name', `mr_tee_config[text_lines][${i}][box_left]`).attr('data-field-index', i);
 				$(this).find('.mr-tee-field-coord-top').attr('id', `mr_tee_field_top_${i}`).attr('name', `mr_tee_config[text_lines][${i}][box_top]`).attr('data-field-index', i);
 				$(this).find('.mr-tee-field-coord-width').attr('id', `mr_tee_field_width_${i}`).attr('name', `mr_tee_config[text_lines][${i}][box_width]`).attr('data-field-index', i);

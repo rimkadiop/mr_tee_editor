@@ -21,7 +21,7 @@ export class SceneGraphEngine {
 	 */
 	static getLayersMergedWithRefs(layers, references) {
 		const refMap = this.createRefsMap(references);
-		const clone = JSON.parse(JSON.stringify(layers || []));
+		const clone = this.fastCloneLayers(layers || []);
 
 		const mergeNode = (node) => {
 			if (!node || typeof node !== 'object') return node;
@@ -67,6 +67,38 @@ export class SceneGraphEngine {
 		};
 
 		return clone.map(mergeNode);
+	}
+
+	/**
+	 * Ultra-fast structural cloner for scene-graph layers.
+	 * Eliminates JSON.parse(JSON.stringify) memory churn and garbage collection spikes.
+	 *
+	 * @param {Array} layers List of scene-graph nodes.
+	 * @return {Array} Cloned nodes array.
+	 */
+	static fastCloneLayers(layers) {
+		if (!Array.isArray(layers)) return [];
+		const len = layers.length;
+		const out = new Array(len);
+		for (let i = 0; i < len; i++) {
+			const node = layers[i];
+			if (!node || typeof node !== 'object') {
+				out[i] = node;
+				continue;
+			}
+			const copy = Object.assign({}, node);
+			if (Array.isArray(node.items)) {
+				copy.items = this.fastCloneLayers(node.items);
+			}
+			if (node.visibility && typeof node.visibility === 'object') {
+				copy.visibility = Object.assign({}, node.visibility);
+			}
+			if (node.stroke && typeof node.stroke === 'object') {
+				copy.stroke = Object.assign({}, node.stroke);
+			}
+			out[i] = copy;
+		}
+		return out;
 	}
 
 	/**

@@ -97,6 +97,7 @@ export class StateStore {
 	setTextValue(refId, value) {
 		const ref = this.getReference(refId);
 		if (!ref) return;
+		if (ref.value === value) return;
 
 		ref.value = value;
 		ref.customProperties = ref.customProperties || [];
@@ -124,6 +125,7 @@ export class StateStore {
 	setTextFont(refId, fontId, fontDef = null) {
 		const ref = this.getReference(refId);
 		if (!ref) return;
+		if (ref.fontId === fontId) return;
 
 		ref.fontId = fontId;
 		if (!fontDef) {
@@ -161,10 +163,12 @@ export class StateStore {
 	 */
 	setColorSelection(colorRefId, colorHex) {
 		const colorRef = this.getReference(colorRefId);
-		if (colorRef) {
-			colorRef.colorHex = colorHex;
-			colorRef.color = { hex: colorHex };
-		}
+		if (!colorRef) return;
+		if (colorRef.colorHex === colorHex) return;
+
+		colorRef.colorHex = colorHex;
+		colorRef.color = { hex: colorHex };
+
 		// Also update any layer fill pointing to this colorRefId
 		for (const layer of this.state.layers) {
 			if (layer.fill && (layer.fill.colorRefId === colorRefId || layer.colorRefId === colorRefId)) {

@@ -357,6 +357,8 @@ class EngineSelectorMetabox {
 					$font_pick    = isset( $line_data['allow_font_pick'] ) ? ! empty( $line_data['allow_font_pick'] ) : ( isset( $existing['allow_font_pick'] ) ? ! empty( $existing['allow_font_pick'] ) : true );
 					$color_mode   = isset( $line_data['color_mode'] ) ? sanitize_text_field( $line_data['color_mode'] ) : ( isset( $existing['color_mode'] ) ? $existing['color_mode'] : 'multi' );
 					$warning      = isset( $line_data['warning_unedited'] ) ? ! empty( $line_data['warning_unedited'] ) : ( isset( $existing['warning_unedited'] ) ? ! empty( $existing['warning_unedited'] ) : false );
+					$multiline    = ! empty( $line_data['multiline'] );
+					$max_chars    = isset( $line_data['max_chars'] ) ? max( 1, intval( $line_data['max_chars'] ) ) : ( isset( $existing['max_chars'] ) ? intval( $existing['max_chars'] ) : 25 );
 
 					// Per-line rectangle dimensions
 					$box_l = isset( $line_data['box_left'] ) ? floatval( $line_data['box_left'] ) : ( isset( $existing['box_left'] ) ? floatval( $existing['box_left'] ) : 30.0 );
@@ -377,6 +379,8 @@ class EngineSelectorMetabox {
 							'font'             => $font,
 							'allow_font_pick'  => $font_pick,
 							'color_mode'       => $color_mode,
+							'multiline'        => $multiline,
+							'max_chars'        => $max_chars,
 							'box_left'         => $box_l,
 							'box_top'          => $box_t,
 							'box_width'        => $box_w,

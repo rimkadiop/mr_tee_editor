@@ -203,6 +203,65 @@ class VisualPlacementStage {
 										</td>
 									</tr>
 									<tr>
+										<th><label><?php esc_html_e( 'Mode Couleur', 'mr-tee-editor' ); ?></label></th>
+										<td>
+											<select name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][color_mode]" class="mr-tee-field-color-mode">
+												<option value="multi" <?php selected( isset( $line['color_mode'] ) ? $line['color_mode'] : 'multi', 'multi' ); ?>><?php esc_html_e( 'Multicolore (COLOR_SET cyclique)', 'mr-tee-editor' ); ?></option>
+												<option value="solid" <?php selected( isset( $line['color_mode'] ) ? $line['color_mode'] : 'multi', 'solid' ); ?>><?php esc_html_e( 'Couleur Unie', 'mr-tee-editor' ); ?></option>
+											</select>
+										</td>
+									</tr>
+									<tr>
+										<th><label><?php esc_html_e( 'Max Caractères', 'mr-tee-editor' ); ?></label></th>
+										<td>
+											<input
+												type="number"
+												min="1"
+												max="100"
+												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][max_chars]"
+												value="<?php echo esc_attr( isset( $line['max_chars'] ) ? $line['max_chars'] : 25 ); ?>"
+												class="small-text mr-tee-field-max-chars"
+											/>
+										</td>
+									</tr>
+									<tr>
+										<th><label><?php esc_html_e( 'Options', 'mr-tee-editor' ); ?></label></th>
+										<td>
+											<label>
+												<input
+													type="checkbox"
+													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][allow_font_pick]"
+													value="1"
+													class="mr-tee-field-font-pick"
+													<?php checked( ! isset( $line['allow_font_pick'] ) || ! empty( $line['allow_font_pick'] ) ); ?>
+												/>
+												<?php esc_html_e( 'Choix de police client', 'mr-tee-editor' ); ?>
+											</label>
+											<br />
+											<label>
+												<input
+													type="checkbox"
+													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][multiline]"
+													value="1"
+													class="mr-tee-field-multiline"
+													<?php checked( ! empty( $line['multiline'] ) ); ?>
+												/>
+												<?php esc_html_e( 'Autoriser retours à la ligne', 'mr-tee-editor' ); ?>
+											</label>
+											<br />
+											<label>
+												<input
+													type="checkbox"
+													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][warning_unedited]"
+													value="1"
+													class="mr-tee-field-warning"
+													<?php checked( ! empty( $line['warning_unedited'] ) ); ?>
+												/>
+												<?php esc_html_e( 'Alerter si non personnalisé', 'mr-tee-editor' ); ?>
+											</label>
+										</td>
+									</tr>
+									<tr>
 										<th><label><?php esc_html_e( 'Position X (Left %)', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<input

@@ -53,6 +53,23 @@ add_action(
 	5
 );
 
+// Ensure WooCommerce session cookies work over both HTTP and HTTPS in test/staging environments
+add_filter( 'wc_session_use_secure_cookie', '__return_false', 999 );
+add_filter( 'woocommerce_cookie_is_secure', '__return_false', 999 );
+add_filter( 'wc_cookie_is_secure', '__return_false', 999 );
+
+// Normalize form action & redirects to prevent 503 errors on HTTPS port 443
+$mr_tee_http_filter = function ( $url ) {
+	return is_string( $url ) ? str_replace( 'https://1.tawfekh-digital.com', 'http://1.tawfekh-digital.com', $url ) : $url;
+};
+add_filter( 'woocommerce_add_to_cart_form_action', $mr_tee_http_filter, 999 );
+add_filter( 'woocommerce_get_cart_url', $mr_tee_http_filter, 999 );
+add_filter( 'woocommerce_get_checkout_url', $mr_tee_http_filter, 999 );
+add_filter( 'page_link', $mr_tee_http_filter, 999 );
+add_filter( 'post_link', $mr_tee_http_filter, 999 );
+add_filter( 'post_type_link', $mr_tee_http_filter, 999 );
+add_filter( 'wp_redirect', $mr_tee_http_filter, 999 );
+
 /**
  * Backward compatibility helper: get product configuration.
  *

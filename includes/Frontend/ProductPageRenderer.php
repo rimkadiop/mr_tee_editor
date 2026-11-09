@@ -463,6 +463,7 @@ class ProductPageRenderer {
 			</div>
 
 			<!-- Hidden Form Inputs for Cart Payload Submission -->
+			<input type="hidden" name="add-to-cart" value="<?php echo esc_attr( $post->ID ); ?>" />
 			<input type="hidden" name="mr_tee_editor_payload" id="mr_tee_editor_payload" value="" />
 			<input type="hidden" name="mr_tee_preview_png" id="mr_tee_preview_png" value="" />
 			<input type="hidden" name="mr_tee_vector_svg" id="mr_tee_vector_svg" value="" />

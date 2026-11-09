@@ -237,8 +237,7 @@ export class FormController {
 				e.stopPropagation();
 				if (this.onExportRequested) {
 					this.onExportRequested(() => {
-						this.bypassWarning = true;
-						this.addToCartBtn.click();
+						this.submitCartForm();
 					});
 				}
 			});
@@ -270,13 +269,29 @@ export class FormController {
 		if (btnProceed && this.warningModal) {
 			btnProceed.addEventListener('click', () => {
 				this.warningModal.style.display = 'none';
-				this.bypassWarning = true;
 				if (this.onExportRequested) {
 					this.onExportRequested(() => {
-						this.addToCartBtn.click();
+						this.submitCartForm();
 					});
 				}
 			});
+		}
+	}
+
+	submitCartForm() {
+		this.bypassWarning = true;
+		const form = this.addToCartBtn ? this.addToCartBtn.closest('form') : document.querySelector('form.cart');
+		if (form) {
+			if (location.protocol === 'http:' && form.action && form.action.startsWith('https:')) {
+				form.action = form.action.replace('https:', 'http:');
+			}
+			if (typeof form.requestSubmit === 'function') {
+				form.requestSubmit(this.addToCartBtn);
+			} else {
+				form.submit();
+			}
+		} else if (this.addToCartBtn) {
+			this.addToCartBtn.click();
 		}
 	}
 

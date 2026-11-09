@@ -33,6 +33,12 @@ class MrTeeFrontendApp {
 			return;
 		}
 
+		// Ensure form action protocol matches current protocol to prevent 503 SSL redirection errors
+		const cartForm = document.querySelector('form.cart');
+		if (cartForm && location.protocol === 'http:' && cartForm.action && cartForm.action.startsWith('https:')) {
+			cartForm.action = cartForm.action.replace('https:', 'http:');
+		}
+
 		// 1. Initialize State Store
 		this.store = new StateStore(this.config);
 

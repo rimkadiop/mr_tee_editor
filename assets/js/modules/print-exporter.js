@@ -7,7 +7,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js';
+import { SvgRenderer } from './svg-renderer.js?v=2.3.0';
 
 export class PrintExporter {
 	/**
@@ -20,35 +20,96 @@ export class PrintExporter {
 	 * @return {Promise<boolean>}
 	 */
 	static async prepareExport(layers, zoomTransform, store, config) {
-		const printW = parseInt(config.print_width_px, 10) || 2400;
-		const printH = parseInt(config.print_height_px, 10) || 3000;
+		const isFlatObject = config.product_type === 'flat_object';
+		const hasPerLineBoxes = Array.isArray(config.text_lines) && config.text_lines.some(l => l.box_left !== undefined && l.box_width !== undefined);
 		const realW  = parseFloat(config.print_real_width) || 30.0;
 		const realH  = parseFloat(config.print_real_height) || 40.0;
 		const unit   = config.print_unit || 'cm';
 		const dpi    = parseInt(config.dpi, 10) || 300;
-		const ratio  = (realW > 0 && realH > 0) ? (realW / realH) : (parseFloat(config.print_aspect_ratio) || (printW / printH));
-		const hasPerLineBoxes = Array.isArray(config.text_lines) && config.text_lines.some(l => l.box_left !== undefined && l.box_width !== undefined);
 
-		// 1. Build self-contained, clean vector SVG markup (with physical scale attributes)
+		let cropBoundingBox = null;
+		let exportRealW = realW;
+		let exportRealH = realH;
+		let exportPxW = parseInt(config.print_width_px, 10) || 2400;
+		let exportPxH = parseInt(config.print_height_px, 10) || 3000;
+		let exportRatio = (realW > 0 && realH > 0) ? (realW / realH) : 1.0;
+
+		if (!isFlatObject && hasPerLineBoxes) {
+			let xMin = 100, yMin = 100, xMax = 0, yMax = 0;
+			config.text_lines.forEach(l => {
+				if (l.box_left !== undefined && l.box_width !== undefined) {
+					const left = parseFloat(l.box_left) || 0;
+					const top = parseFloat(l.box_top) || 0;
+					const width = parseFloat(l.box_width) || 10;
+					const height = parseFloat(l.box_height) || 10;
+					xMin = Math.min(xMin, left);
+					yMin = Math.min(yMin, top);
+					xMax = Math.max(xMax, left + width);
+					yMax = Math.max(yMax, top + height);
+				}
+			});
+
+			const spanW = Math.max(1, xMax - xMin);
+			const spanH = Math.max(1, yMax - yMin);
+
+			exportRealW = Number(((spanW / 100) * realW).toFixed(2));
+			exportRealH = Number(((spanH / 100) * realH).toFixed(2));
+
+			const toInches = unit === 'mm' ? (1 / 25.4) : (unit === 'in' ? 1.0 : (1 / 2.54));
+			exportPxW = Math.max(10, Math.round(exportRealW * toInches * dpi));
+			exportPxH = Math.max(10, Math.round(exportRealH * toInches * dpi));
+			exportRatio = exportRealH > 0 ? (exportRealW / exportRealH) : 1.0;
+
+			cropBoundingBox = {
+				xMin,
+				yMin,
+				xMax,
+				yMax,
+				spanW,
+				spanH,
+				cropRealW: exportRealW,
+				cropRealH: exportRealH,
+				cropPxW: exportPxW,
+				cropPxH: exportPxH,
+				cropRatio: exportRatio,
+			};
+		}
+
+		// 1. Build self-contained, clean vector SVG markup (tightly cropped to cumulative design area)
 		const svgMarkup = SvgRenderer.renderToString(layers, zoomTransform, {
 			isExport: true,
-			realWidth: realW,
-			realHeight: realH,
+			realWidth: exportRealW,
+			realHeight: exportRealH,
 			unit: unit,
 			dpi: dpi,
-			aspectRatio: ratio,
+			aspectRatio: exportRatio,
+			hasPerLineBoxes: hasPerLineBoxes,
+			cropBoundingBox: cropBoundingBox,
+			fontFaceCss: this.extractFontFaceCss(),
+		});
+
+		// 2. Build full uncropped SVG for visual composite preview on mockup photo
+		const fullPreviewSvg = SvgRenderer.renderToString(layers, zoomTransform, {
+			isExport: false,
+			aspectRatio: (realW > 0 && realH > 0) ? (realW / realH) : 1.0,
 			hasPerLineBoxes: hasPerLineBoxes,
 			fontFaceCss: this.extractFontFaceCss(),
 		});
 
-		// 2. Rasterize to 300 DPI Transparent PNG (lossless print output)
-		const print300DpiB64 = await this.rasterizeSvgToPng(svgMarkup, printW, printH);
+		// 3. Rasterize to 300 DPI Transparent PNG (tightly cropped, lossless print output)
+		const print300DpiB64 = await this.rasterizeSvgToPng(svgMarkup, exportPxW, exportPxH);
 
-		// 3. Render Composite Mockup Preview (Garment + Design) as compact high-quality JPEG
-		const compositeB64 = await this.renderCompositePreview(svgMarkup, config);
+		// 4. Render Composite Mockup Preview (Garment + Design) as compact high-quality JPEG
+		const compositeB64 = await this.renderCompositePreview(fullPreviewSvg, config);
 
-		// 4. Serialize payload
+		// 5. Serialize payload with print dimensions attached
 		const payload = store.getExportPayload();
+		payload.crop_print_width = exportRealW;
+		payload.crop_print_height = exportRealH;
+		payload.crop_width_px = exportPxW;
+		payload.crop_height_px = exportPxH;
+		payload.print_unit = unit;
+		payload.dpi = dpi;
 
 		// 5. Populate hidden form inputs
 		const payloadInput = document.getElementById('mr_tee_editor_payload');

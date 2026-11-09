@@ -243,6 +243,7 @@
 			$(`#mr_tee_field_left_${idx}`).val(left);
 			$(`#mr_tee_field_top_${idx}`).val(top);
 			$(`#mr-tee-field-box-${idx}`).css({ left: left + '%', top: top + '%' });
+			this.recalculateDimensions();
 		}
 
 		updateBoxBounds(idx, left, top, width, height) {
@@ -263,6 +264,7 @@
 
 			// Re-render preview text inside this box
 			this.renderBoxPreview(idx);
+			this.recalculateDimensions();
 		}
 
 		/**
@@ -288,6 +290,7 @@
 
 				$(`.mr-tee-field-pill[data-field-index="${idx}"] .mr-tee-pill-dims`).text(`${w}×${h}%`);
 				self.renderBoxPreview(idx);
+				self.recalculateDimensions();
 			});
 
 			// Label Input
@@ -688,25 +691,54 @@
 			const pType = $('#mr_tee_product_type').val() || 'garment';
 			const isLocked = $('#mr_tee_lock_aspect_ratio').is(':checked') || pType === 'flat_object';
 
-			const ratio = (h > 0) ? (w / h) : 1.0;
+			const refRatio = (h > 0) ? (w / h) : 1.0;
 
-			let inchW = w / 2.54;
-			let inchH = h / 2.54;
-			if (unit === 'mm') {
-				inchW = w / 25.4;
-				inchH = h / 25.4;
-			} else if (unit === 'in') {
-				inchW = w;
-				inchH = h;
+			// Calculate cumulative bounding box across all active fields
+			let xMin = 100, yMin = 100, xMax = 0, yMax = 0;
+			let boxCount = 0;
+			$('.mr-tee-field-box').each(function() {
+				const idx = $(this).data('field-index');
+				const l = parseFloat($(`#mr_tee_field_left_${idx}`).val()) || 0;
+				const t = parseFloat($(`#mr_tee_field_top_${idx}`).val()) || 0;
+				const bw = parseFloat($(`#mr_tee_field_width_${idx}`).val()) || 10;
+				const bh = parseFloat($(`#mr_tee_field_height_${idx}`).val()) || 10;
+
+				xMin = Math.min(xMin, l);
+				yMin = Math.min(yMin, t);
+				xMax = Math.max(xMax, l + bw);
+				yMax = Math.max(yMax, t + bh);
+				boxCount++;
+			});
+
+			if (boxCount === 0 || pType === 'flat_object') {
+				xMin = 0; yMin = 0; xMax = 100; yMax = 100;
 			}
 
-			const pxW = Math.round(inchW * dpi);
-			const pxH = Math.round(inchH * dpi);
+			const spanW = Math.max(1, xMax - xMin);
+			const spanH = Math.max(1, yMax - yMin);
 
-			const simplified = this.getSimplifiedRatio(w, h);
+			// Real physical dimensions of the cumulative design area
+			const cumRealW = Number(((spanW / 100) * w).toFixed(2));
+			const cumRealH = Number(((spanH / 100) * h).toFixed(2));
+
+			let cumInchW = cumRealW / 2.54;
+			let cumInchH = cumRealH / 2.54;
+			if (unit === 'mm') {
+				cumInchW = cumRealW / 25.4;
+				cumInchH = cumRealH / 25.4;
+			} else if (unit === 'in') {
+				cumInchW = cumRealW;
+				cumInchH = cumRealH;
+			}
+
+			const pxW = Math.max(10, Math.round(cumInchW * dpi));
+			const pxH = Math.max(10, Math.round(cumInchH * dpi));
+			const cumRatio = (cumRealH > 0) ? (cumRealW / cumRealH) : 1.0;
+			const simplified = this.getSimplifiedRatio(cumRealW, cumRealH);
 
 			// Update Live Badge
-			$('#mr-tee-badge-ratio-val').text(`${simplified} (~${ratio.toFixed(3)} : 1)`);
+			$('#mr-tee-badge-cum-val').text(`${cumRealW} × ${cumRealH} ${unit}`);
+			$('#mr-tee-badge-ratio-val').text(`${simplified} (~${cumRatio.toFixed(3)} : 1)`);
 			$('#mr-tee-badge-px-val').text(`${pxW} × ${pxH} px`);
 
 			// Update TAB 4 pixel inputs
@@ -717,7 +749,7 @@
 			if (this.$canvasWrap.length) {
 				if (isLocked) {
 					this.$canvasWrap.addClass('is-aspect-locked');
-					this.$canvasWrap.css('aspect-ratio', ratio.toString());
+					this.$canvasWrap.css('aspect-ratio', refRatio.toString());
 				} else {
 					this.$canvasWrap.removeClass('is-aspect-locked');
 					this.$canvasWrap.css('aspect-ratio', '');

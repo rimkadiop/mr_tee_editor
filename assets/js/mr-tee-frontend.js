@@ -7,12 +7,12 @@
  * @package MrTeeEditor\Assets
  */
 
-import { StateStore } from './modules/state-store.js?v=2.2.2';
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.2.2';
-import { SvgRenderer } from './modules/svg-renderer.js?v=2.2.2';
-import { GalleryStage } from './modules/gallery-stage.js?v=2.2.2';
-import { FormController } from './modules/form-controller.js?v=2.2.2';
-import { PrintExporter } from './modules/print-exporter.js?v=2.2.2';
+import { StateStore } from './modules/state-store.js?v=2.3.0';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.3.0';
+import { SvgRenderer } from './modules/svg-renderer.js?v=2.3.0';
+import { GalleryStage } from './modules/gallery-stage.js?v=2.3.0';
+import { FormController } from './modules/form-controller.js?v=2.3.0';
+import { PrintExporter } from './modules/print-exporter.js?v=2.3.0';
 
 class MrTeeFrontendApp {
 	constructor() {
@@ -127,7 +127,7 @@ class MrTeeFrontendApp {
 				this.config
 			);
 		} catch (err) {
-			console.error('[MrTee Editor] Export preparation failed:', err);
+			console.error('[MrTee Editor] Export preparation failed: ' + (err && err.stack ? err.stack : err));
 		}
 
 		if (typeof onDone === 'function') {

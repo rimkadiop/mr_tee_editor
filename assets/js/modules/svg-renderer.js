@@ -164,13 +164,22 @@ export class SvgRenderer {
 		const val = String(node.value || node.text || '');
 		if (!val.trim()) return '';
 
-		const hasBox = (node.box_width !== undefined && node.box_height !== undefined);
 		const ratio = (options.ratio && options.ratio > 0) ? options.ratio : 1.0;
 		const hasPerLine = Boolean(options.hasPerLineBoxes);
-		const boxW = hasBox ? parseFloat(node.box_width) : (parseFloat(node.maxWidth) || 84.0);
-		const boxH = hasBox ? parseFloat(node.box_height) : (parseFloat(node.fontSize) ? parseFloat(node.fontSize) * 1.5 : 12.0);
-		const boxL = (node.box_left !== undefined) ? parseFloat(node.box_left) : ((parseFloat(node.x) || 50) - (boxW / 2));
-		const boxT = (node.box_top !== undefined) ? parseFloat(node.box_top) : ((parseFloat(node.y) || 50) - (boxH / 2));
+
+		const hasBox = (node.box_width !== undefined && node.box_height !== undefined);
+		let boxW = hasBox ? parseFloat(node.box_width) : (parseFloat(node.maxWidth) || 84.0);
+		let boxH = hasBox ? parseFloat(node.box_height) : (parseFloat(node.fontSize) ? parseFloat(node.fontSize) * 1.5 : 12.0);
+		let boxL = (node.box_left !== undefined) ? parseFloat(node.box_left) : ((parseFloat(node.x) || 50) - (boxW / 2));
+		let boxT = (node.box_top !== undefined) ? parseFloat(node.box_top) : ((parseFloat(node.y) || 50) - (boxH / 2));
+
+		if (options.cropBoundingBox && options.cropBoundingBox.spanW > 0 && options.cropBoundingBox.spanH > 0) {
+			const c = options.cropBoundingBox;
+			boxL = ((boxL - c.xMin) / c.spanW) * 100;
+			boxT = ((boxT - c.yMin) / c.spanH) * 100;
+			boxW = (boxW / c.spanW) * 100;
+			boxH = (boxH / c.spanH) * 100;
+		}
 
 		const x = boxL + (boxW / 2);
 		const y = (hasPerLine && ratio !== 1.0) ? ((boxT + (boxH / 2)) / ratio) : (boxT + (boxH / 2));

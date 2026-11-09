@@ -72,32 +72,45 @@ class CartIntegration {
 		$svg_res     = PrintAssetGenerator::save_svg( $vector_svg, $sub_dir, 'design.svg' );
 		$print_res   = PrintAssetGenerator::save_base64_png( $print_300dpi, $sub_dir, 'print_300dpi.png' );
 
-		$config           = SceneGraphSchema::get_product_config( $product_id );
-		$dims_summary     = sprintf(
-			'%s × %s %s (Ratio: %s | 300 DPI: %s × %s px)',
-			isset( $config['print_real_width'] ) ? $config['print_real_width'] : 30.0,
-			isset( $config['print_real_height'] ) ? $config['print_real_height'] : 40.0,
-			isset( $config['print_unit'] ) ? $config['print_unit'] : 'cm',
-			isset( $config['print_aspect_ratio'] ) ? round( floatval( $config['print_aspect_ratio'] ), 3 ) : '0.75',
-			isset( $config['print_width_px'] ) ? $config['print_width_px'] : 2400,
-			isset( $config['print_height_px'] ) ? $config['print_height_px'] : 3000
+		$config       = SceneGraphSchema::get_product_config( $product_id );
+		$is_flat      = isset( $config['product_type'] ) && 'flat_object' === $config['product_type'];
+		$crop_w       = ! empty( $payload['crop_print_width'] ) ? floatval( $payload['crop_print_width'] ) : ( isset( $config['crop_print_width'] ) ? $config['crop_print_width'] : ( isset( $config['print_real_width'] ) ? $config['print_real_width'] : 30.0 ) );
+		$crop_h       = ! empty( $payload['crop_print_height'] ) ? floatval( $payload['crop_print_height'] ) : ( isset( $config['crop_print_height'] ) ? $config['crop_print_height'] : ( isset( $config['print_real_height'] ) ? $config['print_real_height'] : 40.0 ) );
+		$crop_px_w    = ! empty( $payload['crop_width_px'] ) ? intval( $payload['crop_width_px'] ) : ( isset( $config['print_width_px'] ) ? $config['print_width_px'] : 2400 );
+		$crop_px_h    = ! empty( $payload['crop_height_px'] ) ? intval( $payload['crop_height_px'] ) : ( isset( $config['print_height_px'] ) ? $config['print_height_px'] : 3000 );
+		$unit         = ! empty( $payload['print_unit'] ) ? $payload['print_unit'] : ( isset( $config['print_unit'] ) ? $config['print_unit'] : 'cm' );
+		$dpi          = ! empty( $payload['dpi'] ) ? intval( $payload['dpi'] ) : ( isset( $config['dpi'] ) ? $config['dpi'] : 300 );
+		$crop_ratio   = ( $crop_h > 0 ) ? round( $crop_w / $crop_h, 3 ) : 1.0;
+
+		$dims_summary = sprintf(
+			'%s × %s %s (%d DPI | %d × %d px)',
+			$crop_w,
+			$crop_h,
+			$unit,
+			$dpi,
+			$crop_px_w,
+			$crop_px_h
 		);
 
 		$cart_item_data['mr_tee_editor'] = array(
-			'key'               => $design_key,
-			'payload'           => $payload,
-			'print_dimensions'  => $dims_summary,
-			'print_real_width'  => isset( $config['print_real_width'] ) ? $config['print_real_width'] : 30.0,
-			'print_real_height' => isset( $config['print_real_height'] ) ? $config['print_real_height'] : 40.0,
-			'print_unit'        => isset( $config['print_unit'] ) ? $config['print_unit'] : 'cm',
-			'print_aspect_ratio'=> isset( $config['print_aspect_ratio'] ) ? $config['print_aspect_ratio'] : 0.75,
-			'product_type'      => isset( $config['product_type'] ) ? $config['product_type'] : 'garment',
-			'preview_url'       => $preview_res ? $preview_res['url'] : '',
-			'preview_file'      => $preview_res ? $preview_res['file'] : '',
-			'svg_url'           => $svg_res ? $svg_res['url'] : '',
-			'svg_file'          => $svg_res ? $svg_res['file'] : '',
-			'print_url'         => $print_res ? $print_res['url'] : '',
-			'print_file'        => $print_res ? $print_res['file'] : '',
+			'key'                => $design_key,
+			'payload'            => $payload,
+			'print_dimensions'   => $dims_summary,
+			'print_real_width'   => $crop_w,
+			'print_real_height'  => $crop_h,
+			'print_width_px'     => $crop_px_w,
+			'print_height_px'    => $crop_px_h,
+			'ref_real_width'     => isset( $config['print_real_width'] ) ? $config['print_real_width'] : 30.0,
+			'ref_real_height'    => isset( $config['print_real_height'] ) ? $config['print_real_height'] : 40.0,
+			'print_unit'         => $unit,
+			'print_aspect_ratio' => $crop_ratio,
+			'product_type'       => isset( $config['product_type'] ) ? $config['product_type'] : 'garment',
+			'preview_url'        => $preview_res ? $preview_res['url'] : '',
+			'preview_file'       => $preview_res ? $preview_res['file'] : '',
+			'svg_url'            => $svg_res ? $svg_res['url'] : '',
+			'svg_file'           => $svg_res ? $svg_res['file'] : '',
+			'print_url'          => $print_res ? $print_res['url'] : '',
+			'print_file'         => $print_res ? $print_res['file'] : '',
 		);
 
 		// Handle NBDesigner Handshake if enabled or if NBDesigner plugin is active

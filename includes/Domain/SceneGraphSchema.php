@@ -537,22 +537,27 @@ class SceneGraphSchema {
 		$product_type = ! empty( $config['product_type'] ) ? sanitize_key( $config['product_type'] ) : 'garment';
 		$lock_ratio   = isset( $config['lock_aspect_ratio'] ) ? ! empty( $config['lock_aspect_ratio'] ) : ( 'flat_object' === $product_type );
 
-		$computed_dims = self::compute_print_dimensions( $real_w, $real_h, $print_unit, $dpi );
+		$computed_dims   = self::compute_print_dimensions( $real_w, $real_h, $print_unit, $dpi );
+		$cumulative_dims = self::compute_cumulative_design_area( $config );
 
-		$config['print_unit']         = $print_unit;
-		$config['print_real_width']   = $real_w;
-		$config['print_real_height']  = $real_h;
-		$config['dpi']                = $dpi;
-		$config['product_type']       = $product_type;
-		$config['lock_aspect_ratio']  = $lock_ratio;
-		$config['print_aspect_ratio'] = $computed_dims['aspect_ratio'];
-		$config['print_ratio_str']    = $computed_dims['ratio_str'];
+		$config['print_unit']              = $print_unit;
+		$config['print_real_width']        = $real_w;
+		$config['print_real_height']       = $real_h;
+		$config['dpi']                     = $dpi;
+		$config['product_type']            = $product_type;
+		$config['lock_aspect_ratio']       = $lock_ratio;
+		$config['print_aspect_ratio']      = $computed_dims['aspect_ratio'];
+		$config['print_ratio_str']         = $computed_dims['ratio_str'];
+		$config['cumulative_design_area']  = $cumulative_dims;
 
-		// If pixel dimensions were not specifically custom-tailored, auto-derive from 300 DPI physical dimensions
-		if ( empty( $saved['print_width_px'] ) || empty( $saved['print_height_px'] ) ) {
-			$config['print_width_px']  = $computed_dims['width_px'];
-			$config['print_height_px'] = $computed_dims['height_px'];
-		}
+		// The actual print-ready file dimensions are governed by the cumulative design area
+		$config['print_width_px']          = $cumulative_dims['width_px'];
+		$config['print_height_px']         = $cumulative_dims['height_px'];
+		$config['crop_print_width']        = $cumulative_dims['print_real_width'];
+		$config['crop_print_height']       = $cumulative_dims['print_real_height'];
+		$config['crop_aspect_ratio']       = $cumulative_dims['aspect_ratio'];
+		$config['crop_ratio_str']          = $cumulative_dims['ratio_str'];
+		$config['crop_simplified_ratio']   = $cumulative_dims['simplified_ratio'];
 
 		$config['icons']        = IconSetRegistry::get_mushroom_icons();
 		$config['fonts']        = FontRegistry::get_fonts();
@@ -663,6 +668,98 @@ class SceneGraphSchema {
 		}
 
 		return sprintf( '%d:%d', $num_w, $num_h );
+	}
+
+	/**
+	 * Compute cumulative design area bounding box for print export.
+	 *
+	 * Encloses all active multi-rectangle fields into a single tight bounding box.
+	 * Calculates real physical dimensions (e.g. 3 × 4 cm) relative to the product image reference size (e.g. 12 × 20 cm)
+	 * and derives the 300 DPI pixel dimensions for the final print-ready output.
+	 *
+	 * @param array $config Product configuration.
+	 * @return array{
+	 *     box_x_min: float, box_y_min: float, box_x_max: float, box_y_max: float,
+	 *     span_w_pct: float, span_h_pct: float,
+	 *     print_real_width: float, print_real_height: float,
+	 *     width_px: int, height_px: int,
+	 *     aspect_ratio: float, ratio_str: string, simplified_ratio: string
+	 * }
+	 */
+	public static function compute_cumulative_design_area( $config ) {
+		$prod_type = isset( $config['product_type'] ) ? $config['product_type'] : 'garment';
+		$real_w    = isset( $config['print_real_width'] ) ? floatval( $config['print_real_width'] ) : 30.0;
+		$real_h    = isset( $config['print_real_height'] ) ? floatval( $config['print_real_height'] ) : 40.0;
+		$unit      = ! empty( $config['print_unit'] ) ? $config['print_unit'] : 'cm';
+		$dpi       = isset( $config['dpi'] ) ? max( 72, intval( $config['dpi'] ) ) : 300;
+
+		if ( 'flat_object' === $prod_type ) {
+			$dims = self::compute_print_dimensions( $real_w, $real_h, $unit, $dpi );
+			return array_merge( $dims, array(
+				'box_x_min'         => 0.0,
+				'box_y_min'         => 0.0,
+				'box_x_max'         => 100.0,
+				'box_y_max'         => 100.0,
+				'span_w_pct'        => 100.0,
+				'span_h_pct'        => 100.0,
+				'print_real_width'  => $real_w,
+				'print_real_height' => $real_h,
+			) );
+		}
+
+		$boxes = array();
+		if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
+			foreach ( $config['text_lines'] as $line ) {
+				if ( isset( $line['box_left'] ) && isset( $line['box_width'] ) ) {
+					$boxes[] = array(
+						'l' => floatval( $line['box_left'] ),
+						't' => isset( $line['box_top'] ) ? floatval( $line['box_top'] ) : 0.0,
+						'w' => floatval( $line['box_width'] ),
+						'h' => isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : 10.0,
+					);
+				}
+			}
+		}
+
+		if ( empty( $boxes ) ) {
+			$bl = isset( $config['box_left'] ) ? floatval( $config['box_left'] ) : 28.0;
+			$bt = isset( $config['box_top'] ) ? floatval( $config['box_top'] ) : 28.0;
+			$bw = isset( $config['box_width'] ) ? floatval( $config['box_width'] ) : 44.0;
+			$bh = isset( $config['box_height'] ) ? floatval( $config['box_height'] ) : 48.0;
+			$boxes[] = array( 'l' => $bl, 't' => $bt, 'w' => $bw, 'h' => $bh );
+		}
+
+		$x_min = 100.0;
+		$y_min = 100.0;
+		$x_max = 0.0;
+		$y_max = 0.0;
+
+		foreach ( $boxes as $b ) {
+			$x_min = min( $x_min, $b['l'] );
+			$y_min = min( $y_min, $b['t'] );
+			$x_max = max( $x_max, $b['l'] + $b['w'] );
+			$y_max = max( $y_max, $b['t'] + $b['h'] );
+		}
+
+		$span_w = max( 1.0, $x_max - $x_min );
+		$span_h = max( 1.0, $y_max - $y_min );
+
+		// Physical dimensions of the cumulative design area
+		$print_w = round( ( $span_w / 100.0 ) * $real_w, 2 );
+		$print_h = round( ( $span_h / 100.0 ) * $real_h, 2 );
+
+		$dims = self::compute_print_dimensions( $print_w, $print_h, $unit, $dpi );
+
+		return array_merge( $dims, array(
+			'box_x_min'         => round( $x_min, 2 ),
+			'box_y_min'         => round( $y_min, 2 ),
+			'box_x_max'         => round( $x_max, 2 ),
+			'box_y_max'         => round( $y_max, 2 ),
+			'span_w_pct'        => round( $span_w, 2 ),
+			'span_h_pct'        => round( $span_h, 2 ),
+			'print_real_width'  => $print_w,
+			'print_real_height' => $print_h,
+		) );
 	}
 
 	/**

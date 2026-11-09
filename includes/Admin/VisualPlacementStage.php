@@ -74,7 +74,12 @@ class VisualPlacementStage {
 		$ratio       = isset( $config['print_aspect_ratio'] ) ? floatval( $config['print_aspect_ratio'] ) : ( ( $real_h > 0 ) ? round( $real_w / $real_h, 4 ) : 0.75 );
 		$simplified  = SceneGraphSchema::calculate_simplified_ratio( $real_w, $real_h );
 		$print_w_px  = isset( $config['print_width_px'] ) ? intval( $config['print_width_px'] ) : 2400;
-		$print_h_px  = isset( $config['print_height_px'] ) ? intval( $config['print_height_px'] ) : 3000;
+		$cumulative  = SceneGraphSchema::compute_cumulative_design_area( $config );
+		$cum_w       = $cumulative['print_real_width'];
+		$cum_h       = $cumulative['print_real_height'];
+		$cum_w_px    = $cumulative['width_px'];
+		$cum_h_px    = $cumulative['height_px'];
+		$cum_simple  = $cumulative['simplified_ratio'];
 		?>
 		<div class="mr-tee-stage-wrapper">
 			<!-- Physical Dimensions & Automatic Aspect Ratio Toolbar -->
@@ -98,12 +103,12 @@ class VisualPlacementStage {
 					</div>
 
 					<div class="mr-tee-dim-field">
-						<label for="mr_tee_real_width"><?php esc_html_e( 'Largeur Réelle (W)', 'mr-tee-editor' ); ?></label>
+						<label for="mr_tee_real_width"><?php esc_html_e( 'Largeur Image/Produit (W)', 'mr-tee-editor' ); ?></label>
 						<input type="number" step="0.1" min="0.5" id="mr_tee_real_width" name="mr_tee_config[print_real_width]" value="<?php echo esc_attr( $real_w ); ?>" class="small-text mr-tee-dim-input" />
 					</div>
 
 					<div class="mr-tee-dim-field">
-						<label for="mr_tee_real_height"><?php esc_html_e( 'Hauteur Réelle (H)', 'mr-tee-editor' ); ?></label>
+						<label for="mr_tee_real_height"><?php esc_html_e( 'Hauteur Image/Produit (H)', 'mr-tee-editor' ); ?></label>
 						<input type="number" step="0.1" min="0.5" id="mr_tee_real_height" name="mr_tee_config[print_real_height]" value="<?php echo esc_attr( $real_h ); ?>" class="small-text mr-tee-dim-input" />
 					</div>
 
@@ -135,14 +140,19 @@ class VisualPlacementStage {
 				<!-- Live Ratio & 300 DPI Export Badge -->
 				<div class="mr-tee-ratio-badge" id="mr-tee-ratio-badge">
 					<span class="mr-tee-badge-icon dashicons dashicons-image-crop"></span>
+					<span class="mr-tee-badge-cum-text">
+						<strong><?php esc_html_e( 'Zone d\'impression calculée :', 'mr-tee-editor' ); ?></strong>
+						<span id="mr-tee-badge-cum-val" style="color:#059669; font-weight:700;"><?php echo esc_html( $cum_w . ' × ' . $cum_h . ' ' . $unit ); ?></span>
+					</span>
+					<span class="mr-tee-badge-divider">|</span>
 					<span class="mr-tee-badge-ratio-text">
-						<strong><?php esc_html_e( 'Ratio Calculé :', 'mr-tee-editor' ); ?></strong>
-						<span id="mr-tee-badge-ratio-val"><?php echo esc_html( $simplified . ' (~' . round( $ratio, 3 ) . ' : 1)' ); ?></span>
+						<strong><?php esc_html_e( 'Ratio :', 'mr-tee-editor' ); ?></strong>
+						<span id="mr-tee-badge-ratio-val"><?php echo esc_html( $cum_simple . ' (~' . round( $cumulative['aspect_ratio'], 3 ) . ' : 1)' ); ?></span>
 					</span>
 					<span class="mr-tee-badge-divider">|</span>
 					<span class="mr-tee-badge-px-text">
 						<strong><?php esc_html_e( 'Fichier 300 DPI :', 'mr-tee-editor' ); ?></strong>
-						<span id="mr-tee-badge-px-val"><?php echo esc_html( $print_w_px . ' × ' . $print_h_px . ' px' ); ?></span>
+						<span id="mr-tee-badge-px-val"><?php echo esc_html( $cum_w_px . ' × ' . $cum_h_px . ' px' ); ?></span>
 					</span>
 					<span class="mr-tee-badge-divider">|</span>
 					<span class="mr-tee-badge-status-pill"><?php esc_html_e( '100% Print-Ready', 'mr-tee-editor' ); ?></span>

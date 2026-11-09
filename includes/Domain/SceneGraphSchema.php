@@ -459,6 +459,15 @@ class SceneGraphSchema {
 		$config['engine']        = ! empty( $engine ) ? $engine : ( isset( $defaults['engine'] ) ? $defaults['engine'] : 'none' );
 		$config['nbd_handshake'] = isset( $saved['nbd_handshake'] ) ? (bool) $saved['nbd_handshake'] : true;
 
+		// Normalize allowed_fonts at product level (ordered array of chosen fonts)
+		if ( isset( $saved['allowed_fonts'] ) && is_array( $saved['allowed_fonts'] ) ) {
+			$config['allowed_fonts'] = array_values( array_filter( array_map( 'sanitize_key', $saved['allowed_fonts'] ) ) );
+		} elseif ( isset( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
+			$config['allowed_fonts'] = array_values( array_filter( array_map( 'sanitize_key', $config['allowed_fonts'] ) ) );
+		} else {
+			$config['allowed_fonts'] = null;
+		}
+
 		// Dynamic text lines parsing supporting arbitrary number of custom fields
 		if ( empty( $config['text_lines'] ) || ! is_array( $config['text_lines'] ) ) {
 			$config['text_lines'] = $defaults['text_lines'];
@@ -488,12 +497,23 @@ class SceneGraphSchema {
 
 				$merged = wp_parse_args( $line_data, $def_line );
 
-				// Ensure allowed_fonts contains all available fonts if empty, and always includes active font
-				if ( empty( $merged['allowed_fonts'] ) || ! is_array( $merged['allowed_fonts'] ) ) {
-					$merged['allowed_fonts'] = array_keys( FontRegistry::get_fonts() );
-				}
-				if ( ! empty( $merged['font'] ) && ! in_array( $merged['font'], $merged['allowed_fonts'], true ) ) {
-					array_unshift( $merged['allowed_fonts'], $merged['font'] );
+				// Enforce product-level allowed_fonts if specified
+				if ( ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
+					$merged['allowed_fonts'] = $config['allowed_fonts'];
+					// First font in allowed_fonts is the primary / default font
+					if ( empty( $merged['font'] ) || ! in_array( $merged['font'], $config['allowed_fonts'], true ) ) {
+						$merged['font'] = $config['allowed_fonts'][0];
+					}
+				} else {
+					if ( empty( $merged['allowed_fonts'] ) || ! is_array( $merged['allowed_fonts'] ) ) {
+						$merged['allowed_fonts'] = array_keys( FontRegistry::get_fonts() );
+					}
+					if ( ! empty( $merged['font'] ) && ! in_array( $merged['font'], $merged['allowed_fonts'], true ) ) {
+						array_unshift( $merged['allowed_fonts'], $merged['font'] );
+					}
+					if ( empty( $config['allowed_fonts'] ) ) {
+						$config['allowed_fonts'] = $merged['allowed_fonts'];
+					}
 				}
 
 				// Ensure per-line box coordinates exist

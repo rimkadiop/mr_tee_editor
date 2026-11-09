@@ -605,11 +605,25 @@ class FontRegistry {
 	 * eliminate mixed-content/CORS blocking, and avoid giant base64 data URIs.
 	 * Also registers all family aliases to prevent any font mismatch.
 	 *
+	 * @param array<int, string>|null $allowed_font_ids Optional array of allowed font IDs to filter by.
 	 * @return string
 	 */
-	public static function get_font_face_css() {
-		$css = '';
-		foreach ( self::get_fonts() as $font ) {
+	public static function get_font_face_css( $allowed_font_ids = null ) {
+		$css   = '';
+		$fonts = self::get_fonts();
+
+		if ( is_array( $allowed_font_ids ) ) {
+			$allowed_map = array_flip( $allowed_font_ids );
+			$filtered    = array();
+			foreach ( $fonts as $fid => $fdef ) {
+				if ( isset( $allowed_map[ $fid ] ) ) {
+					$filtered[ $fid ] = $fdef;
+				}
+			}
+			$fonts = $filtered;
+		}
+
+		foreach ( $fonts as $font ) {
 			if ( ! empty( $font['url'] ) ) {
 				$parsed   = wp_parse_url( $font['url'] );
 				$font_url = ! empty( $parsed['path'] ) ? $parsed['path'] : esc_url( $font['url'] );

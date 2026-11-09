@@ -181,6 +181,28 @@ class ProductPageRenderer {
 		global $post;
 		$config = SceneGraphSchema::get_product_config( $post->ID );
 
+		// Determine allowed fonts strictly for this product
+		$all_fonts        = FontRegistry::get_fonts();
+		$allowed_font_ids = array();
+		if ( ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
+			$allowed_font_ids = $config['allowed_fonts'];
+		} elseif ( ! empty( $config['text_lines'][0]['allowed_fonts'] ) && is_array( $config['text_lines'][0]['allowed_fonts'] ) ) {
+			$allowed_font_ids = $config['text_lines'][0]['allowed_fonts'];
+		} else {
+			$allowed_font_ids = array_keys( $all_fonts );
+		}
+
+		// Filter and strictly preserve the admin's chosen font order
+		$filtered_fonts = array();
+		foreach ( $allowed_font_ids as $f_id ) {
+			if ( isset( $all_fonts[ $f_id ] ) ) {
+				$filtered_fonts[ $f_id ] = $all_fonts[ $f_id ];
+			}
+		}
+		if ( empty( $filtered_fonts ) ) {
+			$filtered_fonts = $all_fonts;
+		}
+
 		// Frontend styles (all fancy display fonts bundled locally in assets/fonts/ with font-display: swap)
 		wp_enqueue_style(
 			'mr-tee-frontend-style',
@@ -189,8 +211,8 @@ class ProductPageRenderer {
 			MR_TEE_EDITOR_VERSION
 		);
 
-		// Dynamic @font-face CSS
-		$font_face_css = FontRegistry::get_font_face_css();
+		// Dynamic @font-face CSS for ONLY allowed fonts
+		$font_face_css = FontRegistry::get_font_face_css( array_keys( $filtered_fonts ) );
 		wp_add_inline_style( 'mr-tee-frontend-style', $font_face_css );
 
 		// Dynamic Aspect Ratio CSS Variables
@@ -214,15 +236,13 @@ class ProductPageRenderer {
 
 		$proto = is_ssl() ? 'https' : 'http';
 
-		// Preload SVG font datasets for active text lines to eliminate frontend fetch latency
+		// Preload SVG font datasets ONLY for allowed OpenType-SVG fonts
 		$preloaded_svg_fonts = array();
-		if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
-			foreach ( $config['text_lines'] as $line ) {
-				if ( ! empty( $line['font'] ) ) {
-					$svg_data = FontRegistry::get_svg_font_data( $line['font'] );
-					if ( $svg_data ) {
-						$preloaded_svg_fonts[ $line['font'] ] = $svg_data;
-					}
+		foreach ( $filtered_fonts as $f_id => $f_def ) {
+			if ( ! empty( $f_def['font_type'] ) && 'opentype_svg' === $f_def['font_type'] ) {
+				$svg_data = FontRegistry::get_svg_font_data( $f_id );
+				if ( $svg_data ) {
+					$preloaded_svg_fonts[ $f_id ] = $svg_data;
 				}
 			}
 		}
@@ -233,7 +253,7 @@ class ProductPageRenderer {
 			array(
 				'productId'   => $post->ID,
 				'config'      => $config,
-				'fonts'       => FontRegistry::get_fonts(),
+				'fonts'       => $filtered_fonts,
 				'svgFonts'    => $preloaded_svg_fonts,
 				'ajaxUrl'     => admin_url( 'admin-ajax.php', $proto ),
 				'pluginUrl'   => MR_TEE_EDITOR_URL,
@@ -259,8 +279,20 @@ class ProductPageRenderer {
 		}
 
 		global $post;
-		$config     = SceneGraphSchema::get_product_config( $post->ID );
-		$fonts      = FontRegistry::get_fonts();
+		$config      = SceneGraphSchema::get_product_config( $post->ID );
+		$all_fonts   = FontRegistry::get_fonts();
+		$allowed_ids = ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] )
+			? $config['allowed_fonts']
+			: ( ! empty( $config['text_lines'][0]['allowed_fonts'] ) && is_array( $config['text_lines'][0]['allowed_fonts'] ) ? $config['text_lines'][0]['allowed_fonts'] : array_keys( $all_fonts ) );
+		$fonts       = array();
+		foreach ( $allowed_ids as $aid ) {
+			if ( isset( $all_fonts[ $aid ] ) ) {
+				$fonts[ $aid ] = $all_fonts[ $aid ];
+			}
+		}
+		if ( empty( $fonts ) ) {
+			$fonts = $all_fonts;
+		}
 		$swatches   = ColorPaletteRegistry::get_solid_swatches();
 		$icons      = IconSetRegistry::get_mushroom_icons();
 		$rep        = $config['repeater'];
@@ -362,25 +394,23 @@ class ProductPageRenderer {
 								</div>
 							<?php endif; ?>
 
-							<!-- Font Selector Pills (collapsible) -->
-							<?php if ( ! empty( $line['allow_font_pick'] ) ) : ?>
-								<?php
-								$allowed_font_ids = ( ! empty( $line['allowed_fonts'] ) && is_array( $line['allowed_fonts'] ) )
-									? $line['allowed_fonts']
-									: array_keys( $fonts );
-								if ( ! empty( $line['font'] ) && ! in_array( $line['font'], $allowed_font_ids, true ) && isset( $fonts[ $line['font'] ] ) ) {
-									array_unshift( $allowed_font_ids, $line['font'] );
+							<!-- Font Selector Pills (collapsible, hidden if only 1 font allowed) -->
+							<?php
+							$allowed_font_ids = ( ! empty( $line['allowed_fonts'] ) && is_array( $line['allowed_fonts'] ) )
+								? $line['allowed_fonts']
+								: array_keys( $fonts );
+							// Strictly filter to allowed fonts and keep order
+							$ordered_pills = array();
+							foreach ( $allowed_font_ids as $f_id ) {
+								if ( isset( $fonts[ $f_id ] ) ) {
+									$ordered_pills[ $f_id ] = $fonts[ $f_id ];
 								}
-								?>
+							}
+							?>
+							<?php if ( ! empty( $line['allow_font_pick'] ) && count( $ordered_pills ) > 1 ) : ?>
 								<div class="mr-tee-font-selector-row">
 									<div class="mr-tee-font-pills" data-line-index="<?php echo esc_attr( $idx ); ?>">
-										<?php foreach ( $allowed_font_ids as $f_id ) : ?>
-											<?php
-											if ( ! isset( $fonts[ $f_id ] ) ) {
-												continue;
-											}
-											$f_data = $fonts[ $f_id ];
-											?>
+										<?php foreach ( $ordered_pills as $f_id => $f_data ) : ?>
 											<button
 												type="button"
 												class="mr-tee-font-pill <?php echo $line['font'] === $f_id ? 'is-active' : ''; ?>"

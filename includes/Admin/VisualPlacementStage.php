@@ -159,6 +159,108 @@ class VisualPlacementStage {
 				</div>
 			</div>
 
+			<!-- Product Allowed Fonts & Ordering Selector (Speed & Mobile UX Optimization) -->
+			<?php
+			$allowed_fonts = ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] )
+				? $config['allowed_fonts']
+				: ( ! empty( $text_lines[0]['allowed_fonts'] ) && is_array( $text_lines[0]['allowed_fonts'] ) ? $text_lines[0]['allowed_fonts'] : array( isset( $text_lines[0]['font'] ) ? $text_lines[0]['font'] : 'super_mario' ) );
+			$allowed_fonts = array_values( array_unique( array_filter( $allowed_fonts ) ) );
+			if ( empty( $allowed_fonts ) ) {
+				$allowed_fonts = array( 'super_mario' );
+			}
+			?>
+			<div class="mr-tee-allowed-fonts-card" id="mr-tee-allowed-fonts-card">
+				<div class="mr-tee-allowed-fonts-header">
+					<div>
+						<h4 class="mr-tee-allowed-fonts-title">
+							<span>🔤</span> <?php esc_html_e( 'Polices Autorisées & Ordre d\'Affichage (Optimisation Vitesse Mobile)', 'mr-tee-editor' ); ?>
+						</h4>
+						<p class="mr-tee-allowed-fonts-desc">
+							<?php esc_html_e( 'Seules les polices listées ci-dessous seront chargées et affichées sur cette fiche produit. Toutes les autres polices sont totalement exclues pour garantir une vitesse de chargement instantanée. La police #1 est automatiquement la police par défaut.', 'mr-tee-editor' ); ?>
+						</p>
+					</div>
+					<div class="mr-tee-allowed-fonts-stats" style="font-size:12px; font-weight:700; color:#2563eb; background:#eff6ff; padding:4px 10px; border-radius:6px; border:1px solid #bfdbfe;">
+						<span id="mr-tee-allowed-fonts-count"><?php echo esc_html( count( $allowed_fonts ) ); ?></span> <?php esc_html_e( 'police(s) active(s)', 'mr-tee-editor' ); ?>
+					</div>
+				</div>
+
+				<!-- Ordered Allowed Fonts List -->
+				<div class="mr-tee-allowed-fonts-list" id="mr-tee-allowed-fonts-list">
+					<?php foreach ( $allowed_fonts as $order_idx => $af_id ) : ?>
+						<?php
+						$f_info     = isset( $fonts[ $af_id ] ) ? $fonts[ $af_id ] : array( 'name' => $af_id, 'font_type' => 'ttf' );
+						$is_svg     = ( ! empty( $f_info['font_type'] ) && 'opentype_svg' === $f_info['font_type'] ) || ! empty( $f_info['color_svg'] );
+						$is_default = ( 0 === $order_idx );
+						?>
+						<div class="mr-tee-allowed-font-item <?php echo $is_default ? 'is-default-font' : ''; ?>" data-font-id="<?php echo esc_attr( $af_id ); ?>">
+							<div class="mr-tee-allowed-font-info">
+								<span class="mr-tee-font-order-badge <?php echo $is_default ? 'is-default' : 'is-option'; ?>">
+									<?php echo $is_default ? esc_html__( '#1 DÉFAUT', 'mr-tee-editor' ) : esc_html( '#' . ( $order_idx + 1 ) . ' OPTION' ); ?>
+								</span>
+								<span class="mr-tee-font-type-pill <?php echo $is_svg ? 'is-svg' : 'is-ttf'; ?>">
+									<?php echo $is_svg ? 'SVG 3D' : 'TTF'; ?>
+								</span>
+								<?php if ( ! empty( $f_info['thumb_url'] ) ) : ?>
+									<img src="<?php echo esc_url( $f_info['thumb_url'] ); ?>" alt="" style="width:18px; height:18px; object-fit:contain;" />
+								<?php endif; ?>
+								<strong class="mr-tee-font-name-label"><?php echo esc_html( $f_info['name'] ); ?></strong>
+							</div>
+							<div class="mr-tee-allowed-font-actions">
+								<button type="button" class="mr-tee-btn-font-action mr-tee-btn-font-up" title="<?php esc_attr_e( 'Monter', 'mr-tee-editor' ); ?>" <?php echo $is_default ? 'disabled' : ''; ?>>▲</button>
+								<button type="button" class="mr-tee-btn-font-action mr-tee-btn-font-down" title="<?php esc_attr_e( 'Descendre', 'mr-tee-editor' ); ?>" <?php echo ( $order_idx === count( $allowed_fonts ) - 1 ) ? 'disabled' : ''; ?>>▼</button>
+								<button type="button" class="mr-tee-btn-font-action mr-tee-btn-font-delete" title="<?php esc_attr_e( 'Retirer cette police', 'mr-tee-editor' ); ?>" <?php echo ( count( $allowed_fonts ) <= 1 ) ? 'disabled' : ''; ?>>✕</button>
+							</div>
+						</div>
+					<?php endforeach; ?>
+				</div>
+
+				<!-- Hidden input storing serialized JSON of ordered allowed_fonts -->
+				<input type="hidden" name="mr_tee_config[allowed_fonts]" id="mr_tee_allowed_fonts_json" value="<?php echo esc_attr( wp_json_encode( array_values( $allowed_fonts ) ) ); ?>" />
+
+				<!-- Toolbar: Add Font Picker & Quick Presets -->
+				<div class="mr-tee-allowed-fonts-toolbar">
+					<div class="mr-tee-add-font-controls">
+						<select id="mr_tee_add_font_picker" style="max-width:280px; font-weight:600; padding:4px 8px; border-radius:5px;">
+							<option value=""><?php esc_html_e( '-- Choisir une police à ajouter --', 'mr-tee-editor' ); ?></option>
+							<optgroup label="<?php esc_attr_e( '✨ Polices OpenType-SVG', 'mr-tee-editor' ); ?>">
+								<?php foreach ( $fonts as $f_id => $f_data ) : ?>
+									<?php if ( ( ! empty( $f_data['font_type'] ) && 'opentype_svg' === $f_data['font_type'] ) || ! empty( $f_data['color_svg'] ) ) : ?>
+										<option value="<?php echo esc_attr( $f_id ); ?>" <?php echo in_array( $f_id, $allowed_fonts, true ) ? 'disabled' : ''; ?>>
+											<?php echo esc_html( $f_data['name'] ); ?><?php echo in_array( $f_id, $allowed_fonts, true ) ? ' (déjà active)' : ''; ?>
+										</option>
+									<?php endif; ?>
+								<?php endforeach; ?>
+							</optgroup>
+							<optgroup label="<?php esc_attr_e( '🔤 Polices Stylisées TTF', 'mr-tee-editor' ); ?>">
+								<?php foreach ( $fonts as $f_id => $f_data ) : ?>
+									<?php if ( empty( $f_data['font_type'] ) || 'opentype_svg' !== $f_data['font_type'] ) : ?>
+										<option value="<?php echo esc_attr( $f_id ); ?>" <?php echo in_array( $f_id, $allowed_fonts, true ) ? 'disabled' : ''; ?>>
+											<?php echo esc_html( $f_data['name'] ); ?><?php echo in_array( $f_id, $allowed_fonts, true ) ? ' (déjà active)' : ''; ?>
+										</option>
+									<?php endif; ?>
+								<?php endforeach; ?>
+							</optgroup>
+						</select>
+						<button type="button" class="button button-primary mr-tee-btn-add-allowed-font" id="mr_tee_btn_add_allowed_font">
+							+ <?php esc_html_e( 'Ajouter', 'mr-tee-editor' ); ?>
+						</button>
+					</div>
+
+					<div class="mr-tee-allowed-font-presets" style="display:flex; align-items:center; gap:6px;">
+						<span style="font-size:11px; font-weight:700; color:#64748b;"><?php esc_html_e( 'Raccourcis :', 'mr-tee-editor' ); ?></span>
+						<button type="button" class="button button-small" id="mr_tee_preset_only_first" title="<?php esc_attr_e( 'Conserver uniquement la police #1 (désactive le sélecteur client pour vitesse pure)', 'mr-tee-editor' ); ?>">
+							🎯 <?php esc_html_e( 'Police #1 Seule', 'mr-tee-editor' ); ?>
+						</button>
+						<button type="button" class="button button-small" id="mr_tee_preset_all_svg" title="<?php esc_attr_e( 'Sélectionner uniquement les 6 polices OpenType-SVG', 'mr-tee-editor' ); ?>">
+							✨ <?php esc_html_e( '6 Polices OpenType-SVG', 'mr-tee-editor' ); ?>
+						</button>
+						<button type="button" class="button button-small" id="mr_tee_preset_all_fonts" title="<?php esc_attr_e( 'Activer toutes les polices de la boutique', 'mr-tee-editor' ); ?>">
+							🔤 <?php esc_html_e( 'Toutes les polices', 'mr-tee-editor' ); ?>
+						</button>
+					</div>
+				</div>
+			</div>
+
 			<!-- Header Field Pills Bar -->
 			<div class="mr-tee-stage-pills-bar" id="mr-tee-stage-pills-bar">
 				<div class="mr-tee-pills-scroll" id="mr-tee-pills-list">

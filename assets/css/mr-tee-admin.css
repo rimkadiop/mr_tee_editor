@@ -583,3 +583,174 @@
 	height: 100%;
 	object-fit: contain;
 }
+
+/* Product Allowed Fonts & Ordering Selector */
+.mr-tee-allowed-fonts-card {
+	background: #ffffff;
+	border: 1px solid #cbd5e1;
+	border-radius: 10px;
+	padding: 16px 20px;
+	margin-bottom: 20px;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.mr-tee-allowed-fonts-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 12px;
+	border-bottom: 1px solid #f1f5f9;
+	padding-bottom: 10px;
+	gap: 16px;
+}
+
+.mr-tee-allowed-fonts-title {
+	margin: 0 0 4px;
+	font-size: 14px;
+	font-weight: 700;
+	color: #0f172a;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.mr-tee-allowed-fonts-desc {
+	margin: 0;
+	font-size: 12px;
+	color: #64748b;
+	line-height: 1.4;
+}
+
+.mr-tee-allowed-fonts-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-bottom: 14px;
+}
+
+.mr-tee-allowed-font-item {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	background: #f8fafc;
+	border: 1px solid #e2e8f0;
+	border-radius: 8px;
+	padding: 8px 14px;
+	transition: all 0.15s ease;
+}
+
+.mr-tee-allowed-font-item:hover {
+	border-color: #cbd5e1;
+	background: #f1f5f9;
+}
+
+.mr-tee-allowed-font-item.is-default-font {
+	background: #eff6ff;
+	border-color: #93c5fd;
+}
+
+.mr-tee-allowed-font-info {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.mr-tee-font-order-badge {
+	font-size: 11px;
+	font-weight: 800;
+	padding: 3px 8px;
+	border-radius: 6px;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+}
+
+.mr-tee-font-order-badge.is-default {
+	background: #2563eb;
+	color: #ffffff;
+}
+
+.mr-tee-font-order-badge.is-option {
+	background: #e2e8f0;
+	color: #475569;
+}
+
+.mr-tee-font-type-pill {
+	font-size: 10px;
+	font-weight: 700;
+	padding: 2px 7px;
+	border-radius: 10px;
+	text-transform: uppercase;
+}
+
+.mr-tee-font-type-pill.is-svg {
+	background: #fef3c7;
+	color: #b45309;
+}
+
+.mr-tee-font-type-pill.is-ttf {
+	background: #f3e8ff;
+	color: #7e22ce;
+}
+
+.mr-tee-font-name-label {
+	font-size: 13.5px;
+	font-weight: 600;
+	color: #1e293b;
+}
+
+.mr-tee-allowed-font-actions {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.mr-tee-btn-font-action {
+	background: #ffffff;
+	border: 1px solid #cbd5e1;
+	border-radius: 5px;
+	padding: 3px 8px;
+	font-size: 11.5px;
+	cursor: pointer;
+	color: #334155;
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	transition: all 0.15s ease;
+}
+
+.mr-tee-btn-font-action:hover:not(:disabled) {
+	background: #f8fafc;
+	border-color: #94a3b8;
+}
+
+.mr-tee-btn-font-action:disabled {
+	opacity: 0.35;
+	cursor: not-allowed;
+}
+
+.mr-tee-btn-font-delete {
+	color: #dc2626;
+	border-color: #fecaca;
+}
+
+.mr-tee-btn-font-delete:hover:not(:disabled) {
+	background: #fef2f2;
+	border-color: #f87171;
+}
+
+.mr-tee-allowed-fonts-toolbar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding-top: 10px;
+	border-top: 1px dashed #e2e8f0;
+}
+
+.mr-tee-add-font-controls {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+}
+

@@ -43,6 +43,7 @@
 			this.bindPresetReset();
 			this.bindDimensionControls();
 			this.bindFontUploader();
+			this.bindProductAllowedFonts();
 			this.renderAllBoxesPreviews();
 		}
 
@@ -923,6 +924,163 @@
 			});
 		}
 
+		/**
+		 * Product Allowed Fonts & Ordering Selector Management.
+		 */
+		bindProductAllowedFonts() {
+			const self = this;
+			const $input = $('#mr_tee_allowed_fonts_json');
+			if (!$input.length) return;
+
+			let allowedFonts = [];
+			try {
+				allowedFonts = JSON.parse($input.val() || '[]');
+			} catch (e) {
+				allowedFonts = [];
+			}
+			if (!Array.isArray(allowedFonts) || !allowedFonts.length) {
+				const fFonts = (window.mrTeeAdminData && window.mrTeeAdminData.fonts) || {};
+				const firstKey = Object.keys(fFonts)[0] || 'super_mario';
+				allowedFonts = [firstKey];
+			}
+
+			const updateHiddenAndSync = () => {
+				$input.val(JSON.stringify(allowedFonts));
+				$('#mr-tee-allowed-fonts-count').text(allowedFonts.length);
+
+				// Sync with line 0 font select (the 1st font is automatically the default)
+				if (allowedFonts.length > 0) {
+					const defaultFontId = allowedFonts[0];
+					const $firstSelect = $('select[name="mr_tee_config[text_lines][0][font]"]');
+					if ($firstSelect.length && $firstSelect.val() !== defaultFontId) {
+						$firstSelect.val(defaultFontId).trigger('change');
+					}
+				}
+
+				// Update add picker dropdown options
+				$('#mr_tee_add_font_picker option').each(function() {
+					const val = $(this).val();
+					if (!val) return;
+					const inList = allowedFonts.includes(val);
+					$(this).prop('disabled', inList);
+					const text = $(this).text().replace(' (déjà active)', '');
+					$(this).text(inList ? `${text} (déjà active)` : text);
+				});
+
+				self.renderAllBoxesPreviews();
+			};
+
+			const renderAllowedList = () => {
+				const fonts = (window.mrTeeAdminData && window.mrTeeAdminData.fonts) || {};
+				const $list = $('#mr-tee-allowed-fonts-list, #mr_tee_allowed_fonts_list');
+				$list.empty();
+
+				allowedFonts.forEach((fId, idx) => {
+					const fInfo = fonts[fId] || { name: fId, font_type: 'ttf' };
+					const isSvg = fInfo.font_type === 'opentype_svg' || Boolean(fInfo.color_svg);
+					const isDefault = (idx === 0);
+
+					const $item = $(`
+						<div class="mr-tee-allowed-font-item ${isDefault ? 'is-default-font' : ''}" data-font-id="${fId}">
+							<div class="mr-tee-allowed-font-info">
+								<span class="mr-tee-font-order-badge ${isDefault ? 'is-default' : 'is-option'}">
+									${isDefault ? '#1 DÉFAUT' : '#' + (idx + 1) + ' OPTION'}
+								</span>
+								<span class="mr-tee-font-type-pill ${isSvg ? 'is-svg' : 'is-ttf'}">
+									${isSvg ? 'SVG 3D' : 'TTF'}
+								</span>
+								${fInfo.thumb_url ? `<img src="${fInfo.thumb_url}" alt="" style="width:18px; height:18px; object-fit:contain;" />` : ''}
+								<strong class="mr-tee-font-name-label">${self.escapeXml(fInfo.name || fId)}</strong>
+							</div>
+							<div class="mr-tee-allowed-font-actions">
+								<button type="button" class="mr-tee-btn-font-action mr-tee-btn-font-up" title="Monter" ${isDefault ? 'disabled' : ''}>▲</button>
+								<button type="button" class="mr-tee-btn-font-action mr-tee-btn-font-down" title="Descendre" ${idx === allowedFonts.length - 1 ? 'disabled' : ''}>▼</button>
+								<button type="button" class="mr-tee-btn-font-action mr-tee-btn-font-delete" title="Retirer cette police" ${allowedFonts.length <= 1 ? 'disabled' : ''}>✕</button>
+							</div>
+						</div>
+					`);
+					$list.append($item);
+				});
+
+				updateHiddenAndSync();
+			};
+
+			// Move Up
+			$(document).on('click', '.mr-tee-btn-font-up', function() {
+				const $item = $(this).closest('.mr-tee-allowed-font-item');
+				const fId = $item.data('font-id');
+				const idx = allowedFonts.indexOf(fId);
+				if (idx > 0) {
+					const temp = allowedFonts[idx - 1];
+					allowedFonts[idx - 1] = allowedFonts[idx];
+					allowedFonts[idx] = temp;
+					renderAllowedList();
+				}
+			});
+
+			// Move Down
+			$(document).on('click', '.mr-tee-btn-font-down', function() {
+				const $item = $(this).closest('.mr-tee-allowed-font-item');
+				const fId = $item.data('font-id');
+				const idx = allowedFonts.indexOf(fId);
+				if (idx !== -1 && idx < allowedFonts.length - 1) {
+					const temp = allowedFonts[idx + 1];
+					allowedFonts[idx + 1] = allowedFonts[idx];
+					allowedFonts[idx] = temp;
+					renderAllowedList();
+				}
+			});
+
+			// Delete / Exclude
+			$(document).on('click', '.mr-tee-btn-font-delete', function() {
+				if (allowedFonts.length <= 1) return;
+				const $item = $(this).closest('.mr-tee-allowed-font-item');
+				const fId = $item.data('font-id');
+				allowedFonts = allowedFonts.filter(id => id !== fId);
+				renderAllowedList();
+			});
+
+			// Add Font
+			$('#mr_tee_btn_add_allowed_font').on('click', function() {
+				const fId = $('#mr_tee_add_font_picker').val();
+				if (!fId) return;
+				if (!allowedFonts.includes(fId)) {
+					allowedFonts.push(fId);
+					renderAllowedList();
+					$('#mr_tee_add_font_picker').val('');
+				}
+			});
+
+			// Preset: Only #1
+			$('#mr_tee_preset_only_first').on('click', function() {
+				if (allowedFonts.length > 0) {
+					allowedFonts = [allowedFonts[0]];
+					renderAllowedList();
+				}
+			});
+
+			// Preset: 6 OpenType-SVG
+			$('#mr_tee_preset_all_svg').on('click', function() {
+				const fonts = (window.mrTeeAdminData && window.mrTeeAdminData.fonts) || {};
+				const svgKeys = ['pizzeria', 'partyboy', 'brainzoo', 'purple_magic', 'jellyjam', 'lovespink_black'];
+				const existingSvgKeys = svgKeys.filter(k => Boolean(fonts[k]));
+				if (existingSvgKeys.length) {
+					allowedFonts = existingSvgKeys;
+					renderAllowedList();
+				}
+			});
+
+			// Preset: All Fonts
+			$('#mr_tee_preset_all_fonts').on('click', function() {
+				const fonts = (window.mrTeeAdminData && window.mrTeeAdminData.fonts) || {};
+				allowedFonts = Object.keys(fonts);
+				renderAllowedList();
+			});
+
+			// Initial render and sync
+			renderAllowedList();
+		}
+
 		uploadFontFile(file, $statusElem, onSuccess) {
 			const self = this;
 			const formData = new FormData();
@@ -1205,8 +1363,12 @@
 		}
 	}
 
-	$(document).ready(function() {
+	if (document.readyState === 'loading') {
+		$(document).ready(function() {
+			new MrTeeAdmin();
+		});
+	} else {
 		new MrTeeAdmin();
-	});
+	}
 
 })(jQuery);

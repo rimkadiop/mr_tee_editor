@@ -411,37 +411,31 @@ export class GalleryStage {
 	}
 
 	/**
-	 * Update the live SVG preview content.
+	 * Update the live SVG preview content immediately with zero lag.
 	 *
 	 * @param {string} svgMarkup Raw SVG markup string.
 	 */
 	updateSvg(svgMarkup) {
 		this.currentSvgMarkup = svgMarkup || '';
 
-		if (this.rafId) {
-			cancelAnimationFrame(this.rafId);
+		if (!this.svgHolder || !this.svgHolder.isConnected) {
+			this.mountOverlay();
 		}
 
-		this.rafId = requestAnimationFrame(() => {
-			if (!this.svgHolder || !this.svgHolder.isConnected) {
-				this.mountOverlay();
-			}
+		if (this.svgHolder) {
+			this.svgHolder.innerHTML = this.currentSvgMarkup;
+		}
 
-			if (this.svgHolder) {
-				this.svgHolder.innerHTML = this.currentSvgMarkup;
-			}
+		// Synchronize mobile sticky preview
+		const miniOverlay = document.querySelector('.mr-tee-mobile-overlay-mini');
+		if (miniOverlay) {
+			miniOverlay.innerHTML = this.currentSvgMarkup;
+		}
 
-			// Synchronize mobile sticky preview
-			const miniOverlay = document.querySelector('.mr-tee-mobile-overlay-mini');
-			if (miniOverlay) {
-				miniOverlay.innerHTML = this.currentSvgMarkup;
-			}
-
-			// Synchronize PhotoSwipe overlay if currently open
-			const pswpHolder = document.querySelector('.pswp--open .mr-tee-live-stage-overlay-pswp .mr-tee-live-svg-container');
-			if (pswpHolder) {
-				pswpHolder.innerHTML = this.currentSvgMarkup;
-			}
-		});
+		// Synchronize PhotoSwipe overlay if currently open
+		const pswpHolder = document.querySelector('.pswp--open .mr-tee-live-stage-overlay-pswp .mr-tee-live-svg-container');
+		if (pswpHolder) {
+			pswpHolder.innerHTML = this.currentSvgMarkup;
+		}
 	}
 }

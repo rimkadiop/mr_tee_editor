@@ -361,6 +361,30 @@ class EngineSelectorMetabox {
 				$config['template_preset'] = sanitize_text_field( $raw_config['template_preset'] );
 			}
 
+			// Sanitize ordered allowed_fonts list chosen by the admin
+			if ( isset( $raw_config['allowed_fonts'] ) ) {
+				$parsed_allowed = $raw_config['allowed_fonts'];
+				if ( is_string( $parsed_allowed ) ) {
+					$decoded = json_decode( $parsed_allowed, true );
+					if ( is_array( $decoded ) ) {
+						$parsed_allowed = $decoded;
+					} else {
+						$parsed_allowed = array_filter( array_map( 'trim', explode( ',', $parsed_allowed ) ) );
+					}
+				}
+				if ( is_array( $parsed_allowed ) ) {
+					$sanitized_allowed = array();
+					$available_fonts   = FontRegistry::get_fonts();
+					foreach ( $parsed_allowed as $af_id ) {
+						$sanitized_id = sanitize_key( $af_id );
+						if ( isset( $available_fonts[ $sanitized_id ] ) && ! in_array( $sanitized_id, $sanitized_allowed, true ) ) {
+							$sanitized_allowed[] = $sanitized_id;
+						}
+					}
+					$config['allowed_fonts'] = $sanitized_allowed;
+				}
+			}
+
 			// Sanitize text lines (supports adding/deleting dynamic fields and per-line rectangles)
 			if ( isset( $raw_config['text_lines'] ) && is_array( $raw_config['text_lines'] ) ) {
 				$sanitized_lines = array();
@@ -372,6 +396,13 @@ class EngineSelectorMetabox {
 					$label        = isset( $line_data['label'] ) ? sanitize_text_field( $line_data['label'] ) : ( isset( $existing['label'] ) ? $existing['label'] : sprintf( __( 'Champ %d', 'mr-tee-editor' ), $line_num ) );
 					$default_text = isset( $line_data['default_text'] ) ? sanitize_textarea_field( $line_data['default_text'] ) : ( isset( $existing['default_text'] ) ? $existing['default_text'] : sprintf( __( 'Texte %d', 'mr-tee-editor' ), $line_num ) );
 					$font         = isset( $line_data['font'] ) ? sanitize_text_field( $line_data['font'] ) : ( isset( $existing['font'] ) ? $existing['font'] : 'super_mario' );
+
+					// If product-level allowed_fonts is defined, enforce first font as default
+					if ( ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
+						if ( 0 === $line_index || ! in_array( $font, $config['allowed_fonts'], true ) ) {
+							$font = $config['allowed_fonts'][0];
+						}
+					}
 					$font_pick    = isset( $line_data['allow_font_pick'] ) ? ! empty( $line_data['allow_font_pick'] ) : ( isset( $existing['allow_font_pick'] ) ? ! empty( $existing['allow_font_pick'] ) : true );
 					$color_mode   = isset( $line_data['color_mode'] ) ? sanitize_text_field( $line_data['color_mode'] ) : ( isset( $existing['color_mode'] ) ? $existing['color_mode'] : 'multi' );
 					$warning      = isset( $line_data['warning_unedited'] ) ? ! empty( $line_data['warning_unedited'] ) : ( isset( $existing['warning_unedited'] ) ? ! empty( $existing['warning_unedited'] ) : false );
@@ -396,6 +427,7 @@ class EngineSelectorMetabox {
 							'label'            => $label,
 							'default_text'     => $default_text,
 							'font'             => $font,
+							'allowed_fonts'    => ! empty( $config['allowed_fonts'] ) ? $config['allowed_fonts'] : ( isset( $existing['allowed_fonts'] ) ? $existing['allowed_fonts'] : array_keys( FontRegistry::get_fonts() ) ),
 							'allow_font_pick'  => $font_pick,
 							'color_mode'       => $color_mode,
 							'multiline'        => $multiline,

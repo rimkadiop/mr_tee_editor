@@ -17,6 +17,7 @@
 
 namespace MrTeeEditor\Admin;
 
+use MrTeeEditor\Domain\SceneGraphSchema;
 use MrTeeEditor\Registry\FontRegistry;
 
 if ( ! defined( 'ABSPATH' ) ) {

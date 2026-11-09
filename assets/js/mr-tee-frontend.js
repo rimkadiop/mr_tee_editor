@@ -76,15 +76,23 @@ class MrTeeFrontendApp {
 			? { scale: 1.0, translateX: 0.0, translateY: 0.0 }
 			: SceneGraphEngine.getAreaTransformValuesZoom(bbox, state.area && state.area.transform);
 
+		const isLocked = Boolean(this.config.lock_aspect_ratio) || this.config.product_type === 'flat_object';
 		const realW = parseFloat(this.config.print_real_width) || 0;
 		const realH = parseFloat(this.config.print_real_height) || 0;
-		let ratio = (realW > 0 && realH > 0) ? (realW / realH) : (parseFloat(this.config.print_aspect_ratio) || 0);
-		if (!ratio || ratio <= 0) {
+		let ratio = 0;
+
+		if (isLocked && realW > 0 && realH > 0) {
+			ratio = realW / realH;
+		} else if (isLocked && parseFloat(this.config.print_aspect_ratio) > 0) {
+			ratio = parseFloat(this.config.print_aspect_ratio);
+		} else {
 			const img = document.querySelector('.woocommerce-product-gallery__image img:not(.emoji):not(.zoomImg)');
 			if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
 				ratio = img.naturalWidth / img.naturalHeight;
 			} else if (img && img.offsetWidth > 0 && img.offsetHeight > 0) {
 				ratio = img.offsetWidth / img.offsetHeight;
+			} else if (realW > 0 && realH > 0) {
+				ratio = realW / realH;
 			} else {
 				ratio = 1.0;
 			}

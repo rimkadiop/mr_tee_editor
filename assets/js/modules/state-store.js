@@ -300,6 +300,7 @@ export class StateStore {
 				label: line.label,
 				value: ref ? ref.value : line.default_text,
 				fontId: ref ? ref.fontId : line.font,
+				rotate: parseFloat(line.box_rotate !== undefined ? line.box_rotate : (line.rotate !== undefined ? line.rotate : 0.0)) || 0.0,
 			};
 		});
 

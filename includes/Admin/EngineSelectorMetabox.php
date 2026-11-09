@@ -395,11 +395,12 @@ class EngineSelectorMetabox {
 					$multiline    = ! empty( $line_data['multiline'] );
 					$max_chars    = isset( $line_data['max_chars'] ) ? max( 1, intval( $line_data['max_chars'] ) ) : ( isset( $existing['max_chars'] ) ? intval( $existing['max_chars'] ) : 25 );
 
-					// Per-line rectangle dimensions
+					// Per-line rectangle dimensions & orientation
 					$box_l = isset( $line_data['box_left'] ) ? floatval( $line_data['box_left'] ) : ( isset( $existing['box_left'] ) ? floatval( $existing['box_left'] ) : 30.0 );
 					$box_t = isset( $line_data['box_top'] ) ? floatval( $line_data['box_top'] ) : ( isset( $existing['box_top'] ) ? floatval( $existing['box_top'] ) : ( 25.0 + $line_index * 12.0 ) );
 					$box_w = isset( $line_data['box_width'] ) ? floatval( $line_data['box_width'] ) : ( isset( $existing['box_width'] ) ? floatval( $existing['box_width'] ) : 40.0 );
 					$box_h = isset( $line_data['box_height'] ) ? floatval( $line_data['box_height'] ) : ( isset( $existing['box_height'] ) ? floatval( $existing['box_height'] ) : 8.5 );
+					$box_r = isset( $line_data['box_rotate'] ) ? floatval( $line_data['box_rotate'] ) : ( isset( $existing['box_rotate'] ) ? floatval( $existing['box_rotate'] ) : 0.0 );
 
 					$font_size = isset( $line_data['font_size'] ) ? floatval( $line_data['font_size'] ) : ( isset( $existing['font_size'] ) ? floatval( $existing['font_size'] ) : ( $box_h * 0.85 ) );
 					$y_pct     = isset( $line_data['y_pct'] ) ? floatval( $line_data['y_pct'] ) : ( $box_t + ( $box_h / 2.0 ) );
@@ -420,6 +421,7 @@ class EngineSelectorMetabox {
 							'box_top'          => $box_t,
 							'box_width'        => $box_w,
 							'box_height'       => $box_h,
+							'box_rotate'       => $box_r,
 							'y_pct'            => $y_pct,
 							'font_size'        => $font_size,
 							'warning_unedited' => $warning,

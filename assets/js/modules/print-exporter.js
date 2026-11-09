@@ -7,7 +7,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.3.0';
+import { SvgRenderer } from './svg-renderer.js?v=2.3.1';
 
 export class PrintExporter {
 	/**
@@ -42,10 +42,27 @@ export class PrintExporter {
 					const top = parseFloat(l.box_top) || 0;
 					const width = parseFloat(l.box_width) || 10;
 					const height = parseFloat(l.box_height) || 10;
-					xMin = Math.min(xMin, left);
-					yMin = Math.min(yMin, top);
-					xMax = Math.max(xMax, left + width);
-					yMax = Math.max(yMax, top + height);
+					const rot = parseFloat(l.box_rotate !== undefined ? l.box_rotate : (l.rotate !== undefined ? l.rotate : 0)) || 0;
+
+					if (rot !== 0) {
+						const rad = (rot * Math.PI) / 180;
+						const cos = Math.abs(Math.cos(rad));
+						const sin = Math.abs(Math.sin(rad));
+						const halfW = (width * cos + height * sin) / 2;
+						const halfH = (width * sin + height * cos) / 2;
+						const cx = left + (width / 2);
+						const cy = top + (height / 2);
+
+						xMin = Math.min(xMin, cx - halfW);
+						yMin = Math.min(yMin, cy - halfH);
+						xMax = Math.max(xMax, cx + halfW);
+						yMax = Math.max(yMax, cy + halfH);
+					} else {
+						xMin = Math.min(xMin, left);
+						yMin = Math.min(yMin, top);
+						xMax = Math.max(xMax, left + width);
+						yMax = Math.max(yMax, top + height);
+					}
 				}
 			});
 

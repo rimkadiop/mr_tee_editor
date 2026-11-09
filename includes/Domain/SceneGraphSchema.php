@@ -504,6 +504,7 @@ class SceneGraphSchema {
 					$merged['box_width']  = floatval( $merged['box_width'] );
 					$merged['box_height'] = floatval( $merged['box_height'] );
 				}
+				$merged['box_rotate'] = isset( $merged['box_rotate'] ) ? floatval( $merged['box_rotate'] ) : 0.0;
 
 				$normalized_lines[] = $merged;
 				$line_index++;
@@ -716,6 +717,7 @@ class SceneGraphSchema {
 						't' => isset( $line['box_top'] ) ? floatval( $line['box_top'] ) : 0.0,
 						'w' => floatval( $line['box_width'] ),
 						'h' => isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : 10.0,
+						'r' => isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0,
 					);
 				}
 			}
@@ -726,7 +728,7 @@ class SceneGraphSchema {
 			$bt = isset( $config['box_top'] ) ? floatval( $config['box_top'] ) : 28.0;
 			$bw = isset( $config['box_width'] ) ? floatval( $config['box_width'] ) : 44.0;
 			$bh = isset( $config['box_height'] ) ? floatval( $config['box_height'] ) : 48.0;
-			$boxes[] = array( 'l' => $bl, 't' => $bt, 'w' => $bw, 'h' => $bh );
+			$boxes[] = array( 'l' => $bl, 't' => $bt, 'w' => $bw, 'h' => $bh, 'r' => 0.0 );
 		}
 
 		$x_min = 100.0;
@@ -735,10 +737,26 @@ class SceneGraphSchema {
 		$y_max = 0.0;
 
 		foreach ( $boxes as $b ) {
-			$x_min = min( $x_min, $b['l'] );
-			$y_min = min( $y_min, $b['t'] );
-			$x_max = max( $x_max, $b['l'] + $b['w'] );
-			$y_max = max( $y_max, $b['t'] + $b['h'] );
+			$rot = isset( $b['r'] ) ? floatval( $b['r'] ) : 0.0;
+			if ( 0.0 !== $rot ) {
+				$rad    = deg2rad( $rot );
+				$cos    = abs( cos( $rad ) );
+				$sin    = abs( sin( $rad ) );
+				$half_w = ( $b['w'] * $cos + $b['h'] * $sin ) / 2.0;
+				$half_h = ( $b['w'] * $sin + $b['h'] * $cos ) / 2.0;
+				$cx     = $b['l'] + ( $b['w'] / 2.0 );
+				$cy     = $b['t'] + ( $b['h'] / 2.0 );
+
+				$x_min = min( $x_min, $cx - $half_w );
+				$y_min = min( $y_min, $cy - $half_h );
+				$x_max = max( $x_max, $cx + $half_w );
+				$y_max = max( $y_max, $cy + $half_h );
+			} else {
+				$x_min = min( $x_min, $b['l'] );
+				$y_min = min( $y_min, $b['t'] );
+				$x_max = max( $x_max, $b['l'] + $b['w'] );
+				$y_max = max( $y_max, $b['t'] + $b['h'] );
+			}
 		}
 
 		$span_w = max( 1.0, $x_max - $x_min );
@@ -930,7 +948,7 @@ class SceneGraphSchema {
 				'multiLine'        => ! empty( $line['multiline'] ),
 				'maxLines'         => ! empty( $line['max_lines'] ) ? intval( $line['max_lines'] ) : 1,
 				'lineHeight'       => isset( $line['line_height'] ) ? floatval( $line['line_height'] ) : 0.95,
-				'maxCharsPerLine'  => intval( $line['max_chars'] ),
+				'maxCharsPerLine'  => ! empty( $line['max_chars'] ) ? intval( $line['max_chars'] ) : 40,
 				'validCharacters'  => "^[a-zA-Z0-9À-ÿ\\s'&.!\\-\n]*$",
 				'fontId'           => $font_id,
 				'fontFamily'       => $font_def['family'],
@@ -964,6 +982,7 @@ class SceneGraphSchema {
 			$box_h = isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : ( isset( $line['font_size'] ) ? floatval( $line['font_size'] ) * 1.5 : 8.5 );
 			$box_l = isset( $line['box_left'] ) ? floatval( $line['box_left'] ) : ( 50.0 - ( $box_w / 2.0 ) );
 			$box_t = isset( $line['box_top'] ) ? floatval( $line['box_top'] ) : ( isset( $line['y_pct'] ) ? floatval( $line['y_pct'] ) - ( $box_h / 2.0 ) : 30.0 );
+			$box_r = isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0;
 			$center_x = $box_l + ( $box_w / 2.0 );
 			$center_y = $box_t + ( $box_h / 2.0 );
 			$font_size = isset( $line['font_size'] ) && floatval( $line['font_size'] ) > 0 ? floatval( $line['font_size'] ) : ( $box_h * 0.85 );
@@ -979,6 +998,8 @@ class SceneGraphSchema {
 				'box_top'            => $box_t,
 				'box_width'          => $box_w,
 				'box_height'         => $box_h,
+				'box_rotate'         => $box_r,
+				'rotate'             => $box_r,
 				'fontSize'           => $font_size,
 				'maxWidth'           => $box_w * 0.95,
 				'maxHeight'          => $box_h * 0.92,
@@ -1096,7 +1117,7 @@ class SceneGraphSchema {
 							'editable'         => true,
 							'multiLine'        => false,
 							'maxLines'         => 1,
-							'maxCharsPerLine'  => intval( $rep['max_chars'] ),
+							'maxCharsPerLine'  => ! empty( $rep['max_chars'] ) ? intval( $rep['max_chars'] ) : 20,
 							'validCharacters'  => "^[a-zA-Z0-9À-ÿ\\s'&.!\\-]*$",
 							'customProperties' => array(
 								array( 'key' => 'edited',  'value' => false ),

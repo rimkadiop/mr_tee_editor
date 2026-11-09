@@ -200,12 +200,13 @@ class VisualPlacementStage {
 								$bt    = isset( $line['box_top'] ) ? floatval( $line['box_top'] ) : ( 25.0 + $idx * 12.0 );
 								$bw    = isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : 40.0;
 								$bh    = isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : 8.5;
+								$br    = isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0;
 								?>
 								<div
 									id="mr-tee-field-box-<?php echo esc_attr( $idx ); ?>"
 									class="mr-tee-field-box <?php echo 0 === $idx ? 'is-active' : ''; ?>"
 									data-field-index="<?php echo esc_attr( $idx ); ?>"
-									style="left: <?php echo esc_attr( $bl ); ?>%; top: <?php echo esc_attr( $bt ); ?>%; width: <?php echo esc_attr( $bw ); ?>%; height: <?php echo esc_attr( $bh ); ?>%; --field-color: <?php echo esc_attr( $color ); ?>;"
+									style="left: <?php echo esc_attr( $bl ); ?>%; top: <?php echo esc_attr( $bt ); ?>%; width: <?php echo esc_attr( $bw ); ?>%; height: <?php echo esc_attr( $bh ); ?>%; transform: rotate(<?php echo esc_attr( $br ); ?>deg); transform-origin: center center; --field-color: <?php echo esc_attr( $color ); ?>;"
 								>
 									<span class="mr-tee-box-badge" style="background: <?php echo esc_attr( $color ); ?>;">
 										<?php echo esc_html( ( $idx + 1 ) . '. ' . $line['label'] ); ?>
@@ -213,6 +214,10 @@ class VisualPlacementStage {
 									<div class="mr-tee-box-svg-holder" id="mr-tee-box-svg-<?php echo esc_attr( $idx ); ?>">
 										<!-- Live SVG rendered by admin JS engine -->
 									</div>
+
+									<!-- Interactive Rotation Handle & Stem -->
+									<div class="mr-tee-handle-rot-stem" style="background: <?php echo esc_attr( $color ); ?>;"></div>
+									<div class="mr-tee-handle-rot" data-handle="rot" style="border-color: <?php echo esc_attr( $color ); ?>;" title="<?php esc_attr_e( 'Faire pivoter le texte (ou entrer les degrés ci-contre)', 'mr-tee-editor' ); ?>"></div>
 
 									<!-- Interactive Corner Resize Handles -->
 									<div class="mr-tee-handle mr-tee-handle-nw" data-handle="nw" style="border-color: <?php echo esc_attr( $color ); ?>;"></div>
@@ -243,6 +248,7 @@ class VisualPlacementStage {
 							$bt    = isset( $line['box_top'] ) ? floatval( $line['box_top'] ) : ( 25.0 + $idx * 12.0 );
 							$bw    = isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : 40.0;
 							$bh    = isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : 8.5;
+							$br    = isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0;
 							?>
 							<div
 								class="mr-tee-field-panel <?php echo 0 === $idx ? 'is-active' : ''; ?>"
@@ -416,6 +422,32 @@ class VisualPlacementStage {
 												class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-height"
 												data-field-index="<?php echo esc_attr( $idx ); ?>"
 											/> %
+										</td>
+									</tr>
+									<tr>
+										<th><label><?php esc_html_e( 'Orientation / Rotation (°)', 'mr-tee-editor' ); ?></label></th>
+										<td>
+											<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+												<input
+													type="number"
+													step="1"
+													min="-180"
+													max="180"
+													id="mr_tee_field_rotate_<?php echo esc_attr( $idx ); ?>"
+													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][box_rotate]"
+													value="<?php echo esc_attr( $br ); ?>"
+													class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-rotate"
+													data-field-index="<?php echo esc_attr( $idx ); ?>"
+												/> °
+												<span class="description" style="font-size:11px;"><?php esc_html_e( '(-180° à 180°)', 'mr-tee-editor' ); ?></span>
+											</div>
+											<div class="mr-tee-rotate-presets" style="display:flex; flex-wrap:wrap; gap:4px;">
+												<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="<?php echo esc_attr( $idx ); ?>" data-deg="0">0° (Horizontal)</button>
+												<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="<?php echo esc_attr( $idx ); ?>" data-deg="90">90° (Vertical ⬇)</button>
+												<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="<?php echo esc_attr( $idx ); ?>" data-deg="-90">-90° (Vertical ⬆)</button>
+												<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="<?php echo esc_attr( $idx ); ?>" data-deg="40">40° (Oblique ↗)</button>
+												<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="<?php echo esc_attr( $idx ); ?>" data-deg="-15">-15° (Rétro ↘)</button>
+											</div>
 										</td>
 									</tr>
 								</table>

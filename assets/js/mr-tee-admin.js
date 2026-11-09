@@ -134,20 +134,19 @@
 
 			// Dragging active box
 			$(document).on('mousedown', '.mr-tee-field-box.is-active', function(e) {
-				if ($(e.target).hasClass('mr-tee-handle')) return;
+				if ($(e.target).hasClass('mr-tee-handle') || $(e.target).hasClass('mr-tee-handle-rot')) return;
 				e.preventDefault();
 
 				currentIdx = parseInt($(this).data('field-index'), 10);
-				const $box = $(this);
 				const wrapRect = self.$canvasWrap[0].getBoundingClientRect();
-				const boxRect = $box[0].getBoundingClientRect();
 
 				isDragging = true;
 				startX = e.clientX;
 				startY = e.clientY;
 
-				startLeft = (boxRect.left - wrapRect.left) / wrapRect.width * 100;
-				startTop = (boxRect.top - wrapRect.top) / wrapRect.height * 100;
+				// Use logical percentage inputs rather than getBoundingClientRect to prevent rotation transforms from causing coordinate shifts
+				startLeft = parseFloat($(`#mr_tee_field_left_${currentIdx}`).val()) || 0;
+				startTop = parseFloat($(`#mr_tee_field_top_${currentIdx}`).val()) || 0;
 
 				const curW = parseFloat($(`#mr_tee_field_width_${currentIdx}`).val()) || 40.0;
 				const curH = parseFloat($(`#mr_tee_field_height_${currentIdx}`).val()) || 8.5;
@@ -178,7 +177,7 @@
 			});
 
 			// Resizing active box via corner handles
-			$(document).on('mousedown', '.mr-tee-field-box.is-active .mr-tee-handle', function(e) {
+			$(document).on('mousedown', '.mr-tee-field-box.is-active .mr-tee-handle:not(.mr-tee-handle-rot)', function(e) {
 				e.preventDefault();
 				e.stopPropagation();
 
@@ -187,16 +186,15 @@
 				currentHandle = $(this).data('handle');
 
 				const wrapRect = self.$canvasWrap[0].getBoundingClientRect();
-				const boxRect = $box[0].getBoundingClientRect();
 
 				isResizing = true;
 				startX = e.clientX;
 				startY = e.clientY;
 
-				startLeft = (boxRect.left - wrapRect.left) / wrapRect.width * 100;
-				startTop = (boxRect.top - wrapRect.top) / wrapRect.height * 100;
-				startWidth = boxRect.width / wrapRect.width * 100;
-				startHeight = boxRect.height / wrapRect.height * 100;
+				startLeft = parseFloat($(`#mr_tee_field_left_${currentIdx}`).val()) || 0;
+				startTop = parseFloat($(`#mr_tee_field_top_${currentIdx}`).val()) || 0;
+				startWidth = parseFloat($(`#mr_tee_field_width_${currentIdx}`).val()) || 40.0;
+				startHeight = parseFloat($(`#mr_tee_field_height_${currentIdx}`).val()) || 8.5;
 
 				let resizeRaf = null;
 				$(document).on('mousemove.mrTeeResize', function(moveEvent) {
@@ -237,12 +235,74 @@
 					$(document).off('.mrTeeResize');
 				});
 			});
+
+			// Rotating active box via top rotation handle
+			$(document).on('mousedown', '.mr-tee-field-box.is-active .mr-tee-handle-rot', function(e) {
+				e.preventDefault();
+				e.stopPropagation();
+
+				const $handle = $(this);
+				const $box = $handle.closest('.mr-tee-field-box');
+				currentIdx = parseInt($box.data('field-index'), 10);
+				$handle.addClass('is-rotating');
+
+				const boxRect = $box[0].getBoundingClientRect();
+				const centerX = (boxRect.left + boxRect.right) / 2;
+				const centerY = (boxRect.top + boxRect.bottom) / 2;
+
+				let rotRaf = null;
+				$(document).on('mousemove.mrTeeRot', function(moveEvent) {
+					if (rotRaf) cancelAnimationFrame(rotRaf);
+					rotRaf = requestAnimationFrame(() => {
+						const dx = moveEvent.clientX - centerX;
+						const dy = moveEvent.clientY - centerY;
+
+						// Vector angle relative to 12 o'clock stem (stem pointing up = 0 deg)
+						let deg = (Math.atan2(dy, dx) * 180 / Math.PI) + 90;
+						while (deg > 180) deg -= 360;
+						while (deg < -180) deg += 360;
+
+						// Snap to common angles
+						if (Math.abs(deg) < 3) deg = 0;
+						if (Math.abs(deg - 90) < 3) deg = 90;
+						if (Math.abs(deg + 90) < 3) deg = -90;
+						if (Math.abs(deg - 45) < 3) deg = 45;
+						if (Math.abs(deg + 45) < 3) deg = -45;
+						if (Math.abs(deg - 40) < 2) deg = 40;
+						if (Math.abs(deg + 15) < 2) deg = -15;
+
+						deg = Math.round(deg);
+						self.updateBoxRotation(currentIdx, deg);
+					});
+				});
+
+				$(document).on('mouseup.mrTeeRot', function() {
+					$handle.removeClass('is-rotating');
+					if (rotRaf) cancelAnimationFrame(rotRaf);
+					$(document).off('.mrTeeRot');
+				});
+			});
 		}
 
 		updateBoxPosition(idx, left, top) {
 			$(`#mr_tee_field_left_${idx}`).val(left);
 			$(`#mr_tee_field_top_${idx}`).val(top);
 			$(`#mr-tee-field-box-${idx}`).css({ left: left + '%', top: top + '%' });
+			this.recalculateDimensions();
+		}
+
+		updateBoxRotation(idx, deg) {
+			$(`#mr_tee_field_rotate_${idx}`).val(deg);
+			$(`#mr-tee-field-box-${idx}`).css({
+				transform: `rotate(${deg}deg)`,
+				'transform-origin': 'center center',
+			});
+
+			const curW = parseFloat($(`#mr_tee_field_width_${idx}`).val()) || 40.0;
+			const curH = parseFloat($(`#mr_tee_field_height_${idx}`).val()) || 8.5;
+			const rotTxt = deg !== 0 ? ` (${deg}°)` : '';
+			$(`.mr-tee-field-pill[data-field-index="${idx}"] .mr-tee-pill-dims`).text(`${curW}×${curH}%${rotTxt}`);
+
 			this.recalculateDimensions();
 		}
 
@@ -260,7 +320,9 @@
 			});
 
 			// Update pill dimensions
-			$(`.mr-tee-field-pill[data-field-index="${idx}"] .mr-tee-pill-dims`).text(`${width}×${height}%`);
+			const r = parseFloat($(`#mr_tee_field_rotate_${idx}`).val()) || 0;
+			const rotTxt = r !== 0 ? ` (${r}°)` : '';
+			$(`.mr-tee-field-pill[data-field-index="${idx}"] .mr-tee-pill-dims`).text(`${width}×${height}%${rotTxt}`);
 
 			// Re-render preview text inside this box
 			this.renderBoxPreview(idx);
@@ -273,13 +335,15 @@
 		bindInputSync() {
 			const self = this;
 
-			// Coords Inputs
-			$(document).on('input change', '.mr-tee-field-coord', function() {
+			// Coords Inputs (Position & Size)
+			$(document).on('input change', '.mr-tee-field-coord:not(.mr-tee-field-coord-rotate)', function() {
 				const idx = parseInt($(this).data('field-index'), 10);
 				const l = parseFloat($(`#mr_tee_field_left_${idx}`).val()) || 0;
 				const t = parseFloat($(`#mr_tee_field_top_${idx}`).val()) || 0;
 				const w = parseFloat($(`#mr_tee_field_width_${idx}`).val()) || 40;
 				const h = parseFloat($(`#mr_tee_field_height_${idx}`).val()) || 8.5;
+				const r = parseFloat($(`#mr_tee_field_rotate_${idx}`).val()) || 0;
+				const rotTxt = r !== 0 ? ` (${r}°)` : '';
 
 				$(`#mr-tee-field-box-${idx}`).css({
 					left: l + '%',
@@ -288,9 +352,24 @@
 					height: h + '%',
 				});
 
-				$(`.mr-tee-field-pill[data-field-index="${idx}"] .mr-tee-pill-dims`).text(`${w}×${h}%`);
+				$(`.mr-tee-field-pill[data-field-index="${idx}"] .mr-tee-pill-dims`).text(`${w}×${h}%${rotTxt}`);
 				self.renderBoxPreview(idx);
 				self.recalculateDimensions();
+			});
+
+			// Rotation Angle Input
+			$(document).on('input change', '.mr-tee-field-coord-rotate', function() {
+				const idx = parseInt($(this).data('field-index'), 10);
+				const deg = parseFloat($(this).val()) || 0;
+				self.updateBoxRotation(idx, deg);
+			});
+
+			// Quick Rotation Preset Buttons
+			$(document).on('click', '.mr-tee-btn-rotate-preset', function(e) {
+				e.preventDefault();
+				const idx = parseInt($(this).data('field-index'), 10);
+				const deg = parseInt($(this).data('deg'), 10) || 0;
+				self.updateBoxRotation(idx, deg);
 			});
 
 			// Label Input
@@ -354,12 +433,14 @@
 						id="mr-tee-field-box-${newIdx}"
 						class="mr-tee-field-box"
 						data-field-index="${newIdx}"
-						style="left: ${newLeft}%; top: ${newTop}%; width: ${newWidth}%; height: ${newHeight}%; --field-color: ${color};"
+						style="left: ${newLeft}%; top: ${newTop}%; width: ${newWidth}%; height: ${newHeight}%; transform: rotate(0deg); transform-origin: center center; --field-color: ${color};"
 					>
 						<span class="mr-tee-box-badge" style="background: ${color};">
 							${newIdx + 1}. ${fieldLabel}
 						</span>
 						<div class="mr-tee-box-svg-holder" id="mr-tee-box-svg-${newIdx}"></div>
+						<div class="mr-tee-handle-rot-stem" style="background: ${color};"></div>
+						<div class="mr-tee-handle-rot" data-handle="rot" style="border-color: ${color};" title="Faire pivoter le texte"></div>
 						<div class="mr-tee-handle mr-tee-handle-nw" data-handle="nw" style="border-color: ${color};"></div>
 						<div class="mr-tee-handle mr-tee-handle-ne" data-handle="ne" style="border-color: ${color};"></div>
 						<div class="mr-tee-handle mr-tee-handle-sw" data-handle="sw" style="border-color: ${color};"></div>
@@ -456,6 +537,22 @@
 									<input type="number" step="0.1" min="3" max="100" id="mr_tee_field_height_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_height]" value="${newHeight}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-height" data-field-index="${newIdx}" /> %
 								</td>
 							</tr>
+							<tr>
+								<th><label>Orientation / Rotation (°)</label></th>
+								<td>
+									<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+										<input type="number" step="1" min="-180" max="180" id="mr_tee_field_rotate_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_rotate]" value="0" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-rotate" data-field-index="${newIdx}" /> °
+										<span class="description" style="font-size:11px;">(-180° à 180°)</span>
+									</div>
+									<div class="mr-tee-rotate-presets" style="display:flex; flex-wrap:wrap; gap:4px;">
+										<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="${newIdx}" data-deg="0">0° (Horizontal)</button>
+										<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="${newIdx}" data-deg="90">90° (Vertical ⬇)</button>
+										<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="${newIdx}" data-deg="-90">-90° (Vertical ⬆)</button>
+										<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="${newIdx}" data-deg="40">40° (Oblique ↗)</button>
+										<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="${newIdx}" data-deg="-15">-15° (Rétro ↘)</button>
+									</div>
+								</td>
+							</tr>
 						</table>
 						<div class="mr-tee-field-actions">
 							<button type="button" class="button button-link-delete mr-tee-btn-delete-field" data-field-index="${newIdx}">
@@ -522,6 +619,8 @@
 				$(this).find('.mr-tee-box-badge').css('background', color);
 				$(this).find('.mr-tee-box-svg-holder').attr('id', `mr-tee-box-svg-${i}`);
 				$(this).find('.mr-tee-handle').css('border-color', color);
+				$(this).find('.mr-tee-handle-rot-stem').css('background', color);
+				$(this).find('.mr-tee-handle-rot').css('border-color', color);
 			});
 
 			$panels.each(function(i) {
@@ -541,6 +640,8 @@
 				$(this).find('.mr-tee-field-coord-top').attr('id', `mr_tee_field_top_${i}`).attr('name', `mr_tee_config[text_lines][${i}][box_top]`).attr('data-field-index', i);
 				$(this).find('.mr-tee-field-coord-width').attr('id', `mr_tee_field_width_${i}`).attr('name', `mr_tee_config[text_lines][${i}][box_width]`).attr('data-field-index', i);
 				$(this).find('.mr-tee-field-coord-height').attr('id', `mr_tee_field_height_${i}`).attr('name', `mr_tee_config[text_lines][${i}][box_height]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-coord-rotate').attr('id', `mr_tee_field_rotate_${i}`).attr('name', `mr_tee_config[text_lines][${i}][box_rotate]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-btn-rotate-preset').attr('data-field-index', i);
 				$(this).find('.mr-tee-btn-delete-field').attr('data-field-index', i);
 			});
 
@@ -702,11 +803,27 @@
 				const t = parseFloat($(`#mr_tee_field_top_${idx}`).val()) || 0;
 				const bw = parseFloat($(`#mr_tee_field_width_${idx}`).val()) || 10;
 				const bh = parseFloat($(`#mr_tee_field_height_${idx}`).val()) || 10;
+				const r = parseFloat($(`#mr_tee_field_rotate_${idx}`).val()) || 0;
 
-				xMin = Math.min(xMin, l);
-				yMin = Math.min(yMin, t);
-				xMax = Math.max(xMax, l + bw);
-				yMax = Math.max(yMax, t + bh);
+				if (r !== 0) {
+					const rad = (r * Math.PI) / 180;
+					const cos = Math.abs(Math.cos(rad));
+					const sin = Math.abs(Math.sin(rad));
+					const halfW = (bw * cos + bh * sin) / 2;
+					const halfH = (bw * sin + bh * cos) / 2;
+					const cx = l + (bw / 2);
+					const cy = t + (bh / 2);
+
+					xMin = Math.min(xMin, cx - halfW);
+					yMin = Math.min(yMin, cy - halfH);
+					xMax = Math.max(xMax, cx + halfW);
+					yMax = Math.max(yMax, cy + halfH);
+				} else {
+					xMin = Math.min(xMin, l);
+					yMin = Math.min(yMin, t);
+					xMax = Math.max(xMax, l + bw);
+					yMax = Math.max(yMax, t + bh);
+				}
 				boxCount++;
 			});
 

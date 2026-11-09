@@ -294,6 +294,64 @@
 .mr-tee-handle-sw { bottom: -6px; left: -6px; cursor: nesw-resize; }
 .mr-tee-handle-se { bottom: -6px; right: -6px; cursor: nwse-resize; }
 
+/* Rotation Handle & Stem */
+.mr-tee-field-box .mr-tee-handle-rot-stem {
+	position: absolute;
+	top: -22px;
+	left: 50%;
+	width: 2px;
+	height: 22px;
+	background: var(--field-color, #2563eb);
+	transform: translateX(-50%);
+	pointer-events: none;
+	display: none;
+	z-index: 28;
+}
+
+.mr-tee-field-box.is-active .mr-tee-handle-rot-stem {
+	display: block;
+}
+
+.mr-tee-field-box .mr-tee-handle-rot {
+	position: absolute;
+	top: -30px;
+	left: 50%;
+	transform: translateX(-50%);
+	width: 15px;
+	height: 15px;
+	background: #ffffff;
+	border: 2.5px solid var(--field-color, #2563eb);
+	border-radius: 50%;
+	cursor: grab;
+	z-index: 35;
+	display: none;
+	box-shadow: 0 1px 5px rgba(0, 0, 0, 0.25);
+	transition: background-color 0.15s ease, transform 0.1s ease;
+}
+
+.mr-tee-field-box.is-active .mr-tee-handle-rot {
+	display: block;
+}
+
+.mr-tee-field-box .mr-tee-handle-rot:hover,
+.mr-tee-field-box .mr-tee-handle-rot.is-rotating {
+	background: var(--field-color, #2563eb);
+	cursor: grabbing;
+	transform: translateX(-50%) scale(1.15);
+}
+
+.mr-tee-btn-rotate-preset {
+	font-size: 11px !important;
+	padding: 0 6px !important;
+	height: 24px !important;
+	line-height: 22px !important;
+}
+
+.mr-tee-btn-rotate-preset:hover {
+	border-color: #2563eb !important;
+	color: #2563eb !important;
+}
+
 .mr-tee-stage-instructions {
 	text-align: center;
 	margin-top: 10px;

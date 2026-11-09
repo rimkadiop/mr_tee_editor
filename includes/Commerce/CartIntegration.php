@@ -162,11 +162,21 @@ class CartIntegration {
 			foreach ( $payload['text_lines'] as $line ) {
 				$label = ! empty( $line['label'] ) ? $line['label'] : 'Texte';
 				$val   = ! empty( $line['value'] ) ? $line['value'] : '';
+				$rot   = isset( $line['rotate'] ) ? floatval( $line['rotate'] ) : ( isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0 );
 				if ( ! empty( $val ) ) {
+					$rot_label = '';
+					if ( 0.0 !== $rot ) {
+						if ( 90.0 === $rot || -90.0 === $rot ) {
+							$rot_label = ' ' . sprintf( __( '(Vertical %d°)', 'mr-tee-editor' ), $rot );
+						} else {
+							$rot_label = ' ' . sprintf( __( '(%d°)', 'mr-tee-editor' ), $rot );
+						}
+					}
+					$display_val = esc_html( $val ) . ( ! empty( $rot_label ) ? ' <small style="color:#64748b; font-weight:normal;">' . esc_html( $rot_label ) . '</small>' : '' );
 					$item_data[] = array(
 						'key'     => $label,
-						'value'   => esc_html( $val ),
-						'display' => esc_html( $val ),
+						'value'   => esc_html( $val . $rot_label ),
+						'display' => $display_val,
 					);
 				}
 			}

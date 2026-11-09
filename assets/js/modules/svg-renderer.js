@@ -304,6 +304,9 @@ export class SvgRenderer {
 			}
 		}
 
+		const rotateAngle = parseFloat(node.box_rotate !== undefined ? node.box_rotate : (node.rotate !== undefined ? node.rotate : 0)) || 0;
+		const transformAttr = (rotateAngle !== 0) ? `transform="rotate(${rotateAngle.toFixed(2)}, ${x.toFixed(2)}, ${y.toFixed(2)})"` : '';
+
 		return `
 		<text
 			x="${x}"
@@ -316,6 +319,7 @@ export class SvgRenderer {
 			stroke="${strokeColor}"
 			stroke-width="${strokeWidth}"
 			style="${paintOrder}"
+			${transformAttr}
 			${textLengthAttr}
 			${filterAttr}
 		>${tspans}</text>`;

@@ -608,10 +608,154 @@ class SceneGraphSchema {
 		$ratio = ( $h_val > 0 ) ? round( $w_val / $h_val, 4 ) : 1.0;
 
 		return array(
-			'width_px'     => $px_w,
-			'height_px'    => $px_h,
-			'aspect_ratio' => $ratio,
-			'ratio_str'    => sprintf( '%s:%s', round( $w_val, 1 ), round( $h_val, 1 ) ),
+			'width_px'         => $px_w,
+			'height_px'        => $px_h,
+			'aspect_ratio'     => $ratio,
+			'ratio_str'        => sprintf( '%s:%s', round( $w_val, 1 ), round( $h_val, 1 ) ),
+			'simplified_ratio' => self::calculate_simplified_ratio( $w_val, $h_val ),
+		);
+	}
+
+	/**
+	 * Calculate simplified integer aspect ratio (e.g., 17:11, 3:2, 40:19, 1:1, 3:4).
+	 *
+	 * @param float $w Width.
+	 * @param float $h Height.
+	 * @return string Simplified ratio string.
+	 */
+	public static function calculate_simplified_ratio( $w, $h ) {
+		$w = floatval( $w );
+		$h = floatval( $h );
+		if ( $w <= 0 || $h <= 0 ) {
+			return '1:1';
+		}
+
+		$ratio = $w / $h;
+
+		// A4 ISO standard ratio (~1:1.414 or ~0.707:1)
+		if ( abs( $ratio - ( 21.0 / 29.7 ) ) < 0.015 ) {
+			return '1:1.414 (1:√2)';
+		}
+		if ( abs( $ratio - ( 29.7 / 21.0 ) ) < 0.015 ) {
+			return '1.414:1 (√2:1)';
+		}
+
+		// Scale decimal to integer (handling tenths, e.g. 8.5 -> 85, 5.5 -> 55)
+		$factor = 10;
+		$int_w  = (int) round( $w * $factor );
+		$int_h  = (int) round( $h * $factor );
+
+		// Greatest common divisor (GCD)
+		$a = $int_w;
+		$b = $int_h;
+		while ( $b !== 0 ) {
+			$t = $b;
+			$b = $a % $b;
+			$a = $t;
+		}
+		$gcd = ( $a > 0 ) ? $a : 1;
+
+		$num_w = $int_w / $gcd;
+		$num_h = $int_h / $gcd;
+
+		if ( $num_w > 100 || $num_h > 100 ) {
+			return sprintf( '%s:1', round( $ratio, 2 ) );
+		}
+
+		return sprintf( '%d:%d', $num_w, $num_h );
+	}
+
+	/**
+	 * Return standard physical product presets for POD items.
+	 *
+	 * @return array<string, array<string, mixed>>
+	 */
+	public static function get_standard_physical_presets() {
+		return array(
+			'business_card' => array(
+				'id'               => 'business_card',
+				'name'             => __( 'Carte de Visite', 'mr-tee-editor' ),
+				'dimensions'       => '8.5 × 5.5 cm',
+				'width'            => 8.5,
+				'height'           => 5.5,
+				'unit'             => 'cm',
+				'simplified_ratio' => '17:11',
+				'decimal_ratio'    => 1.545,
+				'orientation'      => 'Landscape',
+				'product_type'     => 'flat_object',
+				'lock_ratio'       => true,
+				'print_px_300dpi'  => '1004 × 650 px',
+			),
+			'postcard' => array(
+				'id'               => 'postcard',
+				'name'             => __( 'Carte Postale / Photo', 'mr-tee-editor' ),
+				'dimensions'       => '15 × 10 cm',
+				'width'            => 15.0,
+				'height'           => 10.0,
+				'unit'             => 'cm',
+				'simplified_ratio' => '3:2',
+				'decimal_ratio'    => 1.500,
+				'orientation'      => 'Landscape',
+				'product_type'     => 'flat_object',
+				'lock_ratio'       => true,
+				'print_px_300dpi'  => '1772 × 1181 px',
+			),
+			'mug_wrap' => array(
+				'id'               => 'mug_wrap',
+				'name'             => __( 'Mug Céramique (Wrap Complet)', 'mr-tee-editor' ),
+				'dimensions'       => '20 × 9.5 cm',
+				'width'            => 20.0,
+				'height'           => 9.5,
+				'unit'             => 'cm',
+				'simplified_ratio' => '40:19',
+				'decimal_ratio'    => 2.105,
+				'orientation'      => 'Panoramic strip',
+				'product_type'     => 'flat_object',
+				'lock_ratio'       => true,
+				'print_px_300dpi'  => '2362 × 1122 px',
+			),
+			'poster_a4' => array(
+				'id'               => 'poster_a4',
+				'name'             => __( 'Flyer / Affiche Poster (A4)', 'mr-tee-editor' ),
+				'dimensions'       => '21 × 29.7 cm',
+				'width'            => 21.0,
+				'height'           => 29.7,
+				'unit'             => 'cm',
+				'simplified_ratio' => '1:1.414 (~5:7)',
+				'decimal_ratio'    => 0.707,
+				'orientation'      => 'Portrait',
+				'product_type'     => 'flat_object',
+				'lock_ratio'       => true,
+				'print_px_300dpi'  => '2480 × 3508 px',
+			),
+			'coaster_square' => array(
+				'id'               => 'coaster_square',
+				'name'             => __( 'Sous-verre / Patch Carré', 'mr-tee-editor' ),
+				'dimensions'       => '10 × 10 cm',
+				'width'            => 10.0,
+				'height'           => 10.0,
+				'unit'             => 'cm',
+				'simplified_ratio' => '1:1',
+				'decimal_ratio'    => 1.000,
+				'orientation'      => 'Square',
+				'product_type'     => 'flat_object',
+				'lock_ratio'       => true,
+				'print_px_300dpi'  => '1181 × 1181 px',
+			),
+			'tshirt_platen' => array(
+				'id'               => 'tshirt_platen',
+				'name'             => __( 'T-Shirt Textile (Plateau DTG)', 'mr-tee-editor' ),
+				'dimensions'       => '30 × 40 cm',
+				'width'            => 30.0,
+				'height'           => 40.0,
+				'unit'             => 'cm',
+				'simplified_ratio' => '3:4',
+				'decimal_ratio'    => 0.750,
+				'orientation'      => 'Portrait',
+				'product_type'     => 'garment',
+				'lock_ratio'       => false,
+				'print_px_300dpi'  => '3543 × 4724 px',
+			),
 		);
 	}
 

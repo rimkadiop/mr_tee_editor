@@ -71,6 +71,7 @@ class VisualPlacementStage {
 		$prod_type   = ! empty( $config['product_type'] ) ? $config['product_type'] : 'garment';
 		$lock_ratio  = isset( $config['lock_aspect_ratio'] ) ? ! empty( $config['lock_aspect_ratio'] ) : ( 'flat_object' === $prod_type );
 		$ratio       = isset( $config['print_aspect_ratio'] ) ? floatval( $config['print_aspect_ratio'] ) : ( ( $real_h > 0 ) ? round( $real_w / $real_h, 4 ) : 0.75 );
+		$simplified  = SceneGraphSchema::calculate_simplified_ratio( $real_w, $real_h );
 		$print_w_px  = isset( $config['print_width_px'] ) ? intval( $config['print_width_px'] ) : 2400;
 		$print_h_px  = isset( $config['print_height_px'] ) ? intval( $config['print_height_px'] ) : 3000;
 		?>
@@ -119,14 +120,15 @@ class VisualPlacementStage {
 					</div>
 				</div>
 
-				<!-- Quick Dimensions Presets -->
+				<!-- Quick Dimensions Presets (Matching POD Standards) -->
 				<div class="mr-tee-presets-fast-bar">
-					<span class="mr-tee-fast-label"><?php esc_html_e( 'Gabarits rapides :', 'mr-tee-editor' ); ?></span>
-					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="garment" data-unit="cm" data-w="30" data-h="40" data-lock="0"><?php esc_html_e( 'T-Shirt Platen (30 × 40 cm)', 'mr-tee-editor' ); ?></button>
-					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="8.9" data-h="5.1" data-lock="1"><?php esc_html_e( 'Carte de Visite (8.9 × 5.1 cm)', 'mr-tee-editor' ); ?></button>
-					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="20" data-h="15" data-lock="1"><?php esc_html_e( 'Plaque / Cadre (20 × 15 cm)', 'mr-tee-editor' ); ?></button>
-					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="20" data-h="9.5" data-lock="1"><?php esc_html_e( 'Mug Wrap (20 × 9.5 cm)', 'mr-tee-editor' ); ?></button>
-					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="21" data-h="29.7" data-lock="1"><?php esc_html_e( 'Flyer / Page A4 (21 × 29.7 cm)', 'mr-tee-editor' ); ?></button>
+					<span class="mr-tee-fast-label"><?php esc_html_e( 'Gabarits standard :', 'mr-tee-editor' ); ?></span>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="8.5" data-h="5.5" data-lock="1" data-ratio="17:11" title="<?php esc_attr_e( 'Carte de Visite (8.5 × 5.5 cm | 17:11 | ~1.55:1 Landscape)', 'mr-tee-editor' ); ?>">📇 <?php esc_html_e( 'Carte (8.5 × 5.5 cm | 17:11)', 'mr-tee-editor' ); ?></button>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="15" data-h="10" data-lock="1" data-ratio="3:2" title="<?php esc_attr_e( 'Carte Postale / Photo (15 × 10 cm | 3:2 | 1.50:1 Landscape)', 'mr-tee-editor' ); ?>">🖼️ <?php esc_html_e( 'Photo (15 × 10 cm | 3:2)', 'mr-tee-editor' ); ?></button>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="20" data-h="9.5" data-lock="1" data-ratio="40:19" title="<?php esc_attr_e( 'Mug Wrap Complet (20 × 9.5 cm | 40:19 | ~2.11:1 Panoramique)', 'mr-tee-editor' ); ?>">☕ <?php esc_html_e( 'Mug Wrap (20 × 9.5 cm | 40:19)', 'mr-tee-editor' ); ?></button>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="21" data-h="29.7" data-lock="1" data-ratio="1:1.414" title="<?php esc_attr_e( 'Flyer / Poster A4 (21 × 29.7 cm | 1:1.414 Portrait)', 'mr-tee-editor' ); ?>">📄 <?php esc_html_e( 'Flyer A4 (21 × 29.7 cm)', 'mr-tee-editor' ); ?></button>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="10" data-h="10" data-lock="1" data-ratio="1:1" title="<?php esc_attr_e( 'Sous-verre / Patch Carré (10 × 10 cm | 1:1 Square)', 'mr-tee-editor' ); ?>">🟩 <?php esc_html_e( 'Carré (10 × 10 cm | 1:1)', 'mr-tee-editor' ); ?></button>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="garment" data-unit="cm" data-w="30" data-h="40" data-lock="0" data-ratio="3:4" title="<?php esc_attr_e( 'Plateau T-Shirt DTG (30 × 40 cm | 3:4 | 0.75:1 Portrait)', 'mr-tee-editor' ); ?>">👕 <?php esc_html_e( 'T-Shirt (30 × 40 cm | 3:4)', 'mr-tee-editor' ); ?></button>
 				</div>
 
 				<!-- Live Ratio & 300 DPI Export Badge -->
@@ -134,7 +136,7 @@ class VisualPlacementStage {
 					<span class="mr-tee-badge-icon dashicons dashicons-image-crop"></span>
 					<span class="mr-tee-badge-ratio-text">
 						<strong><?php esc_html_e( 'Ratio Calculé :', 'mr-tee-editor' ); ?></strong>
-						<span id="mr-tee-badge-ratio-val"><?php echo esc_html( round( $real_w, 1 ) . ' : ' . round( $real_h, 1 ) . ' (' . round( $ratio, 3 ) . ')' ); ?></span>
+						<span id="mr-tee-badge-ratio-val"><?php echo esc_html( $simplified . ' (~' . round( $ratio, 3 ) . ' : 1)' ); ?></span>
 					</span>
 					<span class="mr-tee-badge-divider">|</span>
 					<span class="mr-tee-badge-px-text">

@@ -703,8 +703,10 @@
 			const pxW = Math.round(inchW * dpi);
 			const pxH = Math.round(inchH * dpi);
 
+			const simplified = this.getSimplifiedRatio(w, h);
+
 			// Update Live Badge
-			$('#mr-tee-badge-ratio-val').text(`${Math.round(w * 10) / 10} : ${Math.round(h * 10) / 10} (${ratio.toFixed(3)})`);
+			$('#mr-tee-badge-ratio-val').text(`${simplified} (~${ratio.toFixed(3)} : 1)`);
 			$('#mr-tee-badge-px-val').text(`${pxW} × ${pxH} px`);
 
 			// Update TAB 4 pixel inputs
@@ -721,6 +723,37 @@
 					this.$canvasWrap.css('aspect-ratio', '');
 				}
 			}
+		}
+
+		getSimplifiedRatio(w, h) {
+			if (!w || !h || w <= 0 || h <= 0) return '1:1';
+			const ratio = w / h;
+			if (Math.abs(ratio - (21.0 / 29.7)) < 0.015) {
+				return '1:1.414 (1:√2)';
+			}
+			if (Math.abs(ratio - (29.7 / 21.0)) < 0.015) {
+				return '1.414:1 (√2:1)';
+			}
+
+			const factor = 10;
+			let a = Math.round(w * factor);
+			let b = Math.round(h * factor);
+			const origA = a;
+			const origB = b;
+
+			while (b !== 0) {
+				const t = b;
+				b = a % b;
+				a = t;
+			}
+			const gcd = a > 0 ? a : 1;
+			const numW = origA / gcd;
+			const numH = origB / gcd;
+
+			if (numW > 100 || numH > 100) {
+				return `${ratio.toFixed(2)}:1`;
+			}
+			return `${numW}:${numH}`;
 		}
 
 		escapeXml(str) {

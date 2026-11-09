@@ -7,3 +7,8 @@ vendor/
 .vscode/
 *.zip
 *.tar.gz
+assets/fonts/cache/*/p/
+assets/fonts/cache/*/f/
+assets/fonts/cache/*/.build.lock
+assets/fonts/cache/*/*.tmp
+

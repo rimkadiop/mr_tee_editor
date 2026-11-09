@@ -788,27 +788,59 @@
 			const fonts = window.mrTeeAdminData.fonts || {};
 			const def = fonts[fontId] || {};
 			const pluginUrl = window.mrTeeAdminData.pluginUrl || '';
-			const dataUrl = def.data_url || `${pluginUrl}assets/fonts/cache/${fontId}.json`;
+			const manifestUrl = def.manifest_url || `${pluginUrl}assets/fonts/cache/${fontId}/manifest.json`;
 
-			fetch(dataUrl)
+			const hydrate = (manifest) => {
+				const base = `${pluginUrl}assets/fonts/cache/${fontId}/`;
+				const ver = manifest.v || '';
+				const previewUrls = {};
+				for (const [k, img] of Object.entries(manifest.images || {})) {
+					previewUrls[k] = `${base}${img.p}?v=${ver}`;
+				}
+				const glyphs = {};
+				for (const [ch, g] of Object.entries(manifest.glyphs || {})) {
+					glyphs[ch] = {
+						gid: g.gid,
+						adv: g.adv,
+						svg: (g.svg || '').replace(/\{\{p:([a-z0-9]+)\}\}/g, (m, k) => previewUrls[k] || ''),
+					};
+				}
+				return { ...manifest, glyphs, hydrated: true };
+			};
+
+			fetch(manifestUrl)
 				.then(res => {
 					if (res.ok) return res.json();
-					throw new Error('Static cache not found');
+					throw new Error('Manifest not found');
 				})
-				.then(data => {
+				.then(manifest => {
+					const data = hydrate(manifest);
 					window.mrTeeAdminData.svgFonts[fontId] = data;
 					if (callback) callback(data);
 				})
 				.catch(() => {
-					// AJAX Fallback
-					const ajaxUrl = window.mrTeeAdminData.ajaxUrl;
-					if (!ajaxUrl) return;
-					$.getJSON(`${ajaxUrl}?action=mr_tee_get_svg_font_data&font_id=${encodeURIComponent(fontId)}`, res => {
-						if (res.success && res.data) {
-							window.mrTeeAdminData.svgFonts[fontId] = res.data;
-							if (callback) callback(res.data);
-						}
-					});
+					// Fallback to legacy full JSON
+					const dataUrl = def.data_url || `${pluginUrl}assets/fonts/cache/${fontId}.json`;
+					fetch(dataUrl)
+						.then(res => res.ok ? res.json() : null)
+						.then(data => {
+							if (data) {
+								window.mrTeeAdminData.svgFonts[fontId] = data;
+								if (callback) callback(data);
+							} else {
+								throw new Error('Fallback failed');
+							}
+						})
+						.catch(() => {
+							const ajaxUrl = window.mrTeeAdminData.ajaxUrl;
+							if (!ajaxUrl) return;
+							$.getJSON(`${ajaxUrl}?action=mr_tee_get_svg_font_data&font_id=${encodeURIComponent(fontId)}`, res => {
+								if (res.success && res.data) {
+									window.mrTeeAdminData.svgFonts[fontId] = res.data;
+									if (callback) callback(res.data);
+								}
+							});
+						});
 				});
 		}
 

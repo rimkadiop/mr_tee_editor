@@ -550,6 +550,57 @@ export class SvgRenderer {
 	}
 
 	/**
+	 * Hydrate a lightweight font manifest (~20 KB) into the full client-side glyph lookup table.
+	 *
+	 * @param {Object} manifest Raw manifest from manifest.json.
+	 * @param {string} fontId Font key.
+	 * @return {Object}
+	 */
+	static hydrateManifest(manifest, fontId) {
+		if (!manifest) return null;
+		if (manifest.hydrated) return manifest;
+
+		const pluginUrl = (typeof window !== 'undefined' && window.mrTeeProductData && window.mrTeeProductData.pluginUrl)
+			|| (typeof window !== 'undefined' && window.mrTeeAdminData && window.mrTeeAdminData.pluginUrl)
+			|| '/wp-content/plugins/mr_tee_editor/';
+		const base = manifest.base || `${pluginUrl}assets/fonts/cache/${fontId}/`;
+		const ver = manifest.v || '';
+		const images = manifest.images || {};
+		const previewUrls = {};
+		const fullMap = {};
+
+		for (const [key, img] of Object.entries(images)) {
+			const p = `${base}${img.p}?v=${ver}`;
+			const f = `${base}${img.f}?v=${ver}`;
+			previewUrls[key] = p;
+			fullMap[p] = f;
+		}
+
+		const resolve = (svg) => {
+			if (!svg || !svg.includes('{{p:')) return svg;
+			return svg.replace(/\{\{p:([a-z0-9]+)\}\}/g, (m, k) => previewUrls[k] || '');
+		};
+
+		const hydratedGlyphs = {};
+		for (const [ch, g] of Object.entries(manifest.glyphs || {})) {
+			hydratedGlyphs[ch] = {
+				gid: g.gid,
+				adv: g.adv,
+				svg: resolve(g.svg || ''),
+			};
+		}
+
+		return {
+			...manifest,
+			glyphs: hydratedGlyphs,
+			defs: resolve(manifest.defs || ''),
+			fullMap: fullMap,
+			preview: Object.keys(fullMap).length > 0,
+			hydrated: true,
+		};
+	}
+
+	/**
 	 * Asynchronously ensure an OpenType-SVG font is loaded into client memory.
 	 *
 	 * @param {string} fontId Font key.
@@ -580,8 +631,26 @@ export class SvgRenderer {
 		const pluginUrl = (window.mrTeeProductData && window.mrTeeProductData.pluginUrl)
 			|| (window.mrTeeAdminData && window.mrTeeAdminData.pluginUrl)
 			|| '';
-		const dataUrl = def.data_url || `${pluginUrl}assets/fonts/cache/${cleanKey}.json`;
 
+		// 1. Fast mobile-first: try lightweight manifest (~20 KB vs 25 MB!)
+		const manifestUrl = def.manifest_url || `${pluginUrl}assets/fonts/cache/${cleanKey}/manifest.json`;
+		if (manifestUrl) {
+			try {
+				const resp = await fetch(manifestUrl);
+				if (resp.ok) {
+					const rawManifest = await resp.json();
+					const data = this.hydrateManifest(rawManifest, cleanKey);
+					window.mrTeeSvgFonts[cleanKey] = data;
+					window.mrTeeSvgFonts[fontId] = data;
+					return data;
+				}
+			} catch (mErr) {
+				// Continue to fallback
+			}
+		}
+
+		// 2. Legacy static JSON cache fallback
+		const dataUrl = def.data_url || `${pluginUrl}assets/fonts/cache/${cleanKey}.json`;
 		try {
 			const resp = await fetch(dataUrl);
 			if (resp.ok) {
@@ -594,7 +663,7 @@ export class SvgRenderer {
 			console.warn('[MrTee SvgRenderer] Failed to load static SVG font cache, trying AJAX fallback:', err);
 		}
 
-		// AJAX Fallback
+		// 3. AJAX Fallback
 		const ajaxUrl = (window.mrTeeProductData && window.mrTeeProductData.ajaxUrl)
 			|| (window.mrTeeAdminData && window.mrTeeAdminData.ajaxUrl);
 		if (ajaxUrl) {
@@ -706,7 +775,17 @@ export class SvgRenderer {
 				const ch = lm.text[i];
 				const g = (fontData.glyphs && (fontData.glyphs[ch] || fontData.glyphs[ch.toUpperCase()])) || { adv: fontData.defaultAdv || 500, svg: '' };
 				if (g.svg) {
-					glyphsMarkup += `<g class="mrtee-ot-glyph" transform="translate(${cursorX.toFixed(3)}, ${baselineY.toFixed(3)}) scale(${scale.toFixed(5)})">${g.svg}</g>\n`;
+					let glyphSvg = g.svg;
+					if (options.isExport && fontData.fullMap) {
+						glyphSvg = glyphSvg.replace(/(xlink:href|href)="([^"]+)"/g, (m, attr, url) => {
+							const fullUrl = fontData.fullMap[url] || url;
+							return `${attr}="${fullUrl}"`;
+						});
+					}
+					if (!glyphSvg.includes('decoding=')) {
+						glyphSvg = glyphSvg.replace(/<image /g, '<image decoding="async" ');
+					}
+					glyphsMarkup += `<g class="mrtee-ot-glyph" transform="translate(${cursorX.toFixed(3)}, ${baselineY.toFixed(3)}) scale(${scale.toFixed(5)})">${glyphSvg}</g>\n`;
 				}
 				cursorX += ((g.adv || 500) + letterSpacingUnits) * scale;
 			}

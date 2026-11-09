@@ -387,6 +387,21 @@ class FontRegistry {
 			$fonts = array_merge( $fonts, $custom );
 		}
 
+		// Enrich OpenType-SVG fonts with lightweight package URLs (manifest & thumbnail)
+		foreach ( $fonts as $f_id => &$f_data ) {
+			if ( ! empty( $f_data['font_type'] ) && 'opentype_svg' === $f_data['font_type'] ) {
+				$manifest_url = SvgFontPackager::manifest_url( $f_id );
+				if ( $manifest_url ) {
+					$f_data['manifest_url'] = $manifest_url;
+				}
+				$thumb_url = SvgFontPackager::thumb_url( $f_id );
+				if ( $thumb_url ) {
+					$f_data['thumb_url'] = $thumb_url;
+				}
+			}
+		}
+		unset( $f_data );
+
 		return apply_filters( 'mr_tee_registered_fonts', $fonts );
 	}
 
@@ -483,9 +498,16 @@ class FontRegistry {
 			);
 
 			if ( $is_ot_svg ) {
-				$cache_data = OpenTypeSvgParser::get_or_create_cache( $font_path, $font_id, $font_name );
-				$font_def['data_url'] = MR_TEE_EDITOR_URL . 'assets/fonts/cache/' . $font_id . '.json';
-				$font_def['glyph_count'] = ! empty( $cache_data['glyphs'] ) ? count( $cache_data['glyphs'] ) : 0;
+				$manifest = SvgFontPackager::build( $font_path, $font_id, $font_name );
+				if ( ! empty( $manifest ) ) {
+					$font_def['manifest_url'] = SvgFontPackager::manifest_url( $font_id );
+					$font_def['thumb_url']    = SvgFontPackager::thumb_url( $font_id );
+					$font_def['glyph_count']  = ! empty( $manifest['glyphs'] ) ? count( (array) $manifest['glyphs'] ) : 0;
+				} else {
+					$cache_data = OpenTypeSvgParser::get_or_create_cache( $font_path, $font_id, $font_name );
+					$font_def['data_url'] = MR_TEE_EDITOR_URL . 'assets/fonts/cache/' . $font_id . '.json';
+					$font_def['glyph_count'] = ! empty( $cache_data['glyphs'] ) ? count( $cache_data['glyphs'] ) : 0;
+				}
 			}
 
 			$custom_fonts[ $font_id ] = $font_def;
@@ -532,11 +554,19 @@ class FontRegistry {
 		}
 
 		if ( ! empty( $font['font_type'] ) && 'opentype_svg' === $font['font_type'] ) {
+			$manifest = SvgFontPackager::get_manifest( $font['path'], $font['id'], $font['name'] );
+			if ( ! empty( $manifest ) ) {
+				return SvgFontPackager::hydrate( $manifest, $font['id'] );
+			}
 			return OpenTypeSvgParser::get_or_create_cache( $font['path'], $font['id'], $font['name'] );
 		}
 
 		// Check dynamically if the font file is an OpenType-SVG font
 		if ( OpenTypeSvgParser::is_opentype_svg( $font['path'] ) ) {
+			$manifest = SvgFontPackager::get_manifest( $font['path'], $font['id'], $font['name'] );
+			if ( ! empty( $manifest ) ) {
+				return SvgFontPackager::hydrate( $manifest, $font['id'] );
+			}
 			return OpenTypeSvgParser::get_or_create_cache( $font['path'], $font['id'], $font['name'] );
 		}
 

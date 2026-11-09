@@ -753,3 +753,17 @@
 	overflow: hidden !important;
 	z-index: 20 !important;
 }
+
+.mr-tee-pill-thumb {
+	width: 18px;
+	height: 18px;
+	object-fit: contain;
+	vertical-align: middle;
+	margin-right: 6px;
+	display: inline-block;
+}
+
+.mrtee-ot-glyph image {
+	image-rendering: auto;
+}
+

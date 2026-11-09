@@ -60,13 +60,27 @@ class MrTeeFrontendApp {
 			(onDone) => this.handleExport(onDone)
 		);
 
-		// 4. Subscribe to Store State Changes
+		// 4. Subscribe to Store State Changes (RAF throttled for buttery-smooth 60 FPS mobile typing)
+		this._rafRenderId = null;
 		this.store.subscribe((state, changeType) => {
-			this.renderSceneGraph();
+			if (this._rafRenderId) {
+				cancelAnimationFrame(this._rafRenderId);
+			}
+			this._rafRenderId = requestAnimationFrame(() => {
+				this._rafRenderId = null;
+				this.renderSceneGraph();
+			});
 		});
 
 		// Initial Render
 		this.renderSceneGraph();
+
+		// 5. Idle-prefetch allowed OpenType-SVG font manifests so switching fonts is instant on mobile
+		if (typeof window.requestIdleCallback === 'function') {
+			window.requestIdleCallback(() => this.prefetchAllowedSvgFonts());
+		} else {
+			setTimeout(() => this.prefetchAllowedSvgFonts(), 1200);
+		}
 	}
 
 	/**
@@ -125,6 +139,31 @@ class MrTeeFrontendApp {
 			hasPerLineBoxes: hasPerLineBoxes,
 		});
 		this.stage.updateSvg(svgMarkup);
+	}
+
+	/**
+	 * Idle-prefetch allowed OpenType-SVG font manifests in the background
+	 * so when the user taps any font pill, the font switches instantly with zero lag.
+	 */
+	prefetchAllowedSvgFonts() {
+		const fonts = (this.data && this.data.fonts) || {};
+		const textLines = this.config.text_lines || [];
+		const toPrefetch = new Set();
+
+		for (const line of textLines) {
+			const allowed = Array.isArray(line.allowed_fonts) ? line.allowed_fonts : Object.keys(fonts);
+			for (const fId of allowed) {
+				const fDef = fonts[fId];
+				if (fDef && (fDef.font_type === 'opentype_svg' || fDef.color_svg)) {
+					toPrefetch.add(fId);
+				}
+			}
+		}
+
+		for (const fId of toPrefetch) {
+			const fDef = fonts[fId];
+			SvgRenderer.ensureSvgFontLoaded(fId, fDef).catch(() => {});
+		}
 	}
 
 	/**

@@ -114,11 +114,15 @@ export class PrintExporter {
 			fontFaceCss: this.extractFontFaceCss(),
 		});
 
+		// Inline external glyph & artwork images for reliable 300 DPI canvas rasterization
+		const inlinedExportSvg = await this.inlineExternalImages(svgMarkup);
+		const inlinedFullPreviewSvg = await this.inlineExternalImages(fullPreviewSvg);
+
 		// 3. Rasterize to 300 DPI Transparent PNG (tightly cropped, lossless print output)
-		const print300DpiB64 = await this.rasterizeSvgToPng(svgMarkup, exportPxW, exportPxH);
+		const print300DpiB64 = await this.rasterizeSvgToPng(inlinedExportSvg, exportPxW, exportPxH);
 
 		// 4. Render Composite Mockup Preview (Garment + Design) as compact high-quality JPEG
-		const compositeB64 = await this.renderCompositePreview(fullPreviewSvg, config);
+		const compositeB64 = await this.renderCompositePreview(inlinedFullPreviewSvg, config);
 
 		// 5. Serialize payload with print dimensions attached
 		const payload = store.getExportPayload();
@@ -141,6 +145,64 @@ export class PrintExporter {
 		if (printInput) printInput.value = print300DpiB64;
 
 		return true;
+	}
+
+	/**
+	 * Convert external image URLs inside an SVG to base64 data URIs so that HTML5 canvas
+	 * can draw the SVG without cross-origin or blob-tainting restrictions.
+	 *
+	 * @param {string} svgMarkup SVG XML markup.
+	 * @return {Promise<string>} Inlined SVG XML markup.
+	 */
+	static async inlineExternalImages(svgMarkup) {
+		if (!svgMarkup) return '';
+		const matches = [...svgMarkup.matchAll(/(xlink:href|href)="([^"]+)"/g)];
+		const urlsToFetch = [];
+		for (const m of matches) {
+			const url = m[2];
+			if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('/')) {
+				if (!urlsToFetch.includes(url)) {
+					urlsToFetch.push(url);
+				}
+			}
+		}
+
+		if (urlsToFetch.length === 0) {
+			return svgMarkup;
+		}
+
+		window.mrTeeImageB64Cache = window.mrTeeImageB64Cache || {};
+		const cache = window.mrTeeImageB64Cache;
+		const urlMap = {};
+
+		await Promise.all(urlsToFetch.map(async (url) => {
+			if (cache[url]) {
+				urlMap[url] = cache[url];
+				return;
+			}
+			try {
+				const resp = await fetch(url);
+				if (resp.ok) {
+					const blob = await resp.blob();
+					const b64 = await new Promise((res, rej) => {
+						const reader = new FileReader();
+						reader.onloadend = () => res(reader.result);
+						reader.onerror = rej;
+						reader.readAsDataURL(blob);
+					});
+					cache[url] = b64;
+					urlMap[url] = b64;
+				}
+			} catch (e) {
+				console.warn('[MrTee PrintExporter] Failed to inline image URL for canvas export:', url, e);
+			}
+		}));
+
+		let inlined = svgMarkup;
+		for (const [url, b64] of Object.entries(urlMap)) {
+			inlined = inlined.split(url).join(b64);
+		}
+		return inlined;
 	}
 
 	/**

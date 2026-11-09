@@ -1,0 +1,23 @@
+# Mr. Tee Editor - OpenType-SVG font packages (versioned URLs)
+<IfModule mod_mime.c>
+  AddType image/webp .webp
+  AddType application/json .json
+</IfModule>
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE application/json
+</IfModule>
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType image/webp "access plus 1 year"
+  ExpiresByType image/png "access plus 1 year"
+  ExpiresByType image/jpeg "access plus 1 year"
+  ExpiresByType application/json "access plus 1 year"
+</IfModule>
+<IfModule mod_headers.c>
+  <FilesMatch "\.(webp|png|jpe?g|gif|json)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+  <FilesMatch "\.lock$">
+    Require all denied
+  </FilesMatch>
+</IfModule>

@@ -26,6 +26,7 @@ class ProductPageRenderer {
 	 * Register hooks.
 	 */
 	public static function init() {
+		add_action( 'wp_head', array( __CLASS__, 'render_performance_hints' ), 2 );
 		add_action( 'wp_enqueue_scripts', array( __CLASS__, 'enqueue_assets' ) );
 		add_action( 'woocommerce_before_add_to_cart_button', array( __CLASS__, 'render_personalization_form' ), 15 );
 		add_filter( 'body_class', array( __CLASS__, 'filter_body_class' ) );
@@ -100,6 +101,76 @@ class ProductPageRenderer {
 	}
 
 	/**
+	 * Output high-priority performance hints in wp_head:
+	 * - Preloads glyph images used by default text so 3D fonts render instantly without flicker.
+	 * - Preloads font manifest JSON for zero-latency hydration.
+	 */
+	public static function render_performance_hints() {
+		if ( ! self::is_active() ) {
+			return;
+		}
+
+		global $post;
+		if ( ! $post ) {
+			return;
+		}
+
+		$config = SceneGraphSchema::get_product_config( $post->ID );
+		if ( empty( $config['text_lines'] ) || ! is_array( $config['text_lines'] ) ) {
+			return;
+		}
+
+		$preloaded_images = array();
+		foreach ( $config['text_lines'] as $line ) {
+			if ( empty( $line['font'] ) ) {
+				continue;
+			}
+			$font_id = $line['font'];
+			$font    = FontRegistry::get_font( $font_id );
+			if ( empty( $font ) || empty( $font['font_type'] ) || 'opentype_svg' !== $font['font_type'] ) {
+				continue;
+			}
+
+			// Preload manifest for zero-latency hydration
+			if ( ! empty( $font['manifest_url'] ) ) {
+				printf(
+					"<link rel=\"preload\" href=\"%s\" as=\"fetch\" type=\"application/json\" crossorigin=\"anonymous\" />\n",
+					esc_url( $font['manifest_url'] )
+				);
+			}
+
+			// Preload glyph images for default text characters
+			$default_text = ! empty( $line['default_text'] ) ? $line['default_text'] : '';
+			if ( '' !== $default_text ) {
+				$svg_data = FontRegistry::get_svg_font_data( $font_id );
+				if ( ! empty( $svg_data['glyphs'] ) ) {
+					$chars = preg_split( '//u', $default_text, -1, PREG_SPLIT_NO_EMPTY );
+					$seen  = array();
+					foreach ( $chars as $ch ) {
+						if ( ' ' === $ch || isset( $seen[ $ch ] ) ) {
+							continue;
+						}
+						$seen[ $ch ] = true;
+						$g = isset( $svg_data['glyphs'][ $ch ] ) ? $svg_data['glyphs'][ $ch ] : ( isset( $svg_data['glyphs'][ mb_strtoupper( $ch, 'UTF-8' ) ] ) ? $svg_data['glyphs'][ mb_strtoupper( $ch, 'UTF-8' ) ] : null );
+						if ( $g && ! empty( $g['svg'] ) ) {
+							if ( preg_match( '/(xlink:href|href)="([^"]+)"/', $g['svg'], $im ) ) {
+								$img_url = $im[2];
+								if ( ! isset( $preloaded_images[ $img_url ] ) && count( $preloaded_images ) < 24 ) {
+									$preloaded_images[ $img_url ] = true;
+									printf(
+										"<link rel=\"preload\" href=\"%s\" as=\"image\" type=\"image/webp\" />\n",
+										esc_url( $img_url )
+									);
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	/**
 	 * Enqueue frontend CSS and JavaScript modules.
 	 */
 	public static function enqueue_assets() {
@@ -110,15 +181,7 @@ class ProductPageRenderer {
 		global $post;
 		$config = SceneGraphSchema::get_product_config( $post->ID );
 
-		// Google Fonts
-		wp_enqueue_style(
-			'mr-tee-google-fonts',
-			'https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Bebas+Neue&family=Bungee&family=Cinzel+Decorative:wght@700&family=Luckiest+Guy&family=Pacifico&family=Permanent+Marker&family=Press+Start+2P&display=swap',
-			array(),
-			MR_TEE_EDITOR_VERSION
-		);
-
-		// Frontend styles
+		// Frontend styles (all fancy display fonts bundled locally in assets/fonts/ with font-display: swap)
 		wp_enqueue_style(
 			'mr-tee-frontend-style',
 			MR_TEE_EDITOR_URL . 'assets/css/mr-tee-frontend.css',
@@ -325,6 +388,9 @@ class ProductPageRenderer {
 												style="font-family: '<?php echo esc_attr( $f_data['family'] ); ?>', sans-serif;"
 												title="<?php echo esc_attr( $f_data['name'] ); ?>"
 											>
+												<?php if ( ! empty( $f_data['thumb_url'] ) ) : ?>
+													<img src="<?php echo esc_url( $f_data['thumb_url'] ); ?>" alt="" class="mr-tee-pill-thumb" style="width:16px; height:16px; object-fit:contain; vertical-align:middle; margin-right:4px; display:inline-block;" />
+												<?php endif; ?>
 												<?php echo esc_html( $f_data['name'] ); ?>
 											</button>
 										<?php endforeach; ?>

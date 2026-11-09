@@ -31,13 +31,13 @@ if ( ! defined( 'ABSPATH' ) ) {
 class SvgFontPackager {
 
 	/** Package format version. Bump to force a rebuild of every package. */
-	const FORMAT = 'mrtee-svgfont-v2.1';
+	const FORMAT = 'mrtee-svgfont-v2.3';
 
-	/** Longest side (px) of the on-screen preview tier. */
-	const PREVIEW_MAX = 360;
+	/** Longest side (px) of the on-screen preview tier (1024px preserves 100% of native artist resolution for all OpenType-SVG fonts). */
+	const PREVIEW_MAX = 1024;
 
-	/** WebP quality of the preview tier. */
-	const PREVIEW_QUALITY = 80;
+	/** WebP quality of the preview tier (95 = visually lossless fidelity, flawless gradients, transparent alpha preserved). */
+	const PREVIEW_QUALITY = 95;
 
 	/** Longest side (px) of the font picker thumbnail. */
 	const THUMB_MAX = 72;
@@ -436,7 +436,7 @@ class SvgFontPackager {
 					$im->setImageFormat( 'webp' );
 					$im->setImageCompressionQuality( $quality );
 					$im->setOption( 'webp:method', '5' );
-					$im->setOption( 'webp:alpha-quality', '95' );
+					$im->setOption( 'webp:alpha-quality', '100' );
 					$im->stripImage();
 					$target = $rel . '.webp';
 					$ok     = $im->writeImage( $dir . $target );

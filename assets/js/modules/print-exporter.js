@@ -7,7 +7,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.3.3';
+import { SvgRenderer } from './svg-renderer.js?v=2.3.4';
 
 export class PrintExporter {
 	/**
@@ -141,7 +141,7 @@ export class PrintExporter {
 
 		if (payloadInput) payloadInput.value = JSON.stringify(payload);
 		if (previewInput) previewInput.value = compositeB64;
-		if (svgInput) svgInput.value = svgMarkup;
+		if (svgInput) svgInput.value = inlinedExportSvg || svgMarkup;
 		if (printInput) printInput.value = print300DpiB64;
 
 		return true;

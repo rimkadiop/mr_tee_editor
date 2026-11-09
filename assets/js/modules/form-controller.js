@@ -75,12 +75,14 @@ export class FormController {
 
 				const previewText = document.getElementById(`mr-tee-preview-text-${lineIdx}`);
 				if (previewText && fontDef) {
-					previewText.style.fontFamily = `'${fontDef.family}', Arial Black, Impact, sans-serif`;
+					previewText.style.fontFamily = `'${fontDef.family}', sans-serif`;
+					previewText.style.letterSpacing = fontDef.letter_spacing !== undefined ? `${fontDef.letter_spacing}em` : '0.05em';
+					previewText.style.textTransform = fontDef.uppercase ? 'uppercase' : 'none';
 				}
 
-				if (lineConfig.ref_id) {
-					this.store.setTextFont(lineConfig.ref_id, fontId, fontDef);
-				}
+				const refId = lineConfig.ref_id || `id-ref-text-line-${lineIdx + 1}`;
+				lineConfig.font = fontId;
+				this.store.setTextFont(refId, fontId, fontDef);
 			});
 		});
 

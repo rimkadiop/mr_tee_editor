@@ -243,14 +243,16 @@ class FontRegistry {
 				return $f;
 			}
 		}
-		return $fonts['super_mario'];
+		// Dynamic fallback to the first registered font rather than hardcoding
+		$first_key = array_key_first( $fonts );
+		return isset( $fonts[ $first_key ] ) ? $fonts[ $first_key ] : reset( $fonts );
 	}
 
 	/**
 	 * Build clean inline @font-face CSS declarations for all registered fonts.
 	 *
-	 * Uses direct font URLs so fonts load asynchronously, cache in browser cache,
-	 * and eliminate massive base64 payload bloat (>4.7MB) in HTML source.
+	 * Uses root-relative or direct font URLs so fonts load asynchronously, cache in browser,
+	 * eliminate mixed-content/CORS blocking, and avoid giant base64 data URIs.
 	 * Also registers all family aliases to prevent any font mismatch.
 	 *
 	 * @return string
@@ -259,17 +261,14 @@ class FontRegistry {
 		$css = '';
 		foreach ( self::get_fonts() as $font ) {
 			if ( ! empty( $font['url'] ) ) {
-				$font_url = esc_url( $font['url'] );
-				if ( isset( $_SERVER['HTTP_HOST'] ) ) {
-					$proto    = is_ssl() ? 'https://' : 'http://';
-					$font_url = preg_replace( '#^https?://#', $proto, $font_url );
-				}
+				$parsed   = wp_parse_url( $font['url'] );
+				$font_url = ! empty( $parsed['path'] ) ? $parsed['path'] : esc_url( $font['url'] );
 
 				// Primary font-family declaration
 				$css .= sprintf(
 					"@font-face { font-family: '%s'; src: url('%s') format('%s'); font-weight: normal; font-style: normal; font-display: swap; }\n",
 					esc_attr( $font['family'] ),
-					$font_url,
+					esc_url( $font_url ),
 					esc_attr( $font['format'] )
 				);
 
@@ -280,7 +279,7 @@ class FontRegistry {
 							$css .= sprintf(
 								"@font-face { font-family: '%s'; src: url('%s') format('%s'); font-weight: normal; font-style: normal; font-display: swap; }\n",
 								esc_attr( $alias ),
-								$font_url,
+								esc_url( $font_url ),
 								esc_attr( $font['format'] )
 							);
 						}

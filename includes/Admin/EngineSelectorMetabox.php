@@ -129,79 +129,16 @@ class EngineSelectorMetabox {
 					<?php VisualPlacementStage::render_stage( $config, $thumb_url ); ?>
 				</div>
 
-				<!-- TAB 2: Text Lines -->
+				<!-- TAB 2: Text Lines Info Panel (Redirects to Visual Placement Stage to eliminate duplicate input name clobbering) -->
 				<div id="tab-texts" class="mr-tee-tab-pane">
-					<h4><?php esc_html_e( 'Lignes de Texte Primaires ("Super" + "Prénom")', 'mr-tee-editor' ); ?></h4>
-					<p class="description"><?php esc_html_e( 'Configurez les champs texte principaux, leurs polices par défaut, et les liaisons COLOR_SET.', 'mr-tee-editor' ); ?></p>
-					<div class="mr-tee-text-lines-grid">
-						<?php foreach ( $config['text_lines'] as $idx => $line ) : ?>
-							<div class="mr-tee-line-card" data-line-index="<?php echo esc_attr( $idx ); ?>">
-								<h5><?php echo esc_html( $line['label'] ); ?></h5>
-								<table class="form-table">
-									<tr>
-										<th><label><?php esc_html_e( 'Libellé', 'mr-tee-editor' ); ?></label></th>
-										<td><input type="text" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][label]" value="<?php echo esc_attr( $line['label'] ); ?>" class="regular-text" /></td>
-									</tr>
-									<tr>
-										<th><label><?php esc_html_e( 'Texte par défaut', 'mr-tee-editor' ); ?></label></th>
-										<td>
-											<?php if ( ! empty( $line['multiline'] ) ) : ?>
-												<textarea name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][default_text]" rows="3" class="large-text"><?php echo esc_textarea( $line['default_text'] ); ?></textarea>
-											<?php else : ?>
-												<input type="text" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][default_text]" value="<?php echo esc_attr( $line['default_text'] ); ?>" class="regular-text" />
-											<?php endif; ?>
-										</td>
-									</tr>
-									<tr>
-										<th><label><?php esc_html_e( 'Police', 'mr-tee-editor' ); ?></label></th>
-										<td>
-											<select name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][font]">
-												<?php foreach ( $fonts as $f_id => $f_data ) : ?>
-													<option value="<?php echo esc_attr( $f_id ); ?>" <?php selected( $line['font'], $f_id ); ?>>
-														<?php echo esc_html( $f_data['name'] ); ?>
-													</option>
-												<?php endforeach; ?>
-											</select>
-										</td>
-									</tr>
-									<tr>
-										<th><label><?php esc_html_e( 'Choix de Police Client', 'mr-tee-editor' ); ?></label></th>
-										<td>
-											<label>
-												<input type="checkbox" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][allow_font_pick]" value="1" <?php checked( ! empty( $line['allow_font_pick'] ) ); ?> />
-												<?php esc_html_e( 'Afficher les pastilles de sélection de police sur la fiche produit', 'mr-tee-editor' ); ?>
-											</label>
-										</td>
-									</tr>
-									<tr>
-										<th><label><?php esc_html_e( 'Mode Couleur', 'mr-tee-editor' ); ?></label></th>
-										<td>
-											<select name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][color_mode]">
-												<option value="multi" <?php selected( $line['color_mode'], 'multi' ); ?>><?php esc_html_e( 'Multicolore (COLOR_SET cyclique par lettre)', 'mr-tee-editor' ); ?></option>
-												<option value="solid" <?php selected( $line['color_mode'], 'solid' ); ?>><?php esc_html_e( 'Couleur Unie', 'mr-tee-editor' ); ?></option>
-											</select>
-										</td>
-									</tr>
-									<tr>
-										<th><label><?php esc_html_e( 'Position Y (%)', 'mr-tee-editor' ); ?></label></th>
-										<td><input type="number" step="0.1" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][y_pct]" value="<?php echo esc_attr( $line['y_pct'] ); ?>" class="small-text" /> %</td>
-									</tr>
-									<tr>
-										<th><label><?php esc_html_e( 'Taille Police (%)', 'mr-tee-editor' ); ?></label></th>
-										<td><input type="number" step="0.1" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][font_size]" value="<?php echo esc_attr( $line['font_size'] ); ?>" class="small-text" /> %</td>
-									</tr>
-									<tr>
-										<th><label><?php esc_html_e( 'Avertissement non-édité', 'mr-tee-editor' ); ?></label></th>
-										<td>
-											<label>
-												<input type="checkbox" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][warning_unedited]" value="1" <?php checked( ! empty( $line['warning_unedited'] ) ); ?> />
-												<?php esc_html_e( 'Alerter le client si ce champ reste non personnalisé (IGNORE_PERSO_WARNINGS_LABEL)', 'mr-tee-editor' ); ?>
-											</label>
-										</td>
-									</tr>
-								</table>
-							</div>
-						<?php endforeach; ?>
+					<div style="background:#f8fafc; border:1px solid #cbd5e1; border-radius:8px; padding:20px; text-align:center;">
+						<h4 style="margin-top:0;"><?php esc_html_e( 'Gestion Unifiée des Lignes de Texte & Polices', 'mr-tee-editor' ); ?></h4>
+						<p class="description" style="max-width:600px; margin:0 auto 15px;">
+							<?php esc_html_e( 'Les textes, polices par défaut, couleurs, dimensions de cadrans et orientations à angles multiples sont tous configurés interactivement dans l\'onglet principal "Zone d\'Impression & Placement Perso".', 'mr-tee-editor' ); ?>
+						</p>
+						<button type="button" class="button button-primary" onclick="jQuery('.mr-tee-tab-btn[data-tab=\'tab-stage\']').trigger('click');">
+							<?php esc_html_e( '→ Ouvrir le Placement Visuel & Polices', 'mr-tee-editor' ); ?>
+						</button>
 					</div>
 				</div>
 

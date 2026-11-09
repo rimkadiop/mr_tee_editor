@@ -33,6 +33,18 @@ export class SceneGraphEngine {
 					node.value = (ref.value !== undefined) ? ref.value : node.value;
 					if (ref.fontFamily) node.fontFamily = ref.fontFamily;
 					if (ref.fontId) node.fontId = ref.fontId;
+					if (ref.letterSpacing !== undefined) node.letterSpacing = ref.letterSpacing;
+					if (ref.casing !== undefined) node.casing = ref.casing;
+					if (ref.multiColor !== undefined) node.multiColor = ref.multiColor;
+					if (ref.strokeWidth !== undefined) {
+						node.stroke = node.stroke || {};
+						node.stroke.width = ref.strokeWidth;
+						node.strokeWidth = ref.strokeWidth;
+					}
+					if (ref.strokeColor !== undefined) {
+						node.stroke = node.stroke || {};
+						node.stroke.color = ref.strokeColor;
+					}
 					if (ref.colorRefId && refMap.has(ref.colorRefId)) {
 						node.colorReference = ref.colorRefId;
 					}
@@ -49,6 +61,15 @@ export class SceneGraphEngine {
 				node.colorSet = cRef;
 				if (cRef.colorHex) {
 					node.fill = cRef.colorHex;
+				}
+				if (cRef.strokeHex !== undefined) {
+					node.stroke = node.stroke || {};
+					node.stroke.color = cRef.strokeHex;
+				}
+				if (cRef.strokeWidth !== undefined) {
+					node.stroke = node.stroke || {};
+					node.stroke.width = cRef.strokeWidth;
+					node.strokeWidth = cRef.strokeWidth;
 				}
 			}
 

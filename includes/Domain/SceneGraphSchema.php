@@ -479,7 +479,7 @@ class SceneGraphSchema {
 					'box_height'       => 10.0,
 					'max_chars'        => 30,
 					'font'             => 'bebas',
-					'allowed_fonts'    => array( 'bebas', 'super_mario', 'press_start', 'bungee', 'pacifico' ),
+					'allowed_fonts'    => array_keys( FontRegistry::get_fonts() ),
 					'allow_font_pick'  => true,
 					'allow_color_pick' => true,
 					'color_mode'       => 'solid',
@@ -487,6 +487,14 @@ class SceneGraphSchema {
 				);
 
 				$merged = wp_parse_args( $line_data, $def_line );
+
+				// Ensure allowed_fonts contains all available fonts if empty, and always includes active font
+				if ( empty( $merged['allowed_fonts'] ) || ! is_array( $merged['allowed_fonts'] ) ) {
+					$merged['allowed_fonts'] = array_keys( FontRegistry::get_fonts() );
+				}
+				if ( ! empty( $merged['font'] ) && ! in_array( $merged['font'], $merged['allowed_fonts'], true ) ) {
+					array_unshift( $merged['allowed_fonts'], $merged['font'] );
+				}
 
 				// Ensure per-line box coordinates exist
 				if ( ! isset( $merged['box_width'] ) || ! isset( $merged['box_height'] ) || ! isset( $merged['box_left'] ) || ! isset( $merged['box_top'] ) ) {
@@ -939,8 +947,8 @@ class SceneGraphSchema {
 			$line_num     = $idx + 1;
 			$text_ref_id  = ! empty( $line['ref_id'] ) ? $line['ref_id'] : 'id-ref-text-line-' . $line_num;
 			$color_ref_id = ! empty( $line['color_ref_id'] ) ? $line['color_ref_id'] : 'id-ref-color-line-' . $line_num;
-			$font_id      = isset( $line['font'] ) ? $line['font'] : 'super_mario';
-			$font_def     = isset( $fonts[ $font_id ] ) ? $fonts[ $font_id ] : $fonts['super_mario'];
+			$font_id      = isset( $line['font'] ) ? $line['font'] : array_key_first( $fonts );
+			$font_def     = isset( $fonts[ $font_id ] ) ? $fonts[ $font_id ] : FontRegistry::get_font( $font_id );
 			$color_mode   = isset( $line['color_mode'] ) ? $line['color_mode'] : 'multi';
 
 			$references[] = array(
@@ -956,6 +964,11 @@ class SceneGraphSchema {
 				'validCharacters'  => "^[a-zA-Z0-9À-ÿ\\s'&.!\\-\n]*$",
 				'fontId'           => $font_id,
 				'fontFamily'       => $font_def['family'],
+				'letterSpacing'    => isset( $font_def['letter_spacing'] ) ? floatval( $font_def['letter_spacing'] ) : 0.05,
+				'strokeWidth'      => isset( $font_def['stroke_width'] ) ? floatval( $font_def['stroke_width'] ) : 0.0,
+				'strokeColor'      => isset( $font_def['stroke'] ) ? $font_def['stroke'] : 'transparent',
+				'casing'           => ! empty( $font_def['uppercase'] ) ? 'UPPER' : 'ORIGINAL',
+				'multiColor'       => ! empty( $font_def['multi_color'] ),
 				'allowFontPick'    => ! empty( $line['allow_font_pick'] ),
 				'allowColorPick'   => ! empty( $line['allow_color_pick'] ),
 				'colorRefId'       => $color_ref_id,
@@ -973,10 +986,10 @@ class SceneGraphSchema {
 					'editable'     => ! empty( $line['allow_color_pick'] ),
 					'colorMode'    => $color_mode,
 					'colorHex'     => isset( $line['color_hex'] ) ? $line['color_hex'] : '#ffffff',
-					'strokeHex'    => isset( $line['stroke_hex'] ) ? $line['stroke_hex'] : '#000000',
+					'strokeHex'    => isset( $line['stroke_hex'] ) ? $line['stroke_hex'] : ( isset( $font_def['stroke'] ) ? $font_def['stroke'] : '#000000' ),
 					'palette'      => $font_def['palette'],
 					'outsideOnly'  => true,
-					'strokeWidth'  => $font_def['stroke_width'],
+					'strokeWidth'  => isset( $font_def['stroke_width'] ) ? floatval( $font_def['stroke_width'] ) : 0.0,
 					'variationType'=> 'LETTER',
 				);
 				$created_color_refs[] = $color_ref_id;
@@ -996,6 +1009,8 @@ class SceneGraphSchema {
 				'name'               => $line['label'],
 				'reference'          => $text_ref_id,
 				'colorReference'     => $color_ref_id,
+				'fontId'             => $font_id,
+				'fontFamily'         => $font_def['family'],
 				'x'                  => $center_x,
 				'y'                  => $center_y,
 				'box_left'           => $box_l,
@@ -1012,11 +1027,13 @@ class SceneGraphSchema {
 				'multiLine'          => ! empty( $line['multiline'] ),
 				'lineHeight'         => isset( $line['line_height'] ) ? floatval( $line['line_height'] ) : 0.95,
 				'casing'             => isset( $line['casing'] ) ? $line['casing'] : ( ! empty( $font_def['uppercase'] ) ? 'UPPER' : 'ORIGINAL' ),
-				'letterSpacing'      => isset( $font_def['letter_spacing'] ) ? floatval( $font_def['letter_spacing'] ) : 0.1,
+				'letterSpacing'      => isset( $font_def['letter_spacing'] ) ? floatval( $font_def['letter_spacing'] ) : 0.05,
 				'stroke'             => array(
 					'width'       => floatval( $font_def['stroke_width'] ),
 					'outsideOnly' => true,
+					'color'       => isset( $font_def['stroke'] ) ? $font_def['stroke'] : 'transparent',
 				),
+				'multiColor'         => ! empty( $font_def['multi_color'] ),
 			);
 
 			if ( ! empty( $line['is_masked'] ) ) {

@@ -667,30 +667,17 @@
 			if (!$holder.length) return;
 
 			const textVal = $(`input[name="mr_tee_config[text_lines][${idx}][default_text]"]`).val() || `Texte ${idx + 1}`;
-			const fontId = $(`select[name="mr_tee_config[text_lines][${idx}][font]"]`).val() || 'super_mario';
 
-			let fontFamily = `'Super Mario Wii', 'SuperMario256', Arial Black, sans-serif`;
-			let strokeColor = '#000000';
-			let strokeWidth = '0.7';
+			const fonts = (window.mrTeeAdminData && window.mrTeeAdminData.fonts) || {};
+			const firstKey = Object.keys(fonts)[0] || 'super_mario';
+			const fontId = $(`select[name="mr_tee_config[text_lines][${idx}][font]"]`).val() || firstKey;
+			const fontDef = fonts[fontId] || fonts[firstKey] || null;
 
-			if (fontId.includes('press_start')) {
-				fontFamily = `'Press Start 2P', monospace`;
-				strokeWidth = '0.4';
-			} else if (fontId.includes('bungee')) {
-				fontFamily = `'Bungee', sans-serif`;
-			} else if (fontId.includes('bebas')) {
-				fontFamily = `'Bebas Neue', Arial Black, sans-serif`;
-				strokeColor = 'transparent';
-			} else if (fontId.includes('pacifico')) {
-				fontFamily = `'Pacifico', cursive`;
-				strokeColor = 'transparent';
-			} else if (fontId.includes('abril')) {
-				fontFamily = `'Abril Fatface', Georgia, serif`;
-				strokeColor = 'transparent';
-			} else if (fontId.includes('cinzel')) {
-				fontFamily = `'Cinzel Decorative', serif`;
-				strokeColor = 'transparent';
-			}
+			let fontFamily = fontDef ? `'${fontDef.family}', sans-serif` : 'sans-serif';
+			let strokeColor = (fontDef && fontDef.stroke && fontDef.stroke_width > 0) ? fontDef.stroke : 'transparent';
+			let strokeWidth = (fontDef && fontDef.stroke_width !== undefined) ? fontDef.stroke_width : '0';
+			let letterSpacing = (fontDef && fontDef.letter_spacing !== undefined) ? `${fontDef.letter_spacing}em` : '0.05em';
+			let textTransform = (fontDef && fontDef.uppercase) ? 'uppercase' : 'none';
 
 			// Render pure text scaled to fit inside this box
 			const svg = `
@@ -700,6 +687,7 @@
 						y="50"
 						font-family="${fontFamily}"
 						font-size="70"
+						letter-spacing="${letterSpacing}"
 						text-anchor="middle"
 						dominant-baseline="central"
 						fill="#ffffff"
@@ -707,7 +695,7 @@
 						stroke-width="${strokeWidth}"
 						textLength="92"
 						lengthAdjust="spacingAndGlyphs"
-						style="paint-order: stroke fill;"
+						style="paint-order: stroke fill; text-transform: ${textTransform};"
 					>${this.escapeXml(textVal)}</text>
 				</svg>
 			`;

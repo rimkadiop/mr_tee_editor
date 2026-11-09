@@ -111,12 +111,24 @@ final class Plugin {
 			return;
 		}
 
+		// Google Fonts for Admin Preview
+		wp_enqueue_style(
+			'mr-tee-google-fonts',
+			'https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Bebas+Neue&family=Bungee&family=Cinzel+Decorative:wght@700&family=Luckiest+Guy&family=Pacifico&family=Permanent+Marker&family=Press+Start+2P&display=swap',
+			array(),
+			MR_TEE_EDITOR_VERSION
+		);
+
 		wp_enqueue_style(
 			'mr-tee-admin-style',
 			MR_TEE_EDITOR_URL . 'assets/css/mr-tee-admin.css',
 			array(),
 			MR_TEE_EDITOR_VERSION
 		);
+
+		// Dynamic @font-face CSS for bundled fonts
+		$font_face_css = \MrTeeEditor\Registry\FontRegistry::get_font_face_css();
+		wp_add_inline_style( 'mr-tee-admin-style', $font_face_css );
 
 		wp_enqueue_script(
 			'mr-tee-admin-js',
@@ -133,6 +145,7 @@ final class Plugin {
 			array(
 				'productId' => $post->ID,
 				'config'    => $config,
+				'fonts'     => \MrTeeEditor\Registry\FontRegistry::get_fonts(),
 				'pluginUrl' => MR_TEE_EDITOR_URL,
 			)
 		);

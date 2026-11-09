@@ -7,7 +7,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.3.1';
+import { SvgRenderer } from './svg-renderer.js?v=2.3.3';
 
 export class PrintExporter {
 	/**

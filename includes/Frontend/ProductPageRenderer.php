@@ -113,7 +113,7 @@ class ProductPageRenderer {
 		// Google Fonts
 		wp_enqueue_style(
 			'mr-tee-google-fonts',
-			'https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Bebas+Neue&family=Cinzel+Decorative:wght@700&family=Pacifico&family=Permanent+Marker&family=Press+Start+2P&display=swap',
+			'https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Bebas+Neue&family=Bungee&family=Cinzel+Decorative:wght@700&family=Luckiest+Guy&family=Pacifico&family=Permanent+Marker&family=Press+Start+2P&display=swap',
 			array(),
 			MR_TEE_EDITOR_VERSION
 		);
@@ -221,7 +221,7 @@ class ProductPageRenderer {
 					<?php foreach ( $config['text_lines'] as $idx => $line ) : ?>
 						<?php
 						$field_id = 'mr_tee_line_' . $idx;
-						$cur_font = isset( $fonts[ $line['font'] ] ) ? $fonts[ $line['font'] ] : $fonts['super_mario'];
+						$cur_font = isset( $fonts[ $line['font'] ] ) ? $fonts[ $line['font'] ] : FontRegistry::get_font( $line['font'] );
 						?>
 						<div class="mr-tee-field-group" data-line-index="<?php echo esc_attr( $idx ); ?>" data-line-id="<?php echo esc_attr( $line['id'] ); ?>">
 							<div class="mr-tee-input-row">
@@ -290,6 +290,9 @@ class ProductPageRenderer {
 								$allowed_font_ids = ( ! empty( $line['allowed_fonts'] ) && is_array( $line['allowed_fonts'] ) )
 									? $line['allowed_fonts']
 									: array_keys( $fonts );
+								if ( ! empty( $line['font'] ) && ! in_array( $line['font'], $allowed_font_ids, true ) && isset( $fonts[ $line['font'] ] ) ) {
+									array_unshift( $allowed_font_ids, $line['font'] );
+								}
 								?>
 								<div class="mr-tee-font-selector-row">
 									<div class="mr-tee-font-pills" data-line-index="<?php echo esc_attr( $idx ); ?>">

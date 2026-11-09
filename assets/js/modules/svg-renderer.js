@@ -184,15 +184,27 @@ export class SvgRenderer {
 		const x = boxL + (boxW / 2);
 		const y = (hasPerLine && ratio !== 1.0) ? ((boxT + (boxH / 2)) / ratio) : (boxT + (boxH / 2));
 
-		const rawFont = node.fontFamily || 'Super Mario Wii';
-		const fontFamily = (rawFont.includes('sans-serif') || rawFont.includes('serif'))
+		const rawFont = node.fontFamily || (node.fontId ? node.fontId : 'sans-serif');
+		let genericFallback = 'sans-serif';
+		const fLower = String(rawFont).toLowerCase();
+		if (fLower.includes('pacifico') || fLower.includes('cursive') || fLower.includes('script') || fLower.includes('marker')) {
+			genericFallback = 'cursive, sans-serif';
+		} else if (fLower.includes('cinzel') || fLower.includes('abril') || fLower.includes('serif')) {
+			genericFallback = 'Georgia, serif';
+		} else if (fLower.includes('press start') || fLower.includes('monospace') || fLower.includes('arcade')) {
+			genericFallback = 'monospace';
+		} else if (fLower.includes('bebas') || fLower.includes('bungee') || fLower.includes('luckiest') || fLower.includes('cocogoose')) {
+			genericFallback = 'Impact, sans-serif';
+		}
+
+		const fontFamily = (rawFont.includes(',') || rawFont.includes('sans-serif') || rawFont.includes('serif') || rawFont.includes('cursive') || rawFont.includes('monospace'))
 			? rawFont
-			: `'${rawFont}', 'Super Mario Wii', 'SuperMario256', Arial Black, Impact, -apple-system, sans-serif`;
+			: `'${rawFont}', ${genericFallback}`;
 
 		const metrics = this.getFontMetrics(rawFont);
 		const letterSpacingEm = node.letterSpacing !== undefined ? parseFloat(node.letterSpacing) : metrics.letterSpacingEm;
 		const letterSpacing = `${letterSpacingEm}em`;
-		const casing = node.casing || (node.uppercase === false ? 'ORIGINAL' : 'UPPER');
+		const casing = node.casing || (node.uppercase === true ? 'UPPER' : 'ORIGINAL');
 		const displayText = (casing === 'UPPER') ? val.toUpperCase() : val;
 		const lineHeight = parseFloat(node.lineHeight) || 0.95;
 
@@ -246,9 +258,25 @@ export class SvgRenderer {
 			: '';
 
 		// Stroke styling (scaled proportionally to font size)
-		const baseStrokeWidth = (node.stroke && node.stroke.width) ? parseFloat(node.stroke.width) : (node.strokeWidth !== undefined ? parseFloat(node.strokeWidth) : 0.72);
+		let baseStrokeWidth = 0;
+		if (node.stroke && node.stroke.width !== undefined) {
+			baseStrokeWidth = parseFloat(node.stroke.width);
+		} else if (node.strokeWidth !== undefined) {
+			baseStrokeWidth = parseFloat(node.strokeWidth);
+		} else if (node.colorSet && node.colorSet.strokeWidth !== undefined) {
+			baseStrokeWidth = parseFloat(node.colorSet.strokeWidth);
+		} else {
+			baseStrokeWidth = 0;
+		}
+
 		const strokeWidth = (baseStrokeWidth * autoFitScale).toFixed(3);
-		const strokeColor = (node.colorSet && node.colorSet.strokeHex) ? node.colorSet.strokeHex : (node.stroke && node.stroke.color ? node.stroke.color : '#000000');
+		let strokeColor = (node.stroke && node.stroke.color)
+			? node.stroke.color
+			: ((node.colorSet && node.colorSet.strokeHex) ? node.colorSet.strokeHex : 'transparent');
+
+		if (baseStrokeWidth <= 0 || parseFloat(strokeWidth) <= 0) {
+			strokeColor = 'transparent';
+		}
 		const paintOrder = 'paint-order: stroke fill; stroke-linejoin: round; stroke-linecap: round;';
 
 		// Color set handling (multi-color vs solid)

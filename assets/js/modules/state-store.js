@@ -137,16 +137,24 @@ export class StateStore {
 
 		if (fontDef) {
 			ref.fontFamily = fontDef.family;
-			if (fontDef.palette && ref.colorRefId) {
-				const colorRef = this.getReference(ref.colorRefId);
-				if (colorRef && colorRef.colorMode === 'multi') {
-					colorRef.palette = fontDef.palette;
-				}
-			}
-			if (fontDef.stroke !== undefined && ref.colorRefId) {
+			ref.letterSpacing = (fontDef.letter_spacing !== undefined) ? parseFloat(fontDef.letter_spacing) : 0.05;
+			ref.strokeWidth = (fontDef.stroke_width !== undefined) ? parseFloat(fontDef.stroke_width) : 0;
+			ref.strokeColor = fontDef.stroke || 'transparent';
+			ref.casing = fontDef.uppercase ? 'UPPER' : 'ORIGINAL';
+			ref.multiColor = Boolean(fontDef.multi_color);
+
+			if (ref.colorRefId) {
 				const colorRef = this.getReference(ref.colorRefId);
 				if (colorRef) {
-					colorRef.strokeHex = fontDef.stroke;
+					if (fontDef.palette && colorRef.colorMode === 'multi') {
+						colorRef.palette = fontDef.palette;
+					}
+					if (fontDef.stroke !== undefined) {
+						colorRef.strokeHex = fontDef.stroke;
+					}
+					if (fontDef.stroke_width !== undefined) {
+						colorRef.strokeWidth = parseFloat(fontDef.stroke_width);
+					}
 				}
 			}
 		}

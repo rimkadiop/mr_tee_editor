@@ -45,6 +45,24 @@ export class SvgRenderer {
 			</filter>
 		`;
 
+		// Append OpenType-SVG font defs (gradients, masks, filters) if present
+		if (Array.isArray(layers)) {
+			const appendFontDefs = (nodes) => {
+				for (const n of nodes) {
+					if (!n) continue;
+					const fKey = n.fontId || n.fontFamily;
+					if (fKey) {
+						const sData = this.getSvgFontData(fKey, options);
+						if (sData && sData.defs && !defs.includes(sData.defs)) {
+							defs += `\n<!-- Font Defs for ${sData.id} -->\n${sData.defs}\n`;
+						}
+					}
+					if (Array.isArray(n.items)) appendFontDefs(n.items);
+				}
+			};
+			appendFontDefs(layers);
+		}
+
 		const hasPerLineBoxes = Boolean(options.hasPerLineBoxes) || (Array.isArray(layers) && layers.some(n => n.box_top !== undefined || (Array.isArray(n.items) && n.items.some(c => c.box_top !== undefined))));
 		const ratio = (options.aspectRatio && parseFloat(options.aspectRatio) > 0)
 			? parseFloat(options.aspectRatio)
@@ -185,6 +203,13 @@ export class SvgRenderer {
 		const y = (hasPerLine && ratio !== 1.0) ? ((boxT + (boxH / 2)) / ratio) : (boxT + (boxH / 2));
 
 		const rawFont = node.fontFamily || (node.fontId ? node.fontId : 'sans-serif');
+		const svgFontData = this.getSvgFontData(node.fontId || rawFont, options);
+		if (svgFontData && svgFontData.type === 'opentype_svg') {
+			return this.renderOpenTypeSvgTextNode(node, svgFontData, {
+				boxL, boxT, boxW, boxH, x, y, hasBox, hasPerLine, ratio, val
+			}, options);
+		}
+
 		let genericFallback = 'sans-serif';
 		const fLower = String(rawFont).toLowerCase();
 		if (fLower.includes('pacifico') || fLower.includes('cursive') || fLower.includes('script') || fLower.includes('marker')) {
@@ -468,5 +493,228 @@ export class SvgRenderer {
 			.replace(/>/g, '&gt;')
 			.replace(/"/g, '&quot;')
 			.replace(/'/g, '&apos;');
+	}
+
+	/**
+	 * Retrieve parsed OpenType-SVG font dataset.
+	 *
+	 * @param {string} fontKey Font identifier or family name.
+	 * @param {Object} options Rendering options.
+	 * @return {Object|null}
+	 */
+	static getSvgFontData(fontKey, options = {}) {
+		if (!fontKey) return null;
+		const cleanKey = String(fontKey).toLowerCase().replace(/[\s\-]+/g, '_');
+
+		if (options.svgFonts && options.svgFonts[cleanKey]) {
+			return options.svgFonts[cleanKey];
+		}
+		if (typeof window !== 'undefined') {
+			window.mrTeeSvgFonts = window.mrTeeSvgFonts || {};
+			if (window.mrTeeSvgFonts[cleanKey]) {
+				return window.mrTeeSvgFonts[cleanKey];
+			}
+			if (window.mrTeeSvgFonts[fontKey]) {
+				return window.mrTeeSvgFonts[fontKey];
+			}
+
+			// Preloaded fonts in mrTeeProductData or mrTeeAdminData
+			const preloaded = (window.mrTeeProductData && window.mrTeeProductData.svgFonts)
+				|| (window.mrTeeAdminData && window.mrTeeAdminData.svgFonts)
+				|| {};
+			if (preloaded[cleanKey]) {
+				window.mrTeeSvgFonts[cleanKey] = preloaded[cleanKey];
+				return preloaded[cleanKey];
+			}
+			if (preloaded[fontKey]) {
+				window.mrTeeSvgFonts[fontKey] = preloaded[fontKey];
+				return preloaded[fontKey];
+			}
+
+			// Check registry definitions for aliases
+			const fonts = (window.mrTeeProductData && window.mrTeeProductData.fonts)
+				|| (window.mrTeeAdminData && window.mrTeeAdminData.fonts)
+				|| {};
+			for (const [id, def] of Object.entries(fonts)) {
+				if (id === fontKey || id === cleanKey || (def.family && def.family.toLowerCase() === String(fontKey).toLowerCase())) {
+					if (window.mrTeeSvgFonts[id]) return window.mrTeeSvgFonts[id];
+					if (preloaded[id]) {
+						window.mrTeeSvgFonts[id] = preloaded[id];
+						return preloaded[id];
+					}
+				}
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Asynchronously ensure an OpenType-SVG font is loaded into client memory.
+	 *
+	 * @param {string} fontId Font key.
+	 * @param {Object} fontDef Font definition.
+	 * @return {Promise<Object|null>}
+	 */
+	static async ensureSvgFontLoaded(fontId, fontDef = null) {
+		if (typeof window === 'undefined') return null;
+		window.mrTeeSvgFonts = window.mrTeeSvgFonts || {};
+
+		const cleanKey = String(fontId).toLowerCase().replace(/[\s\-]+/g, '_');
+		if (window.mrTeeSvgFonts[cleanKey]) {
+			return window.mrTeeSvgFonts[cleanKey];
+		}
+
+		const existing = this.getSvgFontData(fontId);
+		if (existing) {
+			window.mrTeeSvgFonts[cleanKey] = existing;
+			return existing;
+		}
+
+		const fonts = (window.mrTeeProductData && window.mrTeeProductData.fonts)
+			|| (window.mrTeeAdminData && window.mrTeeAdminData.fonts)
+			|| {};
+		const def = fontDef || fonts[fontId] || fonts[cleanKey];
+		if (!def) return null;
+
+		const pluginUrl = (window.mrTeeProductData && window.mrTeeProductData.pluginUrl)
+			|| (window.mrTeeAdminData && window.mrTeeAdminData.pluginUrl)
+			|| '';
+		const dataUrl = def.data_url || `${pluginUrl}assets/fonts/cache/${cleanKey}.json`;
+
+		try {
+			const resp = await fetch(dataUrl);
+			if (resp.ok) {
+				const data = await resp.json();
+				window.mrTeeSvgFonts[cleanKey] = data;
+				window.mrTeeSvgFonts[fontId] = data;
+				return data;
+			}
+		} catch (err) {
+			console.warn('[MrTee SvgRenderer] Failed to load static SVG font cache, trying AJAX fallback:', err);
+		}
+
+		// AJAX Fallback
+		const ajaxUrl = (window.mrTeeProductData && window.mrTeeProductData.ajaxUrl)
+			|| (window.mrTeeAdminData && window.mrTeeAdminData.ajaxUrl);
+		if (ajaxUrl) {
+			try {
+				const resp = await fetch(`${ajaxUrl}?action=mr_tee_get_svg_font_data&font_id=${encodeURIComponent(cleanKey)}`);
+				if (resp.ok) {
+					const json = await resp.json();
+					if (json.success && json.data) {
+						window.mrTeeSvgFonts[cleanKey] = json.data;
+						window.mrTeeSvgFonts[fontId] = json.data;
+						return json.data;
+					}
+				}
+			} catch (ajaxErr) {
+				console.error('[MrTee SvgRenderer] AJAX SVG font retrieval failed:', ajaxErr);
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Render an OpenType-SVG text node into native color vector SVG elements.
+	 *
+	 * Preserves full vector artwork, multi-color gradient fills, transparent drop shadows,
+	 * horizontal advance metrics, auto-fit boundaries, and rotation.
+	 *
+	 * @param {Object} node TEXT node definition.
+	 * @param {Object} fontData OpenType-SVG font metrics and glyph dataset.
+	 * @param {Object} layout Precalculated box layout properties.
+	 * @param {Object} options Rendering options.
+	 * @return {string} SVG group markup.
+	 */
+	static renderOpenTypeSvgTextNode(node, fontData, layout, options = {}) {
+		const { boxL, boxT, boxW, boxH, x, y, hasBox, hasPerLine, ratio, val } = layout;
+
+		const casing = node.casing || (node.uppercase === true ? 'UPPER' : 'ORIGINAL');
+		const displayText = (casing === 'UPPER') ? val.toUpperCase() : val;
+		const lines = displayText.split('\n');
+		const numLines = Math.max(1, lines.length);
+		const lineHeight = parseFloat(node.lineHeight) || 0.95;
+
+		const unitsPerEm = fontData.unitsPerEm || 1000;
+		const ascent = fontData.ascent || 800;
+		const descent = fontData.descent || -200;
+		const letterSpacingEm = node.letterSpacing !== undefined ? parseFloat(node.letterSpacing) : (fontData.letter_spacing || 0.05);
+		const letterSpacingUnits = letterSpacingEm * unitsPerEm;
+
+		// Base font size derived directly from box height
+		let baseFontSize = parseFloat(node.fontSize);
+		if (isNaN(baseFontSize) || baseFontSize <= 0 || hasBox) {
+			const effectiveBoxH = (hasPerLine && ratio !== 1.0) ? (boxH / ratio) : boxH;
+			const heightTarget = (effectiveBoxH * 0.85) / (1 + (numLines - 1) * lineHeight * 0.8);
+			baseFontSize = (!isNaN(parseFloat(node.fontSize)) && parseFloat(node.fontSize) > 0 && !hasBox)
+				? parseFloat(node.fontSize)
+				: heightTarget;
+		}
+
+		const maxWidth = hasBox ? (boxW * 0.95) : (parseFloat(node.maxWidth) || 84.0);
+		const maxHeight = hasBox ? ((hasPerLine && ratio !== 1.0) ? ((boxH * 0.92) / ratio) : (boxH * 0.92)) : (parseFloat(node.maxHeight) || 80.0);
+
+		let maxLineDesignWidth = 0;
+		const lineMetrics = lines.map(lineText => {
+			let widthUnits = 0;
+			for (let i = 0; i < lineText.length; i++) {
+				const ch = lineText[i];
+				const g = (fontData.glyphs && (fontData.glyphs[ch] || fontData.glyphs[ch.toUpperCase()])) || { adv: fontData.defaultAdv || 500 };
+				widthUnits += (g.adv || 500) + (i < lineText.length - 1 ? letterSpacingUnits : 0);
+			}
+			if (widthUnits > maxLineDesignWidth) maxLineDesignWidth = widthUnits;
+			return { text: lineText, widthUnits };
+		});
+
+		const estimatedRawWidth = (maxLineDesignWidth / unitsPerEm) * baseFontSize;
+		let scaleW = 1.0;
+		if (estimatedRawWidth > maxWidth && maxWidth > 0) {
+			scaleW = maxWidth / estimatedRawWidth;
+		}
+
+		let scaleH = 1.0;
+		const rawTotalHeight = baseFontSize + ((numLines - 1) * baseFontSize * lineHeight);
+		if (rawTotalHeight > maxHeight && maxHeight > 0) {
+			scaleH = maxHeight / rawTotalHeight;
+		}
+
+		const autoFitScale = Math.min(1.0, scaleW, scaleH);
+		const effectiveFontSize = Math.max(2.0, baseFontSize * autoFitScale);
+		const scale = effectiveFontSize / unitsPerEm;
+
+		const totalHeight = effectiveFontSize + (numLines - 1) * effectiveFontSize * lineHeight;
+		const firstLineCenterY = y - (totalHeight / 2) + (effectiveFontSize / 2);
+
+		let glyphsMarkup = '';
+		lineMetrics.forEach((lm, lineIdx) => {
+			const lineW = (lm.widthUnits / unitsPerEm) * effectiveFontSize;
+			const lineCenterY = firstLineCenterY + (lineIdx * effectiveFontSize * lineHeight);
+			// Baseline position relative to center:
+			const baselineY = lineCenterY + (ascent * 0.35 * scale);
+
+			const anchor = node.textAnchor || 'middle';
+			let cursorX = x - (lineW / 2);
+			if (anchor === 'start' || anchor === 'left') {
+				cursorX = boxL + (boxW * 0.025);
+			} else if (anchor === 'end' || anchor === 'right') {
+				cursorX = (boxL + boxW * 0.975) - lineW;
+			}
+
+			for (let i = 0; i < lm.text.length; i++) {
+				const ch = lm.text[i];
+				const g = (fontData.glyphs && (fontData.glyphs[ch] || fontData.glyphs[ch.toUpperCase()])) || { adv: fontData.defaultAdv || 500, svg: '' };
+				if (g.svg) {
+					glyphsMarkup += `<g class="mrtee-ot-glyph" transform="translate(${cursorX.toFixed(3)}, ${baselineY.toFixed(3)}) scale(${scale.toFixed(5)})">${g.svg}</g>\n`;
+				}
+				cursorX += ((g.adv || 500) + letterSpacingUnits) * scale;
+			}
+		});
+
+		const rotateAngle = parseFloat(node.box_rotate !== undefined ? node.box_rotate : (node.rotate !== undefined ? node.rotate : 0)) || 0;
+		const transformAttr = (rotateAngle !== 0) ? ` transform="rotate(${rotateAngle.toFixed(2)}, ${x.toFixed(2)}, ${y.toFixed(2)})"` : '';
+
+		return `<g class="mrtee-opentype-svg-text"${transformAttr}>\n${glyphsMarkup}</g>`;
 	}
 }

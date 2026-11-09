@@ -218,9 +218,233 @@ class FontRegistry {
 				'uppercase'         => true,
 				'category'          => 'serif',
 			),
+			// OpenType-SVG Color Fonts (Vector Multi-Color Artwork)
+			'use_your_imagination_blue' => array(
+				'id'                => 'use_your_imagination_blue',
+				'name'              => 'Use Your Imagination (Bleu Néon)',
+				'family'            => 'Use Your Imagination Blue',
+				'aliases'           => array( 'UseYourImagination-Blue', 'UseYourImaginationb', 'use_your_imagination_blue' ),
+				'file'              => 'UseYourImagination-Blue.ttf',
+				'format'            => 'truetype',
+				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/UseYourImagination-Blue.ttf',
+				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/UseYourImagination-Blue.ttf',
+				'data_url'          => MR_TEE_EDITOR_URL . 'assets/fonts/cache/use_your_imagination_blue.json',
+				'font_type'         => 'opentype_svg',
+				'color_svg'         => true,
+				'category'          => 'color_svg',
+				'letter_spacing'    => 0.05,
+				'uppercase'         => true,
+			),
+			'use_your_imagination_green' => array(
+				'id'                => 'use_your_imagination_green',
+				'name'              => 'Use Your Imagination (Vert Flash)',
+				'family'            => 'Use Your Imagination Green',
+				'aliases'           => array( 'UseYourImagination-Green', 'UseYourImaginationg', 'use_your_imagination_green' ),
+				'file'              => 'UseYourImagination-Green.ttf',
+				'format'            => 'truetype',
+				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/UseYourImagination-Green.ttf',
+				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/UseYourImagination-Green.ttf',
+				'data_url'          => MR_TEE_EDITOR_URL . 'assets/fonts/cache/use_your_imagination_green.json',
+				'font_type'         => 'opentype_svg',
+				'color_svg'         => true,
+				'category'          => 'color_svg',
+				'letter_spacing'    => 0.05,
+				'uppercase'         => true,
+			),
+			'use_your_imagination_red' => array(
+				'id'                => 'use_your_imagination_red',
+				'name'              => 'Use Your Imagination (Or Solaire)',
+				'family'            => 'Use Your Imagination Red',
+				'aliases'           => array( 'UseYourImagination-Red', 'UseYourImaginationr', 'use_your_imagination_red' ),
+				'file'              => 'UseYourImagination-Red.ttf',
+				'format'            => 'truetype',
+				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/UseYourImagination-Red.ttf',
+				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/UseYourImagination-Red.ttf',
+				'data_url'          => MR_TEE_EDITOR_URL . 'assets/fonts/cache/use_your_imagination_red.json',
+				'font_type'         => 'opentype_svg',
+				'color_svg'         => true,
+				'category'          => 'color_svg',
+				'letter_spacing'    => 0.05,
+				'uppercase'         => true,
+			),
+			'palestine_1445' => array(
+				'id'                => 'palestine_1445',
+				'name'              => 'Palestine 1445 (Drapeau SVG)',
+				'family'            => 'Palestine 1445',
+				'aliases'           => array( 'Palestine1445', 'palestine_1445' ),
+				'file'              => 'Palestine1445.ttf',
+				'format'            => 'truetype',
+				'url'               => MR_TEE_EDITOR_URL . 'assets/fonts/Palestine1445.ttf',
+				'path'              => MR_TEE_EDITOR_DIR . 'assets/fonts/Palestine1445.ttf',
+				'data_url'          => MR_TEE_EDITOR_URL . 'assets/fonts/cache/palestine_1445.json',
+				'font_type'         => 'opentype_svg',
+				'color_svg'         => true,
+				'category'          => 'color_svg',
+				'letter_spacing'    => 0.06,
+				'uppercase'         => false,
+			),
 		);
 
+		// Merge persistent custom fonts uploaded by merchant
+		$custom = get_option( 'mr_tee_custom_fonts', array() );
+		if ( ! empty( $custom ) && is_array( $custom ) ) {
+			$fonts = array_merge( $fonts, $custom );
+		}
+
 		return apply_filters( 'mr_tee_registered_fonts', $fonts );
+	}
+
+	/**
+	 * Register WordPress AJAX endpoints for font management.
+	 */
+	public static function register_hooks() {
+		add_action( 'wp_ajax_mr_tee_upload_font', array( __CLASS__, 'ajax_upload_font' ) );
+		add_action( 'wp_ajax_mr_tee_get_svg_font_data', array( __CLASS__, 'ajax_get_svg_font_data' ) );
+		add_action( 'wp_ajax_nopriv_mr_tee_get_svg_font_data', array( __CLASS__, 'ajax_get_svg_font_data' ) );
+	}
+
+	/**
+	 * Handle admin AJAX font upload (.ttf, .otf, .zip).
+	 */
+	public static function ajax_upload_font() {
+		check_ajax_referer( 'mr_tee_admin_nonce', 'nonce' );
+
+		if ( ! current_user_can( 'manage_woocommerce' ) && ! current_user_can( 'edit_products' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Permissions insuffisantes.', 'mr-tee-editor' ) ) );
+		}
+
+		if ( empty( $_FILES['font_file'] ) ) {
+			wp_send_json_error( array( 'message' => __( 'Aucun fichier fourni.', 'mr-tee-editor' ) ) );
+		}
+
+		$file = $_FILES['font_file'];
+		$ext  = strtolower( pathinfo( $file['name'], PATHINFO_EXTENSION ) );
+
+		if ( ! in_array( $ext, array( 'ttf', 'otf', 'zip' ), true ) ) {
+			wp_send_json_error( array( 'message' => __( 'Format non supporté. Veuillez envoyer un fichier .ttf, .otf ou .zip.', 'mr-tee-editor' ) ) );
+		}
+
+		$fonts_dir = MR_TEE_EDITOR_DIR . 'assets/fonts/';
+		if ( ! is_dir( $fonts_dir ) ) {
+			wp_mkdir_p( $fonts_dir );
+		}
+
+		$uploaded_fonts = array();
+
+		if ( 'zip' === $ext ) {
+			if ( ! class_exists( 'ZipArchive' ) ) {
+				wp_send_json_error( array( 'message' => __( 'Extension ZipArchive manquante sur le serveur.', 'mr-tee-editor' ) ) );
+			}
+			$zip = new \ZipArchive();
+			if ( true === $zip->open( $file['tmp_name'] ) ) {
+				for ( $i = 0; $i < $zip->numFiles; $i++ ) {
+					$filename = $zip->getNameIndex( $i );
+					$f_ext    = strtolower( pathinfo( $filename, PATHINFO_EXTENSION ) );
+					if ( in_array( $f_ext, array( 'ttf', 'otf' ), true ) && ! str_contains( $filename, '__MACOSX' ) ) {
+						$target_name = sanitize_file_name( basename( $filename ) );
+						$target_path = $fonts_dir . $target_name;
+						copy( 'zip://' . $file['tmp_name'] . '#' . $filename, $target_path );
+						$uploaded_fonts[] = $target_path;
+					}
+				}
+				$zip->close();
+			}
+		} else {
+			$target_name = sanitize_file_name( $file['name'] );
+			$target_path = $fonts_dir . $target_name;
+			if ( move_uploaded_file( $file['tmp_name'], $target_path ) || copy( $file['tmp_name'], $target_path ) ) {
+				$uploaded_fonts[] = $target_path;
+			}
+		}
+
+		if ( empty( $uploaded_fonts ) ) {
+			wp_send_json_error( array( 'message' => __( 'Aucune police TTF/OTF valide trouvée dans l\'archive.', 'mr-tee-editor' ) ) );
+		}
+
+		$registered_results = array();
+		$custom_fonts       = get_option( 'mr_tee_custom_fonts', array() );
+
+		foreach ( $uploaded_fonts as $font_path ) {
+			$filename_clean = pathinfo( $font_path, PATHINFO_FILENAME );
+			$font_id        = sanitize_key( str_replace( array( '-', ' ' ), '_', $filename_clean ) );
+			$font_name      = ucwords( str_replace( array( '-', '_' ), ' ', $filename_clean ) );
+			$is_ot_svg      = OpenTypeSvgParser::is_opentype_svg( $font_path );
+
+			$font_def = array(
+				'id'             => $font_id,
+				'name'           => $is_ot_svg ? $font_name . ' (OpenType-SVG)' : $font_name,
+				'family'         => $font_name,
+				'aliases'        => array( $font_id, $font_name ),
+				'file'           => basename( $font_path ),
+				'format'         => 'truetype',
+				'url'            => MR_TEE_EDITOR_URL . 'assets/fonts/' . basename( $font_path ),
+				'path'           => $font_path,
+				'font_type'      => $is_ot_svg ? 'opentype_svg' : 'truetype',
+				'color_svg'      => $is_ot_svg,
+				'category'       => $is_ot_svg ? 'color_svg' : 'display',
+				'letter_spacing' => 0.05,
+				'uppercase'      => true,
+			);
+
+			if ( $is_ot_svg ) {
+				$cache_data = OpenTypeSvgParser::get_or_create_cache( $font_path, $font_id, $font_name );
+				$font_def['data_url'] = MR_TEE_EDITOR_URL . 'assets/fonts/cache/' . $font_id . '.json';
+				$font_def['glyph_count'] = ! empty( $cache_data['glyphs'] ) ? count( $cache_data['glyphs'] ) : 0;
+			}
+
+			$custom_fonts[ $font_id ] = $font_def;
+			$registered_results[]     = $font_def;
+		}
+
+		update_option( 'mr_tee_custom_fonts', $custom_fonts );
+
+		wp_send_json_success(
+			array(
+				'message' => sprintf( __( '%d police(s) traitée(s) avec succès !', 'mr-tee-editor' ), count( $registered_results ) ),
+				'fonts'   => $registered_results,
+			)
+		);
+	}
+
+	/**
+	 * AJAX endpoint to return parsed SVG font data by font ID.
+	 */
+	public static function ajax_get_svg_font_data() {
+		$font_id = ! empty( $_GET['font_id'] ) ? sanitize_key( $_GET['font_id'] ) : ( ! empty( $_POST['font_id'] ) ? sanitize_key( $_POST['font_id'] ) : '' );
+		if ( empty( $font_id ) ) {
+			wp_send_json_error( array( 'message' => 'Paramètre font_id manquant.' ) );
+		}
+
+		$data = self::get_svg_font_data( $font_id );
+		if ( ! empty( $data ) ) {
+			wp_send_json_success( $data );
+		} else {
+			wp_send_json_error( array( 'message' => 'Police non trouvée ou non compatible SVG.' ) );
+		}
+	}
+
+	/**
+	 * Get parsed OpenType-SVG glyph and metrics dataset for an OpenType-SVG font.
+	 *
+	 * @param string $font_id Font identifier.
+	 * @return array<string, mixed>|null
+	 */
+	public static function get_svg_font_data( $font_id ) {
+		$font = self::get_font( $font_id );
+		if ( empty( $font ) || empty( $font['path'] ) || ! file_exists( $font['path'] ) ) {
+			return null;
+		}
+
+		if ( ! empty( $font['font_type'] ) && 'opentype_svg' === $font['font_type'] ) {
+			return OpenTypeSvgParser::get_or_create_cache( $font['path'], $font['id'], $font['name'] );
+		}
+
+		// Check dynamically if the font file is an OpenType-SVG font
+		if ( OpenTypeSvgParser::is_opentype_svg( $font['path'] ) ) {
+			return OpenTypeSvgParser::get_or_create_cache( $font['path'], $font['id'], $font['name'] );
+		}
+
+		return null;
 	}
 
 	/**

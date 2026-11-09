@@ -82,6 +82,7 @@ final class Plugin {
 		ProductPageRenderer::init();
 		CartIntegration::init();
 		OrderAdminPanel::init();
+		\MrTeeEditor\Registry\FontRegistry::register_hooks();
 	}
 
 	/**
@@ -139,6 +140,21 @@ final class Plugin {
 		);
 
 		$config = SceneGraphSchema::get_product_config( $post->ID );
+		$proto  = is_ssl() ? 'https' : 'http';
+
+		// Preload active SVG fonts
+		$preloaded_svg_fonts = array();
+		if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
+			foreach ( $config['text_lines'] as $line ) {
+				if ( ! empty( $line['font'] ) ) {
+					$svg_data = \MrTeeEditor\Registry\FontRegistry::get_svg_font_data( $line['font'] );
+					if ( $svg_data ) {
+						$preloaded_svg_fonts[ $line['font'] ] = $svg_data;
+					}
+				}
+			}
+		}
+
 		wp_localize_script(
 			'mr-tee-admin-js',
 			'mrTeeAdminData',
@@ -146,6 +162,9 @@ final class Plugin {
 				'productId' => $post->ID,
 				'config'    => $config,
 				'fonts'     => \MrTeeEditor\Registry\FontRegistry::get_fonts(),
+				'svgFonts'  => $preloaded_svg_fonts,
+				'ajaxUrl'   => admin_url( 'admin-ajax.php', $proto ),
+				'nonce'     => wp_create_nonce( 'mr_tee_admin_nonce' ),
 				'pluginUrl' => MR_TEE_EDITOR_URL,
 			)
 		);

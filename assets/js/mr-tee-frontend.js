@@ -14,8 +14,16 @@ import { GalleryStage } from './modules/gallery-stage.js?v=2.3.3';
 import { FormController } from './modules/form-controller.js?v=2.3.3';
 import { PrintExporter } from './modules/print-exporter.js?v=2.3.3';
 
+window.mrTeePrintExporter = PrintExporter;
+window.mrTeeSvgRenderer = SvgRenderer;
+window.mrTeeSceneGraphEngine = SceneGraphEngine;
+
 class MrTeeFrontendApp {
 	constructor() {
+		window.mrTeePrintExporter = PrintExporter;
+		window.mrTeeSvgRenderer = SvgRenderer;
+		window.mrTeeSceneGraphEngine = SceneGraphEngine;
+
 		this.data = window.mrTeeProductData || {};
 		this.config = this.data.config || {};
 

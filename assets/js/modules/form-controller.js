@@ -11,6 +11,8 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
+import { SvgRenderer } from './svg-renderer.js?v=2.3.4';
+
 export class FormController {
 	constructor(store, config, onExportRequested) {
 		this.store = store;
@@ -82,7 +84,14 @@ export class FormController {
 
 				const refId = lineConfig.ref_id || `id-ref-text-line-${lineIdx + 1}`;
 				lineConfig.font = fontId;
-				this.store.setTextFont(refId, fontId, fontDef);
+
+				if (fontDef && (fontDef.font_type === 'opentype_svg' || fontDef.color_svg)) {
+					SvgRenderer.ensureSvgFontLoaded(fontId, fontDef).then(() => {
+						this.store.setTextFont(refId, fontId, fontDef);
+					});
+				} else {
+					this.store.setTextFont(refId, fontId, fontDef);
+				}
 			});
 		});
 

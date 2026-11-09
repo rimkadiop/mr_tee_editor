@@ -42,6 +42,7 @@
 			this.bindDeleteField();
 			this.bindPresetReset();
 			this.bindDimensionControls();
+			this.bindFontUploader();
 			this.renderAllBoxesPreviews();
 		}
 
@@ -412,6 +413,21 @@
 				const fieldLabel = `Texte ${newIdx + 1}`;
 				const defaultText = `Ligne ${newIdx + 1}`;
 
+				let otSvgOptions = '';
+				let stdOptions = '';
+				const adminFonts = (window.mrTeeAdminData && window.mrTeeAdminData.fonts) || {};
+				for (const [fId, fDef] of Object.entries(adminFonts)) {
+					if (fDef.font_type === 'opentype_svg') {
+						otSvgOptions += `<option value="${fId}">${fDef.name}</option>`;
+					} else {
+						stdOptions += `<option value="${fId}">${fDef.name}</option>`;
+					}
+				}
+				const fontSelectOptions = `
+					<optgroup label="✨ Polices OpenType-SVG (Couleurs & Dégradés)">${otSvgOptions}</optgroup>
+					<optgroup label="🔤 Polices Stylisées Standalone (TTF / Multi-Couleurs)">${stdOptions}</optgroup>
+				`;
+
 				// 1. Add Pill
 				const pillHtml = `
 					<button
@@ -477,17 +493,16 @@
 								<th><label>Police par Défaut</label></th>
 								<td>
 									<select name="mr_tee_config[text_lines][${newIdx}][font]" class="mr-tee-field-font-select" data-field-index="${newIdx}">
-										<option value="super_mario">Super Mario</option>
-										<option value="press_start">Arcade 8-Bit (Press Start 2P)</option>
-										<option value="bungee">Bungee Pop</option>
-										<option value="luckiest_guy">Luckiest Guy Comic</option>
-										<option value="cocogoose">Cocogoose Block</option>
-										<option value="bebas">Bebas Neue Brodé</option>
-										<option value="pacifico">Pacifico Script Cursif</option>
-										<option value="cinzel">Cinzel Décoratif</option>
-										<option value="marker">Permanent Marker</option>
-										<option value="abril">Abril Serif Élégant</option>
+										${fontSelectOptions}
 									</select>
+									<div class="mr-tee-font-upload-quick" style="margin-top:6px;">
+										<label class="button button-small" style="cursor:pointer; display:inline-flex; align-items:center; gap:4px;">
+											<span class="dashicons dashicons-upload" style="font-size:16px; width:16px; height:16px; line-height:16px;"></span>
+											<span>Ajouter une Police OpenType-SVG (.ttf / .zip)</span>
+											<input type="file" class="mr-tee-quick-font-file" accept=".ttf,.otf,.zip" style="display:none;" data-field-index="${newIdx}" />
+										</label>
+										<span class="mr-tee-font-upload-status" style="font-size:11px; margin-left:6px; color:#64748b;"></span>
+									</div>
 								</td>
 							</tr>
 							<tr>
@@ -673,6 +688,64 @@
 			const fontId = $(`select[name="mr_tee_config[text_lines][${idx}][font]"]`).val() || firstKey;
 			const fontDef = fonts[fontId] || fonts[firstKey] || null;
 
+			// Handle OpenType-SVG Vector Color Fonts
+			if (fontDef && (fontDef.font_type === 'opentype_svg' || fontDef.color_svg)) {
+				const svgFonts = (window.mrTeeAdminData && window.mrTeeAdminData.svgFonts) || {};
+				const svgData = svgFonts[fontId];
+
+				if (svgData && svgData.glyphs) {
+					const unitsPerEm = svgData.unitsPerEm || 1000;
+					const ascent = svgData.ascent || 800;
+					const casing = fontDef.uppercase ? 'UPPER' : 'ORIGINAL';
+					const displayVal = (casing === 'UPPER') ? textVal.toUpperCase() : textVal;
+
+					let widthUnits = 0;
+					const letterSpacingUnits = (fontDef.letter_spacing !== undefined ? fontDef.letter_spacing : 0.05) * unitsPerEm;
+					for (let i = 0; i < displayVal.length; i++) {
+						const ch = displayVal[i];
+						const g = (svgData.glyphs && (svgData.glyphs[ch] || svgData.glyphs[ch.toUpperCase()])) || { adv: svgData.defaultAdv || 500 };
+						widthUnits += (g.adv || 500) + (i < displayVal.length - 1 ? letterSpacingUnits : 0);
+					}
+
+					const maxDesignW = 90;
+					const maxDesignH = 75;
+					const rawW = (widthUnits / unitsPerEm) * maxDesignH;
+					const autoScale = rawW > maxDesignW ? (maxDesignW / rawW) : 1.0;
+					const effectiveFontSize = maxDesignH * autoScale;
+					const scale = effectiveFontSize / unitsPerEm;
+					const totalW = (widthUnits / unitsPerEm) * effectiveFontSize;
+					let cursorX = 50 - (totalW / 2);
+					const baselineY = 50 + (ascent * 0.35 * scale);
+
+					let glyphsMarkup = '';
+					for (let i = 0; i < displayVal.length; i++) {
+						const ch = displayVal[i];
+						const g = (svgData.glyphs && (svgData.glyphs[ch] || svgData.glyphs[ch.toUpperCase()])) || { adv: svgData.defaultAdv || 500, svg: '' };
+						if (g.svg) {
+							glyphsMarkup += `<g class="mrtee-ot-glyph" transform="translate(${cursorX.toFixed(3)}, ${baselineY.toFixed(3)}) scale(${scale.toFixed(5)})">${g.svg}</g>\n`;
+						}
+						cursorX += ((g.adv || 500) + letterSpacingUnits) * scale;
+					}
+
+					const defs = svgData.defs ? `<defs>${svgData.defs}</defs>` : '';
+					const svg = `
+						<svg viewBox="0 0 100 100" width="100%" height="100%" preserveAspectRatio="none" style="overflow:visible;">
+							${defs}
+							<g class="mrtee-ot-admin-glyph-group">
+								${glyphsMarkup}
+							</g>
+						</svg>
+					`;
+					$holder.html(svg);
+					return;
+				} else {
+					// Async fetch and re-render
+					this.fetchSvgFontData(fontId, () => {
+						this.renderBoxPreview(idx);
+					});
+				}
+			}
+
 			let fontFamily = fontDef ? `'${fontDef.family}', sans-serif` : 'sans-serif';
 			let strokeColor = (fontDef && fontDef.stroke && fontDef.stroke_width > 0) ? fontDef.stroke : 'transparent';
 			let strokeWidth = (fontDef && fontDef.stroke_width !== undefined) ? fontDef.stroke_width : '0';
@@ -701,6 +774,203 @@
 			`;
 
 			$holder.html(svg);
+		}
+
+		fetchSvgFontData(fontId, callback) {
+			window.mrTeeAdminData = window.mrTeeAdminData || {};
+			window.mrTeeAdminData.svgFonts = window.mrTeeAdminData.svgFonts || {};
+
+			if (window.mrTeeAdminData.svgFonts[fontId]) {
+				if (callback) callback(window.mrTeeAdminData.svgFonts[fontId]);
+				return;
+			}
+
+			const fonts = window.mrTeeAdminData.fonts || {};
+			const def = fonts[fontId] || {};
+			const pluginUrl = window.mrTeeAdminData.pluginUrl || '';
+			const dataUrl = def.data_url || `${pluginUrl}assets/fonts/cache/${fontId}.json`;
+
+			fetch(dataUrl)
+				.then(res => {
+					if (res.ok) return res.json();
+					throw new Error('Static cache not found');
+				})
+				.then(data => {
+					window.mrTeeAdminData.svgFonts[fontId] = data;
+					if (callback) callback(data);
+				})
+				.catch(() => {
+					// AJAX Fallback
+					const ajaxUrl = window.mrTeeAdminData.ajaxUrl;
+					if (!ajaxUrl) return;
+					$.getJSON(`${ajaxUrl}?action=mr_tee_get_svg_font_data&font_id=${encodeURIComponent(fontId)}`, res => {
+						if (res.success && res.data) {
+							window.mrTeeAdminData.svgFonts[fontId] = res.data;
+							if (callback) callback(res.data);
+						}
+					});
+				});
+		}
+
+		bindFontUploader() {
+			const self = this;
+
+			// Tab 2: Choose File button
+			$('#mr_tee_tab2_btn_select').on('click', function(e) {
+				e.preventDefault();
+				$('#mr_tee_tab2_font_input').trigger('click');
+			});
+
+			$('#mr_tee_tab2_font_input').on('change', function() {
+				const file = this.files && this.files[0];
+				if (file) {
+					$('#mr_tee_tab2_file_name').text(file.name);
+					$('#mr_tee_tab2_btn_upload').show();
+					$('#mr_tee_tab2_upload_status').text('').css('color', '#334155');
+				}
+			});
+
+			$('#mr_tee_tab2_btn_upload').on('click', function(e) {
+				e.preventDefault();
+				const file = $('#mr_tee_tab2_font_input')[0].files[0];
+				if (!file) return;
+
+				const $status = $('#mr_tee_tab2_upload_status');
+				$status.text('⏳ Analyse binaire du SFNT et extraction SVG en cours...').css('color', '#2563eb');
+
+				self.uploadFontFile(file, $status, (fonts) => {
+					$('#mr_tee_tab2_file_name').text('');
+					$('#mr_tee_tab2_btn_upload').hide();
+					$('#mr_tee_tab2_font_input').val('');
+				});
+			});
+
+			// Tab 2: Drag & Drop
+			const $dropZone = $('.mr-tee-font-upload-card');
+			if ($dropZone.length) {
+				$dropZone.on('dragover dragenter', function(e) {
+					e.preventDefault();
+					e.stopPropagation();
+					$(this).css('background', '#eff6ff').css('border-color', '#2563eb');
+				});
+				$dropZone.on('dragleave drop', function(e) {
+					e.preventDefault();
+					e.stopPropagation();
+					$(this).css('background', '#f8fafc').css('border-color', '#94a3b8');
+				});
+				$dropZone.on('drop', function(e) {
+					const dt = e.originalEvent.dataTransfer;
+					if (dt && dt.files && dt.files.length) {
+						const file = dt.files[0];
+						$('#mr_tee_tab2_file_name').text(file.name);
+						$('#mr_tee_tab2_btn_upload').show();
+						const $status = $('#mr_tee_tab2_upload_status');
+						$status.text('⏳ Analyse binaire et extraction SVG...').css('color', '#2563eb');
+						self.uploadFontFile(file, $status);
+					}
+				});
+			}
+
+			// Quick Upload on Stage Controls (in each field panel)
+			$(document).on('change', '.mr-tee-quick-font-file', function() {
+				const file = this.files && this.files[0];
+				if (!file) return;
+
+				const idx = $(this).data('field-index');
+				const $panel = $(`#mr-tee-field-panel-${idx}`);
+				const $status = $panel.find('.mr-tee-font-upload-status');
+				$status.text('⏳ Import en cours...').css('color', '#2563eb');
+
+				self.uploadFontFile(file, $status, (fonts) => {
+					if (fonts && fonts.length) {
+						const newest = fonts[0];
+						const $select = $panel.find('.mr-tee-field-font-select');
+						$select.val(newest.id).trigger('change');
+					}
+				});
+			});
+		}
+
+		uploadFontFile(file, $statusElem, onSuccess) {
+			const self = this;
+			const formData = new FormData();
+			formData.append('action', 'mr_tee_upload_font');
+			formData.append('nonce', window.mrTeeAdminData ? window.mrTeeAdminData.nonce : '');
+			formData.append('font_file', file);
+
+			const ajaxUrl = (window.mrTeeAdminData && window.mrTeeAdminData.ajaxUrl) || '/wp-admin/admin-ajax.php';
+
+			$.ajax({
+				url: ajaxUrl,
+				type: 'POST',
+				data: formData,
+				processData: false,
+				contentType: false,
+				success: function(resp) {
+					if (resp.success && resp.data && resp.data.fonts) {
+						const fonts = resp.data.fonts;
+						$statusElem.text(`✅ ${resp.data.message || 'Police importée avec succès !'}`).css('color', '#059669');
+
+						// Register fonts into local admin data
+						window.mrTeeAdminData = window.mrTeeAdminData || {};
+						window.mrTeeAdminData.fonts = window.mrTeeAdminData.fonts || {};
+						fonts.forEach(f => {
+							window.mrTeeAdminData.fonts[f.id] = f;
+						});
+
+						// Update all font selects
+						self.refreshAllFontSelects();
+
+						// Re-render previews
+						self.renderAllBoxesPreviews();
+
+						if (onSuccess) onSuccess(fonts);
+					} else {
+						const errMsg = (resp.data && resp.data.message) ? resp.data.message : 'Erreur lors de l\'importation de la police.';
+						$statusElem.text(`❌ ${errMsg}`).css('color', '#dc2626');
+					}
+				},
+				error: function(xhr, status, error) {
+					$statusElem.text(`❌ Erreur réseau / serveur : ${error}`).css('color', '#dc2626');
+				}
+			});
+		}
+
+		refreshAllFontSelects() {
+			const self = this;
+			$('.mr-tee-field-font-select').each(function() {
+				const currentVal = $(this).val();
+				const html = self.generateFontSelectOptions(currentVal);
+				$(this).html(html);
+				if (currentVal) {
+					$(this).val(currentVal);
+				}
+			});
+		}
+
+		generateFontSelectOptions(selectedId = 'super_mario') {
+			const fonts = (window.mrTeeAdminData && window.mrTeeAdminData.fonts) || {};
+			let svgOptions = '';
+			let stdOptions = '';
+
+			for (const [id, f] of Object.entries(fonts)) {
+				const isSel = (id === selectedId) ? 'selected' : '';
+				const name = this.escapeXml(f.name || id);
+				if (f.font_type === 'opentype_svg' || f.color_svg) {
+					svgOptions += `<option value="${id}" ${isSel}>${name}</option>`;
+				} else {
+					stdOptions += `<option value="${id}" ${isSel}>${name}</option>`;
+				}
+			}
+
+			let html = '';
+			if (svgOptions) {
+				html += `<optgroup label="✨ Polices OpenType-SVG (Couleurs & Dégradés)">${svgOptions}</optgroup>`;
+			}
+			if (stdOptions) {
+				html += `<optgroup label="🔤 Polices Stylisées Standalone (TTF / Multi-Couleurs)">${stdOptions}</optgroup>`;
+			}
+			return html;
 		}
 
 		bindPresetReset() {

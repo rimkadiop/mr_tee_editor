@@ -129,16 +129,62 @@ class EngineSelectorMetabox {
 					<?php VisualPlacementStage::render_stage( $config, $thumb_url ); ?>
 				</div>
 
-				<!-- TAB 2: Text Lines Info Panel (Redirects to Visual Placement Stage to eliminate duplicate input name clobbering) -->
+				<!-- TAB 2: OpenType-SVG Font Library & Text Lines Manager -->
 				<div id="tab-texts" class="mr-tee-tab-pane">
-					<div style="background:#f8fafc; border:1px solid #cbd5e1; border-radius:8px; padding:20px; text-align:center;">
-						<h4 style="margin-top:0;"><?php esc_html_e( 'Gestion Unifiée des Lignes de Texte & Polices', 'mr-tee-editor' ); ?></h4>
-						<p class="description" style="max-width:600px; margin:0 auto 15px;">
-							<?php esc_html_e( 'Les textes, polices par défaut, couleurs, dimensions de cadrans et orientations à angles multiples sont tous configurés interactivement dans l\'onglet principal "Zone d\'Impression & Placement Perso".', 'mr-tee-editor' ); ?>
-						</p>
-						<button type="button" class="button button-primary" onclick="jQuery('.mr-tee-tab-btn[data-tab=\'tab-stage\']').trigger('click');">
-							<?php esc_html_e( '→ Ouvrir le Placement Visuel & Polices', 'mr-tee-editor' ); ?>
-						</button>
+					<div style="background:#ffffff; border:1px solid #cbd5e1; border-radius:10px; padding:20px; margin-bottom:20px;">
+						<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; border-bottom:1px solid #e2e8f0; padding-bottom:12px;">
+							<div>
+								<h3 style="margin:0 0 4px; color:#0f172a; display:flex; align-items:center; gap:8px;">
+									<span>✨</span> <?php esc_html_e( 'Bibliothèque de Polices OpenType-SVG (Vectorielles & Multi-Couleurs)', 'mr-tee-editor' ); ?>
+								</h3>
+								<p class="description" style="margin:0;">
+									<?php esc_html_e( 'Mr. Tee Editor extrait les tables SVG intégrées des polices couleur pour un rendu vectoriel 100% fidèle sur tous les navigateurs (Chrome, Safari, Firefox, Edge, Mobile) et un export 300 DPI sans perte.', 'mr-tee-editor' ); ?>
+								</p>
+							</div>
+							<button type="button" class="button button-primary" onclick="jQuery('.mr-tee-tab-btn[data-tab=\'tab-stage\']').trigger('click');">
+								<?php esc_html_e( '→ Configurer dans le Placement Visuel', 'mr-tee-editor' ); ?>
+							</button>
+						</div>
+
+						<!-- OpenType-SVG Upload Zone -->
+						<div class="mr-tee-font-upload-card" style="background:#f8fafc; border:2px dashed #94a3b8; border-radius:8px; padding:20px; text-align:center; margin-bottom:20px;">
+							<span class="dashicons dashicons-cloud-upload" style="font-size:36px; width:36px; height:36px; color:#3b82f6; margin-bottom:8px;"></span>
+							<h4 style="margin:0 0 6px; font-size:15px; color:#1e293b;"><?php esc_html_e( 'Importer une Nouvelle Police OpenType-SVG', 'mr-tee-editor' ); ?></h4>
+							<p class="description" style="max-width:550px; margin:0 auto 12px; font-size:12px;">
+								<?php esc_html_e( 'Glissez-déposez ou sélectionnez un fichier .ttf, .otf ou une archive .zip (ex : Pizzeria, Partyboy, Brainzoo, Purple Magic, Use Your Imagination). L\'analyseur PHP extrait immédiatement la table SVG et crée la bibliothèque de glyphes.', 'mr-tee-editor' ); ?>
+							</p>
+							<div style="display:inline-flex; align-items:center; gap:10px;">
+								<input type="file" id="mr_tee_tab2_font_input" accept=".ttf,.otf,.zip" style="display:none;" />
+								<button type="button" class="button button-primary" id="mr_tee_tab2_btn_select">
+									📤 <?php esc_html_e( 'Choisir un fichier (.ttf, .otf, .zip)', 'mr-tee-editor' ); ?>
+								</button>
+								<span id="mr_tee_tab2_file_name" style="font-size:12px; font-weight:600; color:#334155;"></span>
+								<button type="button" class="button button-secondary" id="mr_tee_tab2_btn_upload" style="display:none;">
+									⚡ <?php esc_html_e( 'Analyser et Enregistrer', 'mr-tee-editor' ); ?>
+								</button>
+							</div>
+							<div id="mr_tee_tab2_upload_status" style="margin-top:10px; font-size:12px; font-weight:600;"></div>
+						</div>
+
+						<!-- Registered OpenType-SVG Fonts Grid -->
+						<h4 style="margin:0 0 10px; color:#334155; font-size:13px; text-transform:uppercase; letter-spacing:0.05em;">
+							<?php esc_html_e( 'Polices OpenType-SVG Actuellement Enregistrées :', 'mr-tee-editor' ); ?>
+						</h4>
+						<div class="mr-tee-registered-svg-fonts-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap:12px;">
+							<?php foreach ( $fonts as $f_id => $f_data ) : ?>
+								<?php if ( ! empty( $f_data['font_type'] ) && 'opentype_svg' === $f_data['font_type'] ) : ?>
+									<div class="mr-tee-svg-font-card" style="background:#f1f5f9; border:1px solid #e2e8f0; border-radius:6px; padding:10px 14px; display:flex; align-items:center; justify-content:space-between;">
+										<div>
+											<strong style="color:#0f172a; font-size:13px; display:block;"><?php echo esc_html( $f_data['name'] ); ?></strong>
+											<span style="font-size:11px; color:#64748b; font-family:monospace;"><?php echo esc_html( $f_data['file'] ); ?></span>
+										</div>
+										<span style="background:#dbeafe; color:#1d4ed8; font-size:10px; font-weight:700; padding:3px 7px; border-radius:12px; text-transform:uppercase;">
+											SVG COLOR
+										</span>
+									</div>
+								<?php endif; ?>
+							<?php endforeach; ?>
+						</div>
 					</div>
 				</div>
 

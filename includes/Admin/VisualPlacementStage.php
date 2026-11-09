@@ -293,12 +293,33 @@ class VisualPlacementStage {
 												class="mr-tee-field-font-select"
 												data-field-index="<?php echo esc_attr( $idx ); ?>"
 											>
-												<?php foreach ( $fonts as $f_id => $f_data ) : ?>
-													<option value="<?php echo esc_attr( $f_id ); ?>" <?php selected( isset( $line['font'] ) ? $line['font'] : 'super_mario', $f_id ); ?>>
-														<?php echo esc_html( $f_data['name'] ); ?>
-													</option>
-												<?php endforeach; ?>
+												<optgroup label="<?php esc_attr_e( '✨ Polices OpenType-SVG (Couleurs & Dégradés)', 'mr-tee-editor' ); ?>">
+													<?php foreach ( $fonts as $f_id => $f_data ) : ?>
+														<?php if ( ! empty( $f_data['font_type'] ) && 'opentype_svg' === $f_data['font_type'] ) : ?>
+															<option value="<?php echo esc_attr( $f_id ); ?>" <?php selected( isset( $line['font'] ) ? $line['font'] : 'super_mario', $f_id ); ?>>
+																<?php echo esc_html( $f_data['name'] ); ?>
+															</option>
+														<?php endif; ?>
+													<?php endforeach; ?>
+												</optgroup>
+												<optgroup label="<?php esc_attr_e( '🔤 Polices Stylisées Standalone (TTF / Multi-Couleurs)', 'mr-tee-editor' ); ?>">
+													<?php foreach ( $fonts as $f_id => $f_data ) : ?>
+														<?php if ( empty( $f_data['font_type'] ) || 'opentype_svg' !== $f_data['font_type'] ) : ?>
+															<option value="<?php echo esc_attr( $f_id ); ?>" <?php selected( isset( $line['font'] ) ? $line['font'] : 'super_mario', $f_id ); ?>>
+																<?php echo esc_html( $f_data['name'] ); ?>
+															</option>
+														<?php endif; ?>
+													<?php endforeach; ?>
+												</optgroup>
 											</select>
+											<div class="mr-tee-font-upload-quick" style="margin-top:6px;">
+												<label class="button button-small" style="cursor:pointer; display:inline-flex; align-items:center; gap:4px;">
+													<span class="dashicons dashicons-upload" style="font-size:16px; width:16px; height:16px; line-height:16px;"></span>
+													<span><?php esc_html_e( 'Ajouter une Police OpenType-SVG (.ttf / .zip)', 'mr-tee-editor' ); ?></span>
+													<input type="file" class="mr-tee-quick-font-file" accept=".ttf,.otf,.zip" style="display:none;" data-field-index="<?php echo esc_attr( $idx ); ?>" />
+												</label>
+												<span class="mr-tee-font-upload-status" style="font-size:11px; margin-left:6px; color:#64748b;"></span>
+											</div>
 										</td>
 									</tr>
 									<tr>

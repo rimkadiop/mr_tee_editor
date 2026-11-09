@@ -136,6 +136,7 @@ export class StateStore {
 		}
 
 		if (fontDef) {
+			ref.fontType = fontDef.font_type || (fontDef.color_svg ? 'opentype_svg' : 'truetype');
 			ref.fontFamily = fontDef.family;
 			ref.letterSpacing = (fontDef.letter_spacing !== undefined) ? parseFloat(fontDef.letter_spacing) : 0.05;
 			ref.strokeWidth = (fontDef.stroke_width !== undefined) ? parseFloat(fontDef.stroke_width) : 0;

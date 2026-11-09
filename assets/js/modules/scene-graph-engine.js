@@ -33,6 +33,7 @@ export class SceneGraphEngine {
 					node.value = (ref.value !== undefined) ? ref.value : node.value;
 					if (ref.fontFamily) node.fontFamily = ref.fontFamily;
 					if (ref.fontId) node.fontId = ref.fontId;
+					if (ref.fontType) node.fontType = ref.fontType;
 					if (ref.letterSpacing !== undefined) node.letterSpacing = ref.letterSpacing;
 					if (ref.casing !== undefined) node.casing = ref.casing;
 					if (ref.multiColor !== undefined) node.multiColor = ref.multiColor;

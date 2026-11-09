@@ -736,14 +736,18 @@ class SceneGraphSchema {
 		$x_max = 0.0;
 		$y_max = 0.0;
 
+		$real_w    = isset( $config['print_real_width'] ) ? floatval( $config['print_real_width'] ) : 30.0;
+		$real_h    = isset( $config['print_real_height'] ) ? floatval( $config['print_real_height'] ) : 40.0;
+		$ref_ratio = ( $real_w > 0 && $real_h > 0 ) ? ( $real_w / $real_h ) : 1.0;
+
 		foreach ( $boxes as $b ) {
 			$rot = isset( $b['r'] ) ? floatval( $b['r'] ) : 0.0;
 			if ( 0.0 !== $rot ) {
 				$rad    = deg2rad( $rot );
 				$cos    = abs( cos( $rad ) );
 				$sin    = abs( sin( $rad ) );
-				$half_w = ( $b['w'] * $cos + $b['h'] * $sin ) / 2.0;
-				$half_h = ( $b['w'] * $sin + $b['h'] * $cos ) / 2.0;
+				$half_w = ( $b['w'] * $cos + ( $b['h'] / $ref_ratio ) * $sin ) / 2.0;
+				$half_h = ( ( $b['w'] * $ref_ratio ) * $sin + $b['h'] * $cos ) / 2.0;
 				$cx     = $b['l'] + ( $b['w'] / 2.0 );
 				$cy     = $b['t'] + ( $b['h'] / 2.0 );
 

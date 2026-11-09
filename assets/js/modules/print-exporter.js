@@ -48,8 +48,9 @@ export class PrintExporter {
 						const rad = (rot * Math.PI) / 180;
 						const cos = Math.abs(Math.cos(rad));
 						const sin = Math.abs(Math.sin(rad));
-						const halfW = (width * cos + height * sin) / 2;
-						const halfH = (width * sin + height * cos) / 2;
+						const refRatio = (realW > 0 && realH > 0) ? (realW / realH) : 1.0;
+						const halfW = (width * cos + (height / refRatio) * sin) / 2;
+						const halfH = ((width * refRatio) * sin + height * cos) / 2;
 						const cx = left + (width / 2);
 						const cy = top + (height / 2);
 

@@ -809,8 +809,8 @@
 					const rad = (r * Math.PI) / 180;
 					const cos = Math.abs(Math.cos(rad));
 					const sin = Math.abs(Math.sin(rad));
-					const halfW = (bw * cos + bh * sin) / 2;
-					const halfH = (bw * sin + bh * cos) / 2;
+					const halfW = (bw * cos + (bh / refRatio) * sin) / 2;
+					const halfH = ((bw * refRatio) * sin + bh * cos) / 2;
 					const cx = l + (bw / 2);
 					const cy = t + (bh / 2);
 

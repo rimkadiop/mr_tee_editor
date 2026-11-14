@@ -319,19 +319,28 @@ class ProductPageRenderer {
 			}
 		}
 
+		$thumb_id          = get_post_thumbnail_id( $post->ID );
+		$product_image_url = $thumb_id ? ( wp_get_attachment_image_url( $thumb_id, 'large' ) ?: wp_get_attachment_image_url( $thumb_id, 'full' ) ) : '';
+		if ( ! empty( $product_image_url ) && ! is_ssl() ) {
+			$product_image_url = set_url_scheme( $product_image_url, 'http' );
+		}
+		$cart_url = function_exists( 'wc_get_cart_url' ) ? wc_get_cart_url() : '';
+
 		wp_localize_script(
 			'mr-tee-frontend-js',
 			'mrTeeProductData',
 			array(
-				'productId'   => $post->ID,
-				'config'      => $config,
-				'fonts'       => $filtered_fonts,
-				'svgFonts'    => $preloaded_svg_fonts,
-				'ajaxUrl'     => admin_url( 'admin-ajax.php', $proto ),
-				'uploadNonce' => wp_create_nonce( 'mr_tee_frontend_upload' ),
-				'pluginUrl'   => MR_TEE_EDITOR_URL,
-				'fontFaceCss' => $font_face_css,
-				'i18n'        => array(
+				'productId'       => $post->ID,
+				'config'          => $config,
+				'fonts'           => $filtered_fonts,
+				'svgFonts'        => $preloaded_svg_fonts,
+				'ajaxUrl'         => admin_url( 'admin-ajax.php', $proto ),
+				'cartUrl'         => $cart_url,
+				'productImageUrl' => $product_image_url ? $product_image_url : '',
+				'uploadNonce'     => wp_create_nonce( 'mr_tee_frontend_upload' ),
+				'pluginUrl'       => MR_TEE_EDITOR_URL,
+				'fontFaceCss'     => $font_face_css,
+				'i18n'            => array(
 					'warningTitle'     => __( 'Attention ! Personnalisation incomplète', 'mr-tee-editor' ),
 					'warningMessage'   => __( 'Un ou plusieurs champs n\'ont pas été personnalisés. Souhaitez-vous continuer avec les valeurs par défaut ?', 'mr-tee-editor' ),
 					'confirmKeep'      => __( 'Continuer quand même', 'mr-tee-editor' ),

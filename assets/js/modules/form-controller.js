@@ -11,8 +11,8 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.3.14';
-import { PrintExporter } from './print-exporter.js?v=2.3.14';
+import { SvgRenderer } from './svg-renderer.js?v=2.3.15';
+import { PrintExporter } from './print-exporter.js?v=2.3.15';
 
 export class FormController {
 	constructor(store, config, onExportRequested) {
@@ -468,6 +468,8 @@ export class FormController {
 							if (typeof window !== 'undefined') {
 								window.mrTeeImageB64Cache = window.mrTeeImageB64Cache || {};
 								window.mrTeeImageB64Cache[serverUrl] = previewDataUrl;
+								const normUrl = PrintExporter.normalizeSameHostUrl(serverUrl);
+								if (normUrl) window.mrTeeImageB64Cache[normUrl] = previewDataUrl;
 							}
 							if (refId) {
 								this.store.setImageValue(refId, serverUrl, file.name, true);
@@ -573,10 +575,25 @@ export class FormController {
 
 	submitCartForm() {
 		this.bypassWarning = true;
+		this._awaitingCartRedirect = true;
+
+		const cartUrl = (window.mrTeeProductData && window.mrTeeProductData.cartUrl) || '';
+		if (window.jQuery && cartUrl && !this._boundAjaxRedirect) {
+			this._boundAjaxRedirect = true;
+			window.jQuery(document.body).one('added_to_cart', () => {
+				if (this._awaitingCartRedirect) {
+					this._awaitingCartRedirect = false;
+					window.location.href = PrintExporter.normalizeSameHostUrl(cartUrl) || cartUrl;
+				}
+			});
+		}
+
 		const form = this.addToCartBtn ? this.addToCartBtn.closest('form') : document.querySelector('form.cart');
 		if (form) {
-			if (location.protocol === 'http:' && form.action && form.action.startsWith('https:')) {
+			if (form.action && location.protocol === 'http:' && form.action.startsWith('https:')) {
 				form.action = form.action.replace('https:', 'http:');
+			} else if (form.action && location.protocol === 'https:' && form.action.startsWith('http:')) {
+				form.action = form.action.replace('http:', 'https:');
 			}
 			if (typeof form.requestSubmit === 'function') {
 				form.requestSubmit(this.addToCartBtn);

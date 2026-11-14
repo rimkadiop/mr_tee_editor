@@ -7,10 +7,146 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.3.14';
+import { SvgRenderer } from './svg-renderer.js?v=2.3.15';
 
 export class PrintExporter {
 	static CHUNK_SIZE_BYTES = 300 * 1024; // 300 KB binary chunks stay safely below shared host 413 limits
+
+	static normalizeSameHostUrl(rawUrl) {
+		if (!rawUrl || typeof rawUrl !== 'string') return '';
+		if (rawUrl.startsWith('data:')) return rawUrl;
+		try {
+			const parsed = new URL(rawUrl, window.location.origin);
+			if (parsed.hostname === window.location.hostname) {
+				return parsed.pathname + parsed.search;
+			}
+		} catch (e) {}
+		return rawUrl;
+	}
+
+	static async fetchImageAsDataUrl(rawUrl) {
+		if (!rawUrl || typeof rawUrl !== 'string') return '';
+		if (rawUrl.startsWith('data:image/') && !rawUrl.startsWith('data:image/svg+xml')) {
+			return rawUrl;
+		}
+		if (typeof window !== 'undefined') {
+			window.mrTeeImageB64Cache = window.mrTeeImageB64Cache || {};
+			if (window.mrTeeImageB64Cache[rawUrl]) {
+				return window.mrTeeImageB64Cache[rawUrl];
+			}
+		}
+		const fetchUrl = this.normalizeSameHostUrl(rawUrl);
+		try {
+			const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+			const timer = ctrl ? setTimeout(() => ctrl.abort(), 12000) : null;
+			const resp = await fetch(fetchUrl, ctrl ? { signal: ctrl.signal } : undefined);
+			if (timer) clearTimeout(timer);
+			if (resp.ok) {
+				const blob = await resp.blob();
+				const b64 = await new Promise((res, rej) => {
+					const reader = new FileReader();
+					reader.onloadend = () => res(reader.result);
+					reader.onerror = rej;
+					reader.readAsDataURL(blob);
+				});
+				if (typeof window !== 'undefined' && b64) {
+					window.mrTeeImageB64Cache[rawUrl] = b64;
+					if (fetchUrl !== rawUrl) window.mrTeeImageB64Cache[fetchUrl] = b64;
+				}
+				return b64 || '';
+			}
+		} catch (e) {
+			console.warn('[MrTee PrintExporter] Failed to fetch image URL:', rawUrl, e);
+		}
+		return '';
+	}
+
+	static findProductGalleryImageElement() {
+		const selectors = [
+			'.woocommerce-product-gallery .flex-active-slide img:not(.emoji):not(.zoomImg)',
+			'.woocommerce-product-gallery__image.flex-active-slide img:not(.emoji):not(.zoomImg)',
+			'.woocommerce-product-gallery__image:first-child img:not(.emoji):not(.zoomImg)',
+			'.mr-tee-stage-garment-img',
+			'.product .images img:not(.emoji):not(.zoomImg)',
+		];
+		for (const sel of selectors) {
+			const el = document.querySelector(sel);
+			if (el) return el;
+		}
+		return null;
+	}
+
+	static resolveProductBackgroundUrl() {
+		const imgEl = this.findProductGalleryImageElement();
+		if (imgEl) {
+			const candidates = [
+				imgEl.currentSrc,
+				imgEl.getAttribute('src'),
+				imgEl.getAttribute('data-large_image'),
+				imgEl.getAttribute('data-src'),
+				imgEl.getAttribute('data-lazy-src'),
+			];
+			for (const cand of candidates) {
+				if (cand && !cand.startsWith('data:image/svg+xml')) {
+					return cand;
+				}
+			}
+		}
+		const data = (typeof window !== 'undefined' && window.mrTeeProductData) ? window.mrTeeProductData : {};
+		return data.productImageUrl || '';
+	}
+
+	static loadHtmlImage(src, allowCors = false) {
+		return new Promise((resolve, reject) => {
+			if (!src) {
+				reject(new Error('Empty image src'));
+				return;
+			}
+			const img = new Image();
+			if (allowCors) img.crossOrigin = 'anonymous';
+			let settled = false;
+			const timer = setTimeout(() => {
+				if (!settled) {
+					settled = true;
+					reject(new Error('Image load timeout'));
+				}
+			}, 12000);
+			img.onload = () => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				resolve(img);
+			};
+			img.onerror = (err) => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				reject(err || new Error('Image load failed'));
+			};
+			img.src = src;
+		});
+	}
+
+	static async loadBackgroundImage(rawUrl) {
+		if (!rawUrl) return null;
+		const dataUrl = await this.fetchImageAsDataUrl(rawUrl);
+		if (dataUrl) {
+			try {
+				const img = await this.loadHtmlImage(dataUrl, false);
+				if (img && img.naturalWidth > 0) {
+					return { img, naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight, taintedSafe: true };
+				}
+			} catch (e) {}
+		}
+		const fallbackUrl = this.normalizeSameHostUrl(rawUrl);
+		try {
+			const img = await this.loadHtmlImage(fallbackUrl, true);
+			if (img && img.naturalWidth > 0) {
+				return { img, naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight, taintedSafe: false };
+			}
+		} catch (e) {}
+		return null;
+	}
 
 	static generateDesignKey() {
 		if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -142,6 +278,8 @@ export class PrintExporter {
 				if (typeof window !== 'undefined') {
 					window.mrTeeImageB64Cache = window.mrTeeImageB64Cache || {};
 					window.mrTeeImageB64Cache[res.url] = dataUrl;
+					const normUrl = this.normalizeSameHostUrl(res.url);
+					if (normUrl) window.mrTeeImageB64Cache[normUrl] = dataUrl;
 				}
 				store.setImageValue(line.ref_id, res.url, res.filename || origName, true);
 			}
@@ -234,6 +372,22 @@ export class PrintExporter {
 			};
 		}
 
+		// Resolve product background image before generating fullPreviewSvg so its exact
+		// natural aspect ratio matches the live stage on un-locked garment products.
+		const bgUrl = this.resolveProductBackgroundUrl();
+		const bgAsset = await this.loadBackgroundImage(bgUrl);
+		const domGarmentImg = this.findProductGalleryImageElement();
+		const isLocked = Boolean(config.lock_aspect_ratio) || isFlatObject;
+
+		let compositeRatio = (realW > 0 && realH > 0) ? (realW / realH) : (parseFloat(config.print_aspect_ratio) || 1.0);
+		if (!isLocked) {
+			if (bgAsset && bgAsset.naturalWidth > 0 && bgAsset.naturalHeight > 0) {
+				compositeRatio = bgAsset.naturalWidth / bgAsset.naturalHeight;
+			} else if (domGarmentImg && domGarmentImg.naturalWidth > 0 && domGarmentImg.naturalHeight > 0) {
+				compositeRatio = domGarmentImg.naturalWidth / domGarmentImg.naturalHeight;
+			}
+		}
+
 		// 1. Build self-contained, clean vector SVG markup (tightly cropped to cumulative design area)
 		const svgMarkup = SvgRenderer.renderToString(layers, zoomTransform, {
 			isExport: true,
@@ -250,7 +404,7 @@ export class PrintExporter {
 		// 2. Build full uncropped SVG for visual composite preview on mockup photo
 		const fullPreviewSvg = SvgRenderer.renderToString(layers, zoomTransform, {
 			isExport: false,
-			aspectRatio: (realW > 0 && realH > 0) ? (realW / realH) : 1.0,
+			aspectRatio: compositeRatio,
 			hasPerLineBoxes: hasPerLineBoxes,
 			fontFaceCss: this.extractFontFaceCss(),
 		});
@@ -262,8 +416,12 @@ export class PrintExporter {
 		// 3. Rasterize to 300 DPI Transparent PNG (tightly cropped, lossless print output)
 		const print300DpiB64 = await this.rasterizeSvgToPng(inlinedExportSvg, exportPxW, exportPxH);
 
-		// 4. Render Composite Mockup Preview (Garment + Design) as compact high-quality JPEG
-		const compositeB64 = await this.renderCompositePreview(inlinedFullPreviewSvg, config);
+		// 4. Render Composite Mockup Preview (Full Product Background + Design) as compact JPEG
+		const compositeB64 = await this.renderCompositePreview(inlinedFullPreviewSvg, config, {
+			bgAsset,
+			domGarmentImg,
+			compositeRatio,
+		});
 
 		// 5. Serialize lightweight payload with print dimensions attached
 		const payload = store.getExportPayload();
@@ -347,42 +505,11 @@ export class PrintExporter {
 			return svgMarkup;
 		}
 
-		window.mrTeeImageB64Cache = window.mrTeeImageB64Cache || {};
-		const cache = window.mrTeeImageB64Cache;
 		const urlMap = {};
-
 		await Promise.all(urlsToFetch.map(async (url) => {
-			if (cache[url]) {
-				urlMap[url] = cache[url];
-				return;
-			}
-			try {
-				let fetchUrl = url;
-				if (typeof window !== 'undefined' && window.location && window.location.protocol === 'http:') {
-					try {
-						const parsed = new URL(url, window.location.origin);
-						if (parsed.hostname === window.location.hostname && parsed.protocol === 'https:') {
-							fetchUrl = parsed.pathname + parsed.search;
-						}
-					} catch (e) {}
-				}
-				const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-				const timer = ctrl ? setTimeout(() => ctrl.abort(), 12000) : null;
-				const resp = await fetch(fetchUrl, ctrl ? { signal: ctrl.signal } : undefined);
-				if (timer) clearTimeout(timer);
-				if (resp.ok) {
-					const blob = await resp.blob();
-					const b64 = await new Promise((res, rej) => {
-						const reader = new FileReader();
-						reader.onloadend = () => res(reader.result);
-						reader.onerror = rej;
-						reader.readAsDataURL(blob);
-					});
-					cache[url] = b64;
-					urlMap[url] = b64;
-				}
-			} catch (e) {
-				console.warn('[MrTee PrintExporter] Failed to inline image URL for canvas export:', url, e);
+			const b64 = await this.fetchImageAsDataUrl(url);
+			if (b64) {
+				urlMap[url] = b64;
 			}
 		}));
 
@@ -414,7 +541,7 @@ export class PrintExporter {
 					URL.revokeObjectURL(url);
 					reject(new Error('SVG rasterization timeout'));
 				}
-			}, 15000);
+			}, 25000);
 
 			img.onload = () => {
 				if (settled) return;
@@ -454,29 +581,77 @@ export class PrintExporter {
 	 *
 	 * @param {string} svgMarkup SVG markup.
 	 * @param {Object} config Product configuration.
+	 * @param {Object} options Optional preloaded background assets ({ bgAsset, domGarmentImg, compositeRatio }).
 	 * @return {Promise<string>} Base64 composite image data URL.
 	 */
-	static renderCompositePreview(svgMarkup, config) {
+	static async renderCompositePreview(svgMarkup, config, options = {}) {
+		const bgAsset = options.bgAsset !== undefined ? options.bgAsset : await this.loadBackgroundImage(this.resolveProductBackgroundUrl());
+		const domGarmentImg = options.domGarmentImg || this.findProductGalleryImageElement();
+
+		const isFlatObject = config.product_type === 'flat_object';
+		const isLocked = Boolean(config.lock_aspect_ratio) || isFlatObject;
+		const hasPerLineBoxes = Array.isArray(config.text_lines) && config.text_lines.some(l => l.box_left !== undefined && l.box_width !== undefined);
+		const realRatio = (parseFloat(config.print_real_width) && parseFloat(config.print_real_height))
+			? (parseFloat(config.print_real_width) / parseFloat(config.print_real_height))
+			: (parseFloat(config.print_aspect_ratio) || 1.0);
+
+		let compositeRatio = parseFloat(options.compositeRatio) || 0;
+		if (!compositeRatio || compositeRatio <= 0) {
+			if (isLocked) {
+				compositeRatio = realRatio;
+			} else if (bgAsset && bgAsset.naturalWidth > 0 && bgAsset.naturalHeight > 0) {
+				compositeRatio = bgAsset.naturalWidth / bgAsset.naturalHeight;
+			} else if (domGarmentImg && domGarmentImg.naturalWidth > 0 && domGarmentImg.naturalHeight > 0) {
+				compositeRatio = domGarmentImg.naturalWidth / domGarmentImg.naturalHeight;
+			} else {
+				compositeRatio = realRatio || 1.0;
+			}
+		}
+
+		const canvasW = 900;
+		const canvasH = Math.max(240, Math.min(1800, Math.round(canvasW / compositeRatio)));
+		const canvas = document.createElement('canvas');
+		canvas.width = canvasW;
+		canvas.height = canvasH;
+		const ctx = canvas.getContext('2d');
+
+		// Solid white backdrop for JPEG export
+		ctx.fillStyle = '#ffffff';
+		ctx.fillRect(0, 0, canvasW, canvasH);
+
+		const bgSource = (bgAsset && bgAsset.img) ||
+			((domGarmentImg && domGarmentImg.complete && domGarmentImg.naturalWidth > 0) ? domGarmentImg : null);
+
+		const drawBackground = (targetCtx) => {
+			if (!bgSource) return false;
+			if (!isLocked) {
+				targetCtx.drawImage(bgSource, 0, 0, canvasW, canvasH);
+				return true;
+			}
+			const bgNatW = bgSource.naturalWidth || canvasW;
+			const bgNatH = bgSource.naturalHeight || canvasH;
+			const bgRatio = bgNatW / bgNatH;
+			const targetRatio = canvasW / canvasH;
+			let drawW = canvasW;
+			let drawH = canvasH;
+			let drawX = 0;
+			let drawY = 0;
+			if (Math.abs(bgRatio - targetRatio) > 0.002) {
+				if (bgRatio > targetRatio) {
+					drawW = canvasW;
+					drawH = canvasW / bgRatio;
+					drawY = (canvasH - drawH) / 2;
+				} else {
+					drawH = canvasH;
+					drawW = canvasH * bgRatio;
+					drawX = (canvasW - drawW) / 2;
+				}
+			}
+			targetCtx.drawImage(bgSource, drawX, drawY, drawW, drawH);
+			return true;
+		};
+
 		return new Promise((resolve) => {
-			const garmentImg = document.querySelector('.woocommerce-product-gallery__image img:not(.emoji):not(.zoomImg)') ||
-				document.querySelector('.mr-tee-stage-garment-img') ||
-				document.querySelector('.product .images img:not(.emoji):not(.zoomImg)');
-
-			const isFlatObject = config.product_type === 'flat_object';
-			const hasPerLineBoxes = Array.isArray(config.text_lines) && config.text_lines.some(l => l.box_left !== undefined && l.box_width !== undefined);
-			const ratio = (parseFloat(config.print_real_width) && parseFloat(config.print_real_height)) ? (parseFloat(config.print_real_width) / parseFloat(config.print_real_height)) : (parseFloat(config.print_aspect_ratio) || 1.0);
-
-			const canvasW = 800;
-			const canvasH = isFlatObject ? Math.max(200, Math.round(800 / ratio)) : 800;
-			const canvas = document.createElement('canvas');
-			canvas.width = canvasW;
-			canvas.height = canvasH;
-			const ctx = canvas.getContext('2d');
-
-			// Solid white backdrop for JPEG export
-			ctx.fillStyle = '#ffffff';
-			ctx.fillRect(0, 0, canvasW, canvasH);
-
 			let settled = false;
 			const finish = (val) => {
 				if (!settled) {
@@ -487,7 +662,7 @@ export class PrintExporter {
 			};
 			const safetyTimer = setTimeout(() => {
 				try {
-					finish(canvas.toDataURL('image/jpeg', 0.85));
+					finish(canvas.toDataURL('image/jpeg', 0.88));
 				} catch (e) {
 					finish('');
 				}
@@ -514,11 +689,11 @@ export class PrintExporter {
 					const { left, top, w, h } = getPlacement();
 					try {
 						ctx.drawImage(designImg, left, top, w, h);
-						const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+						const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
 						URL.revokeObjectURL(url);
 						finish(dataUrl);
 					} catch (err) {
-						// Recover from tainted canvas (cross-origin garmentImg) by exporting design on clean backdrop
+						// Recover from tainted canvas if background came from cross-origin DOM element
 						try {
 							const cleanCanvas = document.createElement('canvas');
 							cleanCanvas.width = canvasW;
@@ -527,7 +702,7 @@ export class PrintExporter {
 							cleanCtx.fillStyle = '#ffffff';
 							cleanCtx.fillRect(0, 0, canvasW, canvasH);
 							cleanCtx.drawImage(designImg, left, top, w, h);
-							const cleanUrl = cleanCanvas.toDataURL('image/jpeg', 0.85);
+							const cleanUrl = cleanCanvas.toDataURL('image/jpeg', 0.88);
 							URL.revokeObjectURL(url);
 							finish(cleanUrl);
 						} catch (fallbackErr) {
@@ -540,7 +715,7 @@ export class PrintExporter {
 				designImg.onerror = () => {
 					URL.revokeObjectURL(url);
 					try {
-						finish(canvas.toDataURL('image/jpeg', 0.85));
+						finish(canvas.toDataURL('image/jpeg', 0.88));
 					} catch (e) {
 						finish('');
 					}
@@ -549,12 +724,11 @@ export class PrintExporter {
 				designImg.src = url;
 			};
 
-			if (garmentImg && garmentImg.complete && garmentImg.naturalWidth > 0) {
+			if (bgSource) {
 				try {
-					ctx.drawImage(garmentImg, 0, 0, canvasW, canvasH);
+					drawBackground(ctx);
 					drawDesign();
 				} catch (e) {
-					// CORS or tainted canvas fallback
 					drawDesign();
 				}
 			} else {

@@ -3,7 +3,7 @@
  * Plugin Name: Mr. Tee Editor – Form-Based Live Product Customizer
  * Plugin URI:  https://github.com/rimkadiop/mr_tee_editor
  * Description: Monsieur TSHIRT style in-product-page live preview form customizer with 2-row scene-graph layout, relative anchors, fancy 3D fonts, visual placement stage, and WooCommerce + NBDesigner 300 DPI print export.
- * Version:     2.3.14
+ * Version:     2.3.15
  * Author:      Rimka Diop
  * Text Domain: mr-tee-editor
  * Domain Path: /languages
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin Constants
-define( 'MR_TEE_EDITOR_VERSION', '2.3.14' );
+define( 'MR_TEE_EDITOR_VERSION', '2.3.15' );
 define( 'MR_TEE_EDITOR_FILE', __FILE__ );
 define( 'MR_TEE_EDITOR_DIR', plugin_dir_path( __FILE__ ) );
 
@@ -61,9 +61,12 @@ add_filter( 'force_ssl_admin', '__return_false', 999 );
 add_filter( 'secure_auth_cookie', '__return_false', 999 );
 add_filter( 'secure_logged_in_cookie', '__return_false', 999 );
 
-// Normalize form action & redirects to prevent 503 errors on HTTPS port 443
+// Normalize form action & redirects to match HTTP scheme only when the visitor is on HTTP (preserve HTTPS on SSL)
 $mr_tee_http_filter = function ( $url ) {
-	return is_string( $url ) ? str_replace( 'https://1.tawfekh-digital.com', 'http://1.tawfekh-digital.com', $url ) : $url;
+	if ( is_ssl() || ! is_string( $url ) ) {
+		return $url;
+	}
+	return str_replace( 'https://1.tawfekh-digital.com', 'http://1.tawfekh-digital.com', $url );
 };
 add_filter( 'woocommerce_add_to_cart_form_action', $mr_tee_http_filter, 999 );
 add_filter( 'woocommerce_get_cart_url', $mr_tee_http_filter, 999 );
@@ -126,13 +129,6 @@ add_action( 'init', function () {
 		exit;
 	}
 } );
-add_filter( 'woocommerce_add_to_cart_form_action', $mr_tee_http_filter, 999 );
-add_filter( 'woocommerce_get_cart_url', $mr_tee_http_filter, 999 );
-add_filter( 'woocommerce_get_checkout_url', $mr_tee_http_filter, 999 );
-add_filter( 'page_link', $mr_tee_http_filter, 999 );
-add_filter( 'post_link', $mr_tee_http_filter, 999 );
-add_filter( 'post_type_link', $mr_tee_http_filter, 999 );
-add_filter( 'wp_redirect', $mr_tee_http_filter, 999 );
 
 /**
  * Backward compatibility helper: get product configuration.

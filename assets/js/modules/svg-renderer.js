@@ -620,32 +620,102 @@ export class SvgRenderer {
 	}
 
 	/**
-	 * Proactively fetch and decode all preview glyph bitmaps (`A-Z`, `0-9`, etc.) into
-	 * persistent browser RAM (`window.mrTeePrewarmedImages`) so typing any new letter
-	 * never waits on a network request or asynchronous bitmap decode.
+	 * Stage 1 Priority Pre-warm: Immediately decode ONLY the glyph bitmaps used by a specific text string
+	 * (e.g. initial `default_text`) with high priority so critical first paint has zero competition.
 	 *
 	 * @param {Object} fontData Hydrated OpenType-SVG font dataset.
+	 * @param {string} text Text string whose characters should be warmed immediately.
 	 */
-	static prewarmFontGlyphs(fontData) {
+	static prewarmTextGlyphs(fontData, text = '') {
+		if (typeof window === 'undefined' || !fontData || !text) return;
+		this.prepareFontData(fontData, fontData.id || '');
+
+		window.mrTeePrewarmedImages = window.mrTeePrewarmedImages || new Map();
+		const glyphs = fontData.glyphs || {};
+		const re = /(?:xlink:href|href)="([^"]+)"/g;
+
+		for (let i = 0; i < text.length; i++) {
+			const ch = text[i];
+			if (ch === ' ' || ch === '\n') continue;
+			const g = glyphs[ch] || glyphs[ch.toUpperCase()] || glyphs[ch.toLowerCase()];
+			if (!g || !g.svg) continue;
+
+			re.lastIndex = 0;
+			let match;
+			while ((match = re.exec(g.svg)) !== null) {
+				const url = match[1];
+				if (!url || url.startsWith('#') || url.startsWith('data:') || window.mrTeePrewarmedImages.has(url)) {
+					continue;
+				}
+				const img = new Image();
+				img.decoding = 'sync';
+				if ('fetchPriority' in img) {
+					img.fetchPriority = 'high';
+				}
+				img.src = url;
+				if (typeof img.decode === 'function') {
+					img.decode().catch(() => {});
+				}
+				window.mrTeePrewarmedImages.set(url, img);
+			}
+		}
+	}
+
+	/**
+	 * Stage 2 Throttled Alphabet Pre-warm: Fetch and decode all preview glyph bitmaps (`A-Z`, `0-9`, etc.)
+	 * into persistent browser RAM (`window.mrTeePrewarmedImages`) in small concurrent batches (6 at a time)
+	 * so typing any new letter is 0ms instant without saturating network bandwidth during initial page paint.
+	 *
+	 * @param {Object} fontData Hydrated OpenType-SVG font dataset.
+	 * @param {Object} options Optional settings ({ batchSize: 6, immediate: false }).
+	 */
+	static prewarmFontGlyphs(fontData, options = {}) {
 		if (typeof window === 'undefined' || !fontData) return;
 		this.prepareFontData(fontData, fontData.id || '');
 		if (fontData._prewarmed) return;
 		fontData._prewarmed = true;
 
 		window.mrTeePrewarmedImages = window.mrTeePrewarmedImages || new Map();
-		const urls = fontData._previewUrls || [];
+		const allUrls = fontData._previewUrls || [];
+		const pending = [];
 
-		for (let i = 0; i < urls.length; i++) {
-			const url = urls[i];
-			if (!url || window.mrTeePrewarmedImages.has(url)) continue;
+		for (let i = 0; i < allUrls.length; i++) {
+			const url = allUrls[i];
+			if (url && !window.mrTeePrewarmedImages.has(url)) {
+				pending.push(url);
+			}
+		}
+
+		if (pending.length === 0) return;
+
+		const batchSize = options.batchSize || 6;
+		let cursor = 0;
+
+		const loadNext = () => {
+			if (cursor >= pending.length) return;
+			const url = pending[cursor++];
+			if (!url || window.mrTeePrewarmedImages.has(url)) {
+				loadNext();
+				return;
+			}
 
 			const img = new Image();
-			img.decoding = 'sync';
+			img.decoding = options.immediate ? 'sync' : 'async';
+			const done = () => {
+				if (typeof img.decode === 'function') {
+					img.decode().catch(() => {});
+				}
+				loadNext();
+			};
+			img.onload = done;
+			img.onerror = done;
 			img.src = url;
-			if (typeof img.decode === 'function') {
-				img.decode().catch(() => {});
-			}
 			window.mrTeePrewarmedImages.set(url, img);
+		};
+
+		const concurrency = options.immediate ? Math.min(12, pending.length) : Math.min(batchSize, pending.length);
+		for (let c = 0; c < concurrency; c++) {
+			loadNext();
 		}
 	}
 
@@ -707,24 +777,37 @@ export class SvgRenderer {
 	 *
 	 * @param {string} fontId Font key.
 	 * @param {Object} fontDef Font definition.
+	 * @param {Object} options Optional behavior flags ({ prewarmGlyphs: true, priorityText: '' }).
 	 * @return {Promise<Object|null>}
 	 */
-	static async ensureSvgFontLoaded(fontId, fontDef = null) {
+	static async ensureSvgFontLoaded(fontId, fontDef = null, options = {}) {
 		if (typeof window === 'undefined') return null;
 		window.mrTeeSvgFonts = window.mrTeeSvgFonts || {};
+
+		const shouldPrewarm = options.prewarmGlyphs !== false;
+		const priorityText = options.priorityText || '';
+
+		const applyWarmup = (fontData) => {
+			if (!fontData) return fontData;
+			if (priorityText) {
+				this.prewarmTextGlyphs(fontData, priorityText);
+			}
+			if (shouldPrewarm) {
+				this.prewarmFontGlyphs(fontData);
+			}
+			return fontData;
+		};
 
 		const cleanKey = String(fontId).toLowerCase().replace(/[\s\-]+/g, '_');
 		if (window.mrTeeSvgFonts[cleanKey]) {
 			const cached = this.prepareFontData(window.mrTeeSvgFonts[cleanKey], cleanKey);
-			this.prewarmFontGlyphs(cached);
-			return cached;
+			return applyWarmup(cached);
 		}
 
 		const existing = this.getSvgFontData(fontId);
 		if (existing) {
 			window.mrTeeSvgFonts[cleanKey] = existing;
-			this.prewarmFontGlyphs(existing);
-			return existing;
+			return applyWarmup(existing);
 		}
 
 		const fonts = (window.mrTeeProductData && window.mrTeeProductData.fonts)
@@ -747,8 +830,7 @@ export class SvgRenderer {
 					const data = this.hydrateManifest(rawManifest, cleanKey);
 					window.mrTeeSvgFonts[cleanKey] = data;
 					window.mrTeeSvgFonts[fontId] = data;
-					this.prewarmFontGlyphs(data);
-					return data;
+					return applyWarmup(data);
 				}
 			} catch (mErr) {
 				// Continue to fallback
@@ -764,8 +846,7 @@ export class SvgRenderer {
 				const data = this.prepareFontData(rawData, cleanKey);
 				window.mrTeeSvgFonts[cleanKey] = data;
 				window.mrTeeSvgFonts[fontId] = data;
-				this.prewarmFontGlyphs(data);
-				return data;
+				return applyWarmup(data);
 			}
 		} catch (err) {
 			console.warn('[MrTee SvgRenderer] Failed to load static SVG font cache, trying AJAX fallback:', err);
@@ -783,8 +864,7 @@ export class SvgRenderer {
 						const data = this.prepareFontData(json.data, cleanKey);
 						window.mrTeeSvgFonts[cleanKey] = data;
 						window.mrTeeSvgFonts[fontId] = data;
-						this.prewarmFontGlyphs(data);
-						return data;
+						return applyWarmup(data);
 					}
 				}
 			} catch (ajaxErr) {

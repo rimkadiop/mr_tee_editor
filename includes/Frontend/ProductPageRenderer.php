@@ -81,6 +81,27 @@ class ProductPageRenderer {
 	}
 
 	/**
+	 * Per-request in-memory cache of compiled product configurations.
+	 *
+	 * @var array<int, array<string, mixed>>
+	 */
+	private static $config_cache = array();
+
+	/**
+	 * Retrieve compiled product configuration once per request.
+	 *
+	 * @param int $product_id Product ID.
+	 * @return array<string, mixed>
+	 */
+	private static function get_cached_config( $product_id ) {
+		$pid = (int) $product_id;
+		if ( ! isset( self::$config_cache[ $pid ] ) ) {
+			self::$config_cache[ $pid ] = SceneGraphSchema::get_product_config( $pid );
+		}
+		return self::$config_cache[ $pid ];
+	}
+
+	/**
 	 * Add body class for styling scoping.
 	 *
 	 * @param array<int, string> $classes Existing body classes.
@@ -91,7 +112,7 @@ class ProductPageRenderer {
 			$classes[] = 'has-mr-tee-editor';
 			global $post;
 			if ( $post ) {
-				$config = SceneGraphSchema::get_product_config( $post->ID );
+				$config = self::get_cached_config( $post->ID );
 				if ( ! empty( $config['lock_aspect_ratio'] ) || ( isset( $config['product_type'] ) && 'flat_object' === $config['product_type'] ) ) {
 					$classes[] = 'mr-tee-locked-aspect-ratio';
 				}
@@ -102,8 +123,8 @@ class ProductPageRenderer {
 
 	/**
 	 * Output high-priority performance hints in wp_head:
-	 * - Preloads glyph images used by default text so 3D fonts render instantly without flicker.
-	 * - Preloads font manifest JSON for zero-latency hydration.
+	 * - Emits <link rel="modulepreload"> for mr-tee-frontend.js and its 6 ES modules to eliminate the footer waterfall.
+	 * - Preloads glyph images used by default text with fetchpriority="high" so 3D fonts render instantly without flicker.
 	 */
 	public static function render_performance_hints() {
 		if ( ! self::is_active() ) {
@@ -115,31 +136,48 @@ class ProductPageRenderer {
 			return;
 		}
 
-		$config = SceneGraphSchema::get_product_config( $post->ID );
+		// 1. Preload ES6 module graph in <head> to eliminate the 6-file discovery waterfall at bottom of <body>
+		$base_parsed = wp_parse_url( MR_TEE_EDITOR_URL );
+		$base_path   = ! empty( $base_parsed['path'] ) ? trailingslashit( $base_parsed['path'] ) : MR_TEE_EDITOR_URL;
+		$ver         = MR_TEE_EDITOR_VERSION;
+
+		printf(
+			"<link rel=\"modulepreload\" href=\"%s\" />\n",
+			esc_url( $base_path . 'assets/js/mr-tee-frontend.js?ver=' . $ver )
+		);
+
+		$es_modules = array(
+			'state-store.js',
+			'scene-graph-engine.js',
+			'svg-renderer.js',
+			'gallery-stage.js',
+			'form-controller.js',
+			'print-exporter.js',
+		);
+		foreach ( $es_modules as $mod_file ) {
+			printf(
+				"<link rel=\"modulepreload\" href=\"%s\" />\n",
+				esc_url( $base_path . 'assets/js/modules/' . $mod_file . '?v=' . $ver )
+			);
+		}
+
+		$config = self::get_cached_config( $post->ID );
 		if ( empty( $config['text_lines'] ) || ! is_array( $config['text_lines'] ) ) {
 			return;
 		}
 
 		$preloaded_images = array();
 		foreach ( $config['text_lines'] as $line ) {
-			if ( empty( $line['font'] ) ) {
+			$font_id = ! empty( $line['font'] ) ? $line['font'] : ( ! empty( $line['allowed_fonts'][0] ) ? $line['allowed_fonts'][0] : '' );
+			if ( empty( $font_id ) ) {
 				continue;
 			}
-			$font_id = $line['font'];
-			$font    = FontRegistry::get_font( $font_id );
-			if ( empty( $font ) || empty( $font['font_type'] ) || 'opentype_svg' !== $font['font_type'] ) {
+			$font = FontRegistry::get_font( $font_id );
+			if ( empty( $font ) || ( ( empty( $font['font_type'] ) || 'opentype_svg' !== $font['font_type'] ) && empty( $font['color_svg'] ) ) ) {
 				continue;
 			}
 
-			// Preload manifest for zero-latency hydration
-			if ( ! empty( $font['manifest_url'] ) ) {
-				printf(
-					"<link rel=\"preload\" href=\"%s\" as=\"fetch\" type=\"application/json\" crossorigin=\"anonymous\" />\n",
-					esc_url( $font['manifest_url'] )
-				);
-			}
-
-			// Preload glyph images for default text characters
+			// Preload glyph images for default text characters with high priority (active font manifest is already inlined in HTML)
 			$default_text = ! empty( $line['default_text'] ) ? $line['default_text'] : '';
 			if ( '' !== $default_text ) {
 				$svg_data = FontRegistry::get_svg_font_data( $font_id );
@@ -158,7 +196,7 @@ class ProductPageRenderer {
 								if ( ! isset( $preloaded_images[ $img_url ] ) && count( $preloaded_images ) < 24 ) {
 									$preloaded_images[ $img_url ] = true;
 									printf(
-										"<link rel=\"preload\" href=\"%s\" as=\"image\" type=\"image/webp\" />\n",
+										"<link rel=\"preload\" href=\"%s\" as=\"image\" type=\"image/webp\" fetchpriority=\"high\" />\n",
 										esc_url( $img_url )
 									);
 								}
@@ -179,7 +217,7 @@ class ProductPageRenderer {
 		}
 
 		global $post;
-		$config = SceneGraphSchema::get_product_config( $post->ID );
+		$config = self::get_cached_config( $post->ID );
 
 		// Determine allowed fonts strictly for this product
 		$all_fonts        = FontRegistry::get_fonts();
@@ -202,6 +240,7 @@ class ProductPageRenderer {
 		if ( empty( $filtered_fonts ) ) {
 			$filtered_fonts = $all_fonts;
 		}
+		$config['fonts'] = $filtered_fonts;
 
 		// Frontend styles (all fancy display fonts bundled locally in assets/fonts/ with font-display: swap)
 		wp_enqueue_style(
@@ -211,7 +250,7 @@ class ProductPageRenderer {
 			MR_TEE_EDITOR_VERSION
 		);
 
-		// Dynamic @font-face CSS for ONLY allowed fonts
+		// Dynamic @font-face CSS for ONLY allowed standard vector fonts (skips OpenType-SVG .otf binaries)
 		$font_face_css = FontRegistry::get_font_face_css( array_keys( $filtered_fonts ) );
 		wp_add_inline_style( 'mr-tee-frontend-style', $font_face_css );
 
@@ -236,13 +275,21 @@ class ProductPageRenderer {
 
 		$proto = is_ssl() ? 'https' : 'http';
 
-		// Preload SVG font datasets ONLY for allowed OpenType-SVG fonts
+		// Inline ONLY the active default OpenType-SVG font(s) for 0-RTT initial render;
+		// secondary allowed OpenType-SVG fonts are lazy-loaded via manifest_url in the background.
 		$preloaded_svg_fonts = array();
-		foreach ( $filtered_fonts as $f_id => $f_def ) {
-			if ( ! empty( $f_def['font_type'] ) && 'opentype_svg' === $f_def['font_type'] ) {
-				$svg_data = FontRegistry::get_svg_font_data( $f_id );
-				if ( $svg_data ) {
-					$preloaded_svg_fonts[ $f_id ] = $svg_data;
+		if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
+			foreach ( $config['text_lines'] as $line ) {
+				$active_fid = ! empty( $line['font'] ) ? $line['font'] : ( ! empty( $line['allowed_fonts'][0] ) ? $line['allowed_fonts'][0] : '' );
+				if ( empty( $active_fid ) || isset( $preloaded_svg_fonts[ $active_fid ] ) ) {
+					continue;
+				}
+				$f_def = isset( $filtered_fonts[ $active_fid ] ) ? $filtered_fonts[ $active_fid ] : FontRegistry::get_font( $active_fid );
+				if ( ! empty( $f_def ) && ( ( ! empty( $f_def['font_type'] ) && 'opentype_svg' === $f_def['font_type'] ) || ! empty( $f_def['color_svg'] ) ) ) {
+					$svg_data = FontRegistry::get_svg_font_data( $active_fid );
+					if ( $svg_data ) {
+						$preloaded_svg_fonts[ $active_fid ] = $svg_data;
+					}
 				}
 			}
 		}
@@ -279,7 +326,7 @@ class ProductPageRenderer {
 		}
 
 		global $post;
-		$config      = SceneGraphSchema::get_product_config( $post->ID );
+		$config      = self::get_cached_config( $post->ID );
 		$all_fonts   = FontRegistry::get_fonts();
 		$allowed_ids = ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] )
 			? $config['allowed_fonts']
@@ -330,8 +377,10 @@ class ProductPageRenderer {
 				<div class="mr-tee-text-inputs-wrap">
 					<?php foreach ( $config['text_lines'] as $idx => $line ) : ?>
 						<?php
-						$field_id = 'mr_tee_line_' . $idx;
-						$cur_font = isset( $fonts[ $line['font'] ] ) ? $fonts[ $line['font'] ] : FontRegistry::get_font( $line['font'] );
+						$field_id      = 'mr_tee_line_' . $idx;
+						$cur_font      = isset( $fonts[ $line['font'] ] ) ? $fonts[ $line['font'] ] : FontRegistry::get_font( $line['font'] );
+						$is_cur_ot_svg = ( ! empty( $cur_font['font_type'] ) && 'opentype_svg' === $cur_font['font_type'] ) || ! empty( $cur_font['color_svg'] );
+						$preview_ff    = $is_cur_ot_svg ? 'Arial Black, Impact, sans-serif' : "'" . esc_attr( $cur_font['family'] ) . "', Arial Black, Impact, sans-serif";
 						?>
 						<div class="mr-tee-field-group" data-line-index="<?php echo esc_attr( $idx ); ?>" data-line-id="<?php echo esc_attr( $line['id'] ); ?>">
 							<div class="mr-tee-input-row">
@@ -373,7 +422,7 @@ class ProductPageRenderer {
 							<!-- Live Typography Preview Pill -->
 							<div class="mr-tee-inline-typography-preview" id="mr-tee-inline-preview-<?php echo esc_attr( $idx ); ?>">
 								<span class="mr-tee-inline-preview-label"><?php esc_html_e( 'Rendu typographique :', 'mr-tee-editor' ); ?></span>
-								<span class="mr-tee-inline-preview-text" id="mr-tee-preview-text-<?php echo esc_attr( $idx ); ?>" style="font-family: '<?php echo esc_attr( $cur_font['family'] ); ?>', Arial Black, Impact, sans-serif;"><?php echo esc_html( $line['default_text'] ); ?></span>
+								<span class="mr-tee-inline-preview-text" id="mr-tee-preview-text-<?php echo esc_attr( $idx ); ?>" style="font-family: <?php echo $preview_ff; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>;"><?php echo esc_html( $line['default_text'] ); ?></span>
 							</div>
 
 							<!-- Color Swatch Selector Pills (for embroidery thread or ink) -->
@@ -411,15 +460,21 @@ class ProductPageRenderer {
 								<div class="mr-tee-font-selector-row">
 									<div class="mr-tee-font-pills" data-line-index="<?php echo esc_attr( $idx ); ?>">
 										<?php foreach ( $ordered_pills as $f_id => $f_data ) : ?>
+											<?php
+											$is_pill_ot_svg = ( ! empty( $f_data['font_type'] ) && 'opentype_svg' === $f_data['font_type'] ) || ! empty( $f_data['color_svg'] );
+											$pill_style     = $is_pill_ot_svg ? '' : "font-family: '" . esc_attr( $f_data['family'] ) . "', sans-serif;";
+											?>
 											<button
 												type="button"
 												class="mr-tee-font-pill <?php echo $line['font'] === $f_id ? 'is-active' : ''; ?>"
 												data-font-id="<?php echo esc_attr( $f_id ); ?>"
-												style="font-family: '<?php echo esc_attr( $f_data['family'] ); ?>', sans-serif;"
+												<?php if ( '' !== $pill_style ) : ?>
+													style="<?php echo $pill_style; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>"
+												<?php endif; ?>
 												title="<?php echo esc_attr( $f_data['name'] ); ?>"
 											>
 												<?php if ( ! empty( $f_data['thumb_url'] ) ) : ?>
-													<img src="<?php echo esc_url( $f_data['thumb_url'] ); ?>" alt="" class="mr-tee-pill-thumb" style="width:16px; height:16px; object-fit:contain; vertical-align:middle; margin-right:4px; display:inline-block;" />
+													<img src="<?php echo esc_url( $f_data['thumb_url'] ); ?>" alt="" class="mr-tee-pill-thumb" decoding="async" style="width:16px; height:16px; object-fit:contain; vertical-align:middle; margin-right:4px; display:inline-block;" />
 												<?php endif; ?>
 												<?php echo esc_html( $f_data['name'] ); ?>
 											</button>

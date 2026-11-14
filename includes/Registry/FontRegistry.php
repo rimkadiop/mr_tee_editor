@@ -18,6 +18,20 @@ if ( ! defined( 'ABSPATH' ) ) {
 class FontRegistry {
 
 	/**
+	 * Per-request in-memory cache of registered fonts.
+	 *
+	 * @var array<string, array<string, mixed>>|null
+	 */
+	private static $fonts_cache = null;
+
+	/**
+	 * Per-request in-memory cache of hydrated OpenType-SVG font datasets.
+	 *
+	 * @var array<string, array<string, mixed>|null>
+	 */
+	private static $svg_data_cache = array();
+
+	/**
 	 * Return all registered fancy fonts.
 	 *
 	 * Every font in this registry is physically bundled inside assets/fonts/,
@@ -27,6 +41,10 @@ class FontRegistry {
 	 * @return array<string, array<string, mixed>>
 	 */
 	public static function get_fonts() {
+		if ( null !== self::$fonts_cache ) {
+			return apply_filters( 'mr_tee_registered_fonts', self::$fonts_cache );
+		}
+
 		$fonts = array(
 			'super_mario' => array(
 				'id'                => 'super_mario',
@@ -402,7 +420,9 @@ class FontRegistry {
 		}
 		unset( $f_data );
 
-		return apply_filters( 'mr_tee_registered_fonts', $fonts );
+		self::$fonts_cache = $fonts;
+
+		return apply_filters( 'mr_tee_registered_fonts', self::$fonts_cache );
 	}
 
 	/**
@@ -515,6 +535,8 @@ class FontRegistry {
 		}
 
 		update_option( 'mr_tee_custom_fonts', $custom_fonts );
+		self::$fonts_cache    = null;
+		self::$svg_data_cache = array();
 
 		wp_send_json_success(
 			array(
@@ -548,28 +570,38 @@ class FontRegistry {
 	 * @return array<string, mixed>|null
 	 */
 	public static function get_svg_font_data( $font_id ) {
+		if ( array_key_exists( $font_id, self::$svg_data_cache ) ) {
+			return self::$svg_data_cache[ $font_id ];
+		}
+
 		$font = self::get_font( $font_id );
 		if ( empty( $font ) || empty( $font['path'] ) || ! file_exists( $font['path'] ) ) {
+			self::$svg_data_cache[ $font_id ] = null;
 			return null;
 		}
 
 		if ( ! empty( $font['font_type'] ) && 'opentype_svg' === $font['font_type'] ) {
 			$manifest = SvgFontPackager::get_manifest( $font['path'], $font['id'], $font['name'] );
 			if ( ! empty( $manifest ) ) {
-				return SvgFontPackager::hydrate( $manifest, $font['id'] );
+				self::$svg_data_cache[ $font_id ] = SvgFontPackager::hydrate( $manifest, $font['id'] );
+				return self::$svg_data_cache[ $font_id ];
 			}
-			return OpenTypeSvgParser::get_or_create_cache( $font['path'], $font['id'], $font['name'] );
+			self::$svg_data_cache[ $font_id ] = OpenTypeSvgParser::get_or_create_cache( $font['path'], $font['id'], $font['name'] );
+			return self::$svg_data_cache[ $font_id ];
 		}
 
 		// Check dynamically if the font file is an OpenType-SVG font
 		if ( OpenTypeSvgParser::is_opentype_svg( $font['path'] ) ) {
 			$manifest = SvgFontPackager::get_manifest( $font['path'], $font['id'], $font['name'] );
 			if ( ! empty( $manifest ) ) {
-				return SvgFontPackager::hydrate( $manifest, $font['id'] );
+				self::$svg_data_cache[ $font_id ] = SvgFontPackager::hydrate( $manifest, $font['id'] );
+				return self::$svg_data_cache[ $font_id ];
 			}
-			return OpenTypeSvgParser::get_or_create_cache( $font['path'], $font['id'], $font['name'] );
+			self::$svg_data_cache[ $font_id ] = OpenTypeSvgParser::get_or_create_cache( $font['path'], $font['id'], $font['name'] );
+			return self::$svg_data_cache[ $font_id ];
 		}
 
+		self::$svg_data_cache[ $font_id ] = null;
 		return null;
 	}
 
@@ -599,11 +631,11 @@ class FontRegistry {
 	}
 
 	/**
-	 * Build clean inline @font-face CSS declarations for all registered fonts.
+	 * Build clean inline @font-face CSS declarations for registered standard vector fonts.
 	 *
-	 * Uses root-relative or direct font URLs so fonts load asynchronously, cache in browser,
-	 * eliminate mixed-content/CORS blocking, and avoid giant base64 data URIs.
-	 * Also registers all family aliases to prevent any font mismatch.
+	 * Skips OpenType-SVG color fonts ('opentype_svg') because those are rendered via
+	 * SvgRenderer WebP/PNG glyph packages and browsers ignore SVG color tables in standard
+	 * HTML buttons/spans—preventing 9 MB to 26+ MB of wasted raw .otf binary downloads on page load.
 	 *
 	 * @param array<int, string>|null $allowed_font_ids Optional array of allowed font IDs to filter by.
 	 * @return string
@@ -624,6 +656,10 @@ class FontRegistry {
 		}
 
 		foreach ( $fonts as $font ) {
+			if ( ( ! empty( $font['font_type'] ) && 'opentype_svg' === $font['font_type'] ) || ! empty( $font['color_svg'] ) ) {
+				continue;
+			}
+
 			if ( ! empty( $font['url'] ) ) {
 				$parsed   = wp_parse_url( $font['url'] );
 				$font_url = ! empty( $parsed['path'] ) ? $parsed['path'] : esc_url( $font['url'] );

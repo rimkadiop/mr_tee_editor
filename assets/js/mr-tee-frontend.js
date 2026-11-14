@@ -75,19 +75,59 @@ class MrTeeFrontendApp {
 		// Initial Render
 		this.renderSceneGraph();
 
-		// 5. Immediately pre-warm the active line font glyphs so typing any letter is 0ms instant
-		this.prewarmActiveLineFonts();
+		// 5. Stage 1 (Critical Initial Paint): Immediately decode ONLY the default_text glyphs
+		//    so the visible product preview renders with 0ms delay and zero bandwidth contention.
+		this.prewarmDefaultTextGlyphs();
 
-		// 6. Idle-prefetch remaining allowed OpenType-SVG font manifests so switching fonts is instant on mobile
-		if (typeof window.requestIdleCallback === 'function') {
-			window.requestIdleCallback(() => this.prefetchAllowedSvgFonts());
-		} else {
-			setTimeout(() => this.prefetchAllowedSvgFonts(), 800);
+		// 6. Stage 2 (Post-Load / Idle): Pre-warm the remaining A-Z, 0-9 alphabet in throttled batches
+		//    and lazy-fetch secondary allowed OpenType-SVG manifests in the background.
+		this.scheduleStageTwoWarmup();
+	}
+
+	/**
+	 * Stage 1: Immediately decode only the glyph bitmaps used by each line's initial default_text.
+	 */
+	prewarmDefaultTextGlyphs() {
+		const preloaded = (this.data && this.data.svgFonts) || {};
+		const textLines = this.config.text_lines || [];
+
+		for (const line of textLines) {
+			const activeFontId = line.font || (Array.isArray(line.allowed_fonts) && line.allowed_fonts[0]);
+			const defaultText = line.default_text || '';
+			if (!activeFontId || !defaultText) continue;
+
+			const sData = preloaded[activeFontId] || SvgRenderer.getSvgFontData(activeFontId);
+			if (sData) {
+				SvgRenderer.prewarmTextGlyphs(sData, defaultText);
+			}
 		}
 	}
 
 	/**
-	 * Immediately pre-warm all glyph bitmaps (A-Z, 0-9) for the currently active font on each line.
+	 * Schedule Stage 2 background alphabet pre-warming and secondary manifest prefetching
+	 * after initial page load completes so LCP and initial default_text glyphs have 100% network priority.
+	 */
+	scheduleStageTwoWarmup() {
+		const runStageTwo = () => {
+			const idleExec = typeof window.requestIdleCallback === 'function'
+				? (fn) => window.requestIdleCallback(fn, { timeout: 1500 })
+				: (fn) => setTimeout(fn, 250);
+
+			idleExec(() => {
+				this.prewarmActiveLineFonts();
+				setTimeout(() => this.prefetchAllowedSvgFonts(), 600);
+			});
+		};
+
+		if (document.readyState === 'complete') {
+			runStageTwo();
+		} else {
+			window.addEventListener('load', runStageTwo, { once: true });
+		}
+	}
+
+	/**
+	 * Stage 2: Pre-warm all glyph bitmaps (A-Z, 0-9) in throttled batches for the active font on each line.
 	 */
 	prewarmActiveLineFonts() {
 		const fonts = (this.data && this.data.fonts) || {};
@@ -104,7 +144,7 @@ class MrTeeFrontendApp {
 			if (!activeFontId) continue;
 			const fDef = fonts[activeFontId];
 			if (fDef && (fDef.font_type === 'opentype_svg' || fDef.color_svg)) {
-				SvgRenderer.ensureSvgFontLoaded(activeFontId, fDef).catch(() => {});
+				SvgRenderer.ensureSvgFontLoaded(activeFontId, fDef, { prewarmGlyphs: true }).catch(() => {});
 			}
 		}
 	}
@@ -177,8 +217,8 @@ class MrTeeFrontendApp {
 	}
 
 	/**
-	 * Idle-prefetch allowed OpenType-SVG font manifests in the background
-	 * so when the user taps any font pill, the font switches instantly with zero lag.
+	 * Idle-prefetch secondary allowed OpenType-SVG font manifests (~20 KB JSON only, without
+	 * downloading all 36 glyph bitmaps per unselected font) so tapping any font pill is instant.
 	 */
 	prefetchAllowedSvgFonts() {
 		const fonts = (this.data && this.data.fonts) || {};
@@ -197,7 +237,7 @@ class MrTeeFrontendApp {
 
 		for (const fId of toPrefetch) {
 			const fDef = fonts[fId];
-			SvgRenderer.ensureSvgFontLoaded(fId, fDef).catch(() => {});
+			SvgRenderer.ensureSvgFontLoaded(fId, fDef, { prewarmGlyphs: false }).catch(() => {});
 		}
 	}
 

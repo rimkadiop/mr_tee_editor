@@ -44,20 +44,23 @@ export class FormController {
 			const charCounter = group.querySelector('.mr-tee-char-count');
 			const previewText = document.getElementById(`mr-tee-preview-text-${lineIdx}`);
 
-			input.addEventListener('focus', () => {
+			const warmLineFont = () => {
 				const activeFontId = lineConfig.font || (Array.isArray(lineConfig.allowed_fonts) && lineConfig.allowed_fonts[0]);
 				if (activeFontId) {
 					const sData = SvgRenderer.getSvgFontData(activeFontId);
 					if (sData) {
-						SvgRenderer.prewarmFontGlyphs(sData);
+						SvgRenderer.prewarmFontGlyphs(sData, { immediate: true });
 					} else {
 						const fonts = (window.mrTeeProductData && window.mrTeeProductData.fonts) || {};
 						if (fonts[activeFontId] && (fonts[activeFontId].font_type === 'opentype_svg' || fonts[activeFontId].color_svg)) {
-							SvgRenderer.ensureSvgFontLoaded(activeFontId, fonts[activeFontId]).catch(() => {});
+							SvgRenderer.ensureSvgFontLoaded(activeFontId, fonts[activeFontId], { prewarmGlyphs: true }).catch(() => {});
 						}
 					}
 				}
-			});
+			};
+
+			input.addEventListener('pointerdown', warmLineFont, { passive: true });
+			input.addEventListener('focus', warmLineFont);
 
 			input.addEventListener('input', () => {
 				const val = input.value;
@@ -75,6 +78,15 @@ export class FormController {
 
 		// 2. Font Selector Pills with Live Typography Sync
 		this.container.querySelectorAll('.mr-tee-font-pill').forEach((pill) => {
+			pill.addEventListener('pointerdown', () => {
+				const fontId = pill.getAttribute('data-font-id');
+				const fonts = (window.mrTeeProductData && window.mrTeeProductData.fonts) || {};
+				const fontDef = fonts[fontId] || null;
+				if (fontDef && (fontDef.font_type === 'opentype_svg' || fontDef.color_svg)) {
+					SvgRenderer.ensureSvgFontLoaded(fontId, fontDef, { prewarmGlyphs: false }).catch(() => {});
+				}
+			}, { passive: true });
+
 			pill.addEventListener('click', () => {
 				const pillsContainer = pill.closest('.mr-tee-font-pills');
 				const lineIdx = parseInt(pillsContainer.getAttribute('data-line-index'), 10);
@@ -89,19 +101,22 @@ export class FormController {
 					|| (window.mrTeeProductData && window.mrTeeProductData.config && window.mrTeeProductData.config.fonts)
 					|| {};
 				const fontDef = fonts[fontId] || null;
+				const isOtSvg = Boolean(fontDef && (fontDef.font_type === 'opentype_svg' || fontDef.color_svg));
 
 				const previewText = document.getElementById(`mr-tee-preview-text-${lineIdx}`);
 				if (previewText && fontDef) {
-					previewText.style.fontFamily = `'${fontDef.family}', sans-serif`;
+					previewText.style.fontFamily = isOtSvg ? 'Arial Black, Impact, sans-serif' : `'${fontDef.family}', sans-serif`;
 					previewText.style.letterSpacing = fontDef.letter_spacing !== undefined ? `${fontDef.letter_spacing}em` : '0.05em';
 					previewText.style.textTransform = fontDef.uppercase ? 'uppercase' : 'none';
 				}
 
 				const refId = lineConfig.ref_id || `id-ref-text-line-${lineIdx + 1}`;
 				lineConfig.font = fontId;
+				const currentInput = document.getElementById(`mr_tee_line_${lineIdx}`);
+				const currentText = currentInput ? currentInput.value : (lineConfig.default_text || '');
 
-				if (fontDef && (fontDef.font_type === 'opentype_svg' || fontDef.color_svg)) {
-					SvgRenderer.ensureSvgFontLoaded(fontId, fontDef).then(() => {
+				if (isOtSvg) {
+					SvgRenderer.ensureSvgFontLoaded(fontId, fontDef, { prewarmGlyphs: true, priorityText: currentText }).then(() => {
 						this.store.setTextFont(refId, fontId, fontDef);
 					});
 				} else {

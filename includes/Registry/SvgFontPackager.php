@@ -43,6 +43,20 @@ class SvgFontPackager {
 	const THUMB_MAX = 72;
 
 	/**
+	 * Per-request in-memory cache of decoded font manifests.
+	 *
+	 * @var array<string, array<string, mixed>|null>
+	 */
+	private static $manifest_cache = array();
+
+	/**
+	 * Per-request in-memory cache of versioned asset URLs (manifest & thumb).
+	 *
+	 * @var array<string, string>
+	 */
+	private static $url_cache = array();
+
+	/**
 	 * Get absolute base directory of the plugin.
 	 *
 	 * @return string
@@ -106,11 +120,18 @@ class SvgFontPackager {
 	 * @return string
 	 */
 	public static function manifest_url( $font_id ) {
+		$cache_key = 'm:' . $font_id;
+		if ( isset( self::$url_cache[ $cache_key ] ) ) {
+			return self::$url_cache[ $cache_key ];
+		}
 		$file = self::manifest_path( $font_id );
 		if ( ! file_exists( $file ) ) {
+			self::$url_cache[ $cache_key ] = '';
 			return '';
 		}
-		return self::package_url_path( $font_id ) . 'manifest.json?v=' . filemtime( $file );
+		$url = self::package_url_path( $font_id ) . 'manifest.json?v=' . filemtime( $file );
+		self::$url_cache[ $cache_key ] = $url;
+		return $url;
 	}
 
 	/**
@@ -120,12 +141,19 @@ class SvgFontPackager {
 	 * @return string
 	 */
 	public static function thumb_url( $font_id ) {
+		$cache_key = 't:' . $font_id;
+		if ( isset( self::$url_cache[ $cache_key ] ) ) {
+			return self::$url_cache[ $cache_key ];
+		}
 		$dir = self::package_dir( $font_id );
 		foreach ( array( 'thumb.webp', 'thumb.png' ) as $name ) {
 			if ( file_exists( $dir . $name ) ) {
-				return self::package_url_path( $font_id ) . $name . '?v=' . filemtime( $dir . $name );
+				$url = self::package_url_path( $font_id ) . $name . '?v=' . filemtime( $dir . $name );
+				self::$url_cache[ $cache_key ] = $url;
+				return $url;
 			}
 		}
+		self::$url_cache[ $cache_key ] = '';
 		return '';
 	}
 
@@ -158,17 +186,20 @@ class SvgFontPackager {
 	 * @return array<string, mixed>|null
 	 */
 	public static function get_manifest( $font_path, $font_id, $font_name = '' ) {
+		if ( array_key_exists( $font_id, self::$manifest_cache ) ) {
+			return self::$manifest_cache[ $font_id ];
+		}
+
 		if ( ! self::is_fresh( $font_path, $font_id ) ) {
 			$built = self::build( $font_path, $font_id, $font_name );
-			if ( empty( $built ) ) {
-				return null;
-			}
-			return $built;
+			self::$manifest_cache[ $font_id ] = ! empty( $built ) ? $built : null;
+			return self::$manifest_cache[ $font_id ];
 		}
 
 		$json = file_get_contents( self::manifest_path( $font_id ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
 		$data = json_decode( (string) $json, true );
-		return is_array( $data ) && ! empty( $data['glyphs'] ) ? $data : null;
+		self::$manifest_cache[ $font_id ] = ( is_array( $data ) && ! empty( $data['glyphs'] ) ) ? $data : null;
+		return self::$manifest_cache[ $font_id ];
 	}
 
 	/**
@@ -405,7 +436,10 @@ class SvgFontPackager {
 			fclose( $lock_handle ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 		}
 
-		return json_decode( $json, true );
+		unset( self::$url_cache[ 'm:' . $font_id ], self::$url_cache[ 't:' . $font_id ] );
+		$decoded = json_decode( $json, true );
+		self::$manifest_cache[ $font_id ] = is_array( $decoded ) ? $decoded : null;
+		return self::$manifest_cache[ $font_id ];
 	}
 
 	/**

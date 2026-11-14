@@ -7,7 +7,7 @@
 
 /* Container */
 .mr-tee-editor-container {
-	margin: 20px 0;
+	margin: 14px 0;
 	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 	color: #111827;
 }
@@ -16,33 +16,33 @@
 .mr-tee-card.mr-tee-main-card {
 	background: #edf5fc;
 	border: 1px solid #d9e8f5;
-	border-radius: 18px;
-	padding: 24px 20px;
+	border-radius: 14px;
+	padding: 16px 14px;
 	box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
 }
 
 .mr-tee-card-header {
-	margin-bottom: 16px;
+	margin-bottom: 10px;
 }
 
 .mr-tee-card-title {
 	margin: 0;
-	font-size: 13.5px;
+	font-size: 13px;
 	font-weight: 800;
 	letter-spacing: 0.6px;
 	color: #154694;
 	text-transform: uppercase;
 	display: flex;
 	align-items: center;
-	gap: 10px;
+	gap: 8px;
 }
 
 .mr-tee-badge-number {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 22px;
-	height: 22px;
+	width: 21px;
+	height: 21px;
 	border-radius: 50%;
 	background: #154694;
 	color: #ffffff;
@@ -52,16 +52,20 @@
 
 /* Floating Label Inputs */
 .mr-tee-field-group {
-	margin-bottom: 14px;
+	margin-bottom: 10px;
+}
+
+.mr-tee-field-group:last-child {
+	margin-bottom: 0;
 }
 
 .mr-tee-floating-label-wrap {
 	position: relative;
 	background: #ffffff;
 	border: 1.5px solid #cbd5e1;
-	border-radius: 12px;
-	padding: 0 16px;
-	height: 56px;
+	border-radius: 10px;
+	padding: 0 12px;
+	height: 48px;
 	display: flex;
 	align-items: center;
 	transition: all 0.2s ease;
@@ -77,7 +81,7 @@
 	border: none !important;
 	outline: none !important;
 	background: transparent !important;
-	padding: 18px 50px 4px 0 !important;
+	padding: 15px 46px 3px 0 !important;
 	font-size: 15px !important;
 	font-weight: 600 !important;
 	color: #0f172a !important;
@@ -86,10 +90,10 @@
 
 .mr-tee-floating-label {
 	position: absolute;
-	left: 16px;
-	top: 18px;
+	left: 12px;
+	top: 14px;
 	color: #64748b;
-	font-size: 14px;
+	font-size: 13.5px;
 	font-weight: 500;
 	pointer-events: none;
 	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -98,52 +102,52 @@
 
 .mr-tee-text-input:focus ~ .mr-tee-floating-label,
 .mr-tee-text-input:not(:placeholder-shown) ~ .mr-tee-floating-label {
-	top: 7px;
-	font-size: 11px;
+	top: 5px;
+	font-size: 10.5px;
 	font-weight: 700;
 	color: #154694;
 }
 
 .mr-tee-char-counter {
 	position: absolute;
-	right: 14px;
-	top: 18px;
-	font-size: 12px;
+	right: 12px;
+	top: 15px;
+	font-size: 11px;
 	font-weight: 600;
 	color: #94a3b8;
 }
 
 .mr-tee-floating-label-wrap:has(.mr-tee-textarea) {
 	height: auto;
-	min-height: 80px;
-	padding-top: 14px;
-	padding-bottom: 10px;
+	min-height: 68px;
+	padding-top: 12px;
+	padding-bottom: 8px;
 	align-items: flex-start;
 }
 
 .mr-tee-textarea {
 	resize: vertical;
-	min-height: 52px;
-	line-height: 1.4 !important;
+	min-height: 46px;
+	line-height: 1.35 !important;
 	padding-top: 10px !important;
 }
 
 /* Color Swatch Picker */
 .mr-tee-color-swatches-wrap {
-	margin-top: 10px;
-	margin-bottom: 8px;
+	margin-top: 8px;
+	margin-bottom: 6px;
 }
 
 .mr-tee-color-swatches-list {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 8px;
-	margin-top: 6px;
+	gap: 7px;
+	margin-top: 4px;
 }
 
 .mr-tee-color-swatch-pill {
-	width: 28px;
-	height: 28px;
+	width: 26px;
+	height: 26px;
 	border-radius: 50%;
 	cursor: pointer;
 	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -165,26 +169,33 @@
 
 /* Font Pills */
 .mr-tee-font-selector-row {
-	margin-top: 8px;
+	margin-top: 6px;
 }
 
 .mr-tee-font-pills {
 	display: flex;
-	gap: 8px;
+	gap: 6px;
 	overflow-x: auto;
-	padding-bottom: 4px;
-	scrollbar-width: thin;
+	padding-bottom: 2px;
+	-webkit-overflow-scrolling: touch;
+	scrollbar-width: none;
+}
+
+.mr-tee-font-pills::-webkit-scrollbar {
+	display: none;
 }
 
 .mr-tee-font-pill {
 	border: 1.5px solid #cbd5e1;
 	background: #ffffff;
 	border-radius: 99px;
-	padding: 6px 14px;
-	font-size: 13px;
+	padding: 5px 11px;
+	font-size: 12px;
+	line-height: 1.25;
 	color: #334155;
 	cursor: pointer;
 	white-space: nowrap;
+	flex-shrink: 0;
 	transition: all 0.15s ease;
 }
 
@@ -620,126 +631,137 @@
 	justify-content: center !important;
 }
 
-/* 3. Inline Typography Preview Pill */
-.mr-tee-inline-typography-preview {
-	margin-top: 8px;
-	padding: 8px 14px;
-	background: #ffffff;
-	border: 1px dashed #cbd5e1;
-	border-radius: 10px;
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	font-size: 13px;
-	color: #64748b;
+/* 3. Live Pinned Product Stage (Mobile & Tablet Real-Time Preview While Typing) */
+.mr-tee-gallery-spacer {
+	width: 100%;
+	display: none;
+	pointer-events: none;
 }
 
-.mr-tee-inline-preview-label {
-	font-size: 11px;
-	text-transform: uppercase;
-	font-weight: 700;
-	color: #94a3b8;
-	letter-spacing: 0.5px;
-	white-space: nowrap;
-}
-
-.mr-tee-inline-preview-text {
-	font-size: 16px;
-	color: #154694;
-	letter-spacing: 0.08em;
-	word-break: break-word;
-	flex: 1;
-}
-
-/* 4. Mobile Sticky Live Preview Bar */
-@media (max-width: 768px) {
-	.mr-tee-mobile-sticky-preview {
-		position: sticky;
-		top: 12px;
-		z-index: 99;
-		margin: -10px 0 16px 0;
-		background: rgba(255, 255, 255, 0.96);
-		backdrop-filter: blur(8px);
-		border: 1.5px solid #154694;
-		border-radius: 14px;
-		padding: 8px 12px;
-		box-shadow: 0 8px 24px rgba(21, 70, 148, 0.14);
-		transition: all 0.25s ease;
+@media (max-width: 991px) {
+	.woocommerce-product-gallery.mr-tee-gallery-pinned {
+		position: fixed !important;
+		left: 0 !important;
+		right: 0 !important;
+		width: 100% !important;
+		max-width: 100% !important;
+		height: var(--mr-tee-pinned-h, 210px) !important;
+		max-height: var(--mr-tee-pinned-h, 210px) !important;
+		z-index: 90 !important;
+		background: #ffffff !important;
+		padding: 6px 12px !important;
+		margin: 0 !important;
+		border-bottom: 1px solid #e2e8f0 !important;
+		box-shadow: 0 6px 20px rgba(15, 23, 42, 0.12) !important;
+		overflow: hidden !important;
+		box-sizing: border-box !important;
+		aspect-ratio: auto !important;
+		display: flex !important;
+		align-items: center !important;
+		justify-content: center !important;
 	}
 
-	.mr-tee-sticky-inner {
-		display: flex;
-		align-items: center;
-		gap: 12px;
+	.woocommerce-product-gallery.mr-tee-gallery-pinned .flex-viewport,
+	.woocommerce-product-gallery.mr-tee-gallery-pinned .woocommerce-product-gallery__wrapper {
+		height: 100% !important;
+		max-height: 100% !important;
+		width: 100% !important;
+		aspect-ratio: auto !important;
 	}
 
-	.mr-tee-sticky-thumb-box {
-		width: 48px;
-		height: 48px;
-		background: #f1f5f9;
-		border-radius: 8px;
-		overflow: hidden;
-		position: relative;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		border: 1px solid #e2e8f0;
-		flex-shrink: 0;
+	.woocommerce-product-gallery.mr-tee-gallery-pinned .woocommerce-product-gallery__wrapper:not(.flex-viewport .woocommerce-product-gallery__wrapper) {
+		display: flex !important;
+		align-items: center !important;
+		justify-content: center !important;
 	}
 
-	.mr-tee-mobile-overlay-mini {
-		width: 100%;
-		height: 100%;
-		display: flex;
-		align-items: center;
-		justify-content: center;
+	.woocommerce-product-gallery.mr-tee-gallery-pinned .woocommerce-product-gallery__image {
+		height: 100% !important;
+		width: fit-content !important;
+		max-width: 100% !important;
+		margin: 0 auto !important;
+		display: flex !important;
+		align-items: center !important;
+		justify-content: center !important;
+		position: relative !important;
 	}
 
-	.mr-tee-mobile-overlay-mini svg {
-		width: 100%;
-		height: 100%;
+	.woocommerce-product-gallery.mr-tee-gallery-pinned .woocommerce-product-gallery__image > a {
+		height: 100% !important;
+		width: auto !important;
+		display: flex !important;
+		align-items: center !important;
+		justify-content: center !important;
 	}
 
-	.mr-tee-sticky-meta {
-		flex: 1;
-		min-width: 0;
-		display: flex;
-		flex-direction: column;
+	.woocommerce-product-gallery.mr-tee-gallery-pinned .woocommerce-product-gallery__image img:not(.zoomImg):not(.emoji) {
+		height: 100% !important;
+		width: auto !important;
+		max-width: 100% !important;
+		object-fit: contain !important;
+		display: block !important;
+		margin: 0 auto !important;
 	}
 
-	.mr-tee-sticky-tag {
-		font-size: 10px;
-		font-weight: 800;
-		color: #154694;
-		text-transform: uppercase;
-		letter-spacing: 0.5px;
+	.woocommerce-product-gallery.mr-tee-gallery-pinned .flex-control-thumbs,
+	.woocommerce-product-gallery.mr-tee-gallery-pinned .flex-direction-nav {
+		display: none !important;
 	}
 
-	.mr-tee-sticky-title {
-		font-size: 12px;
-		font-weight: 600;
-		color: #1e293b;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
+	.woocommerce-product-gallery.mr-tee-gallery-pinned .woocommerce-product-gallery__trigger {
+		top: 6px !important;
+		right: 10px !important;
+		width: 30px !important;
+		height: 30px !important;
+		z-index: 30 !important;
 	}
 
-	.mr-tee-sticky-btn-scroll {
-		width: 32px;
-		height: 32px;
-		border-radius: 50%;
-		border: none;
-		background: #edf5fc;
-		color: #154694;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		cursor: pointer;
+	/* Keep locked aspect ratio products (flat objects, mugs, tote bags) proportional inside pinned stage */
+	.mr-tee-locked-aspect-ratio .woocommerce-product-gallery.mr-tee-gallery-pinned,
+	.mr-tee-locked-aspect-ratio .woocommerce-product-gallery.mr-tee-gallery-pinned .flex-viewport,
+	.mr-tee-locked-aspect-ratio .woocommerce-product-gallery.mr-tee-gallery-pinned .woocommerce-product-gallery__wrapper {
+		width: 100% !important;
+		height: var(--mr-tee-pinned-h, 210px) !important;
+		aspect-ratio: auto !important;
+	}
+
+	.mr-tee-locked-aspect-ratio .woocommerce-product-gallery.mr-tee-gallery-pinned .woocommerce-product-gallery__image {
+		height: 100% !important;
+		width: auto !important;
+		max-width: 100% !important;
+		aspect-ratio: var(--mr-tee-aspect-ratio, 1 / 1) !important;
+		margin: 0 auto !important;
+	}
+
+	.mr-tee-locked-aspect-ratio .woocommerce-product-gallery.mr-tee-gallery-pinned .woocommerce-product-gallery__image img:not(.zoomImg):not(.emoji) {
+		width: 100% !important;
+		height: 100% !important;
+	}
+
+	body.mr-tee-has-pinned-gallery header.site-header,
+	body.mr-tee-has-pinned-gallery #masthead {
+		background-color: #ffffff !important;
 	}
 }
 
-/* 5. Desktop Sticky Gallery & Stage Overlay Protection */
+/* 4. Desktop Sticky Gallery & Stage Overlay Protection */
+.has-mr-tee-editor .product-details-wrapper {
+	overflow: visible !important;
+	display: flow-root !important;
+}
+
 @media (min-width: 992px) {
+	html:has(body.has-mr-tee-editor),
+	body.has-mr-tee-editor,
+	.wp-theme-shoptimizer.has-mr-tee-editor {
+		overflow-x: clip !important;
+		overflow-y: visible !important;
+	}
+
+	.mr-tee-card.mr-tee-main-card {
+		padding: 18px 18px;
+	}
+
 	.woocommerce div.product div.images,
 	.woocommerce-product-gallery {
 		position: sticky !important;
@@ -766,4 +788,5 @@
 .mrtee-ot-glyph image {
 	image-rendering: auto;
 }
+
 

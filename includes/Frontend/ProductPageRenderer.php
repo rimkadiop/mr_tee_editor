@@ -352,22 +352,6 @@ class ProductPageRenderer {
 
 		?>
 		<div id="mr-tee-editor-container" class="mr-tee-editor-container" data-product-id="<?php echo esc_attr( $post->ID ); ?>">
-			<!-- Mobile Sticky Live Preview Bar -->
-			<div id="mr-tee-mobile-sticky-preview" class="mr-tee-mobile-sticky-preview" style="display:none;">
-				<div class="mr-tee-sticky-inner">
-					<div class="mr-tee-sticky-thumb-box" style="background-image: url('<?php echo esc_url( get_the_post_thumbnail_url( $post->ID, 'thumbnail' ) ); ?>'); background-size: cover; background-position: center;">
-						<div class="mr-tee-mobile-overlay-mini"></div>
-					</div>
-					<div class="mr-tee-sticky-meta">
-						<span class="mr-tee-sticky-tag"><?php esc_html_e( 'Aperçu en direct', 'mr-tee-editor' ); ?></span>
-						<span class="mr-tee-sticky-title"><?php echo esc_html( get_the_title( $post->ID ) ); ?></span>
-					</div>
-					<button type="button" class="mr-tee-sticky-btn-scroll" id="mr-tee-btn-scroll-mockup" title="<?php esc_attr_e( 'Voir mockup', 'mr-tee-editor' ); ?>">
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>
-					</button>
-				</div>
-			</div>
-
 			<!-- Header Card: PERSONNALISER -->
 			<div class="mr-tee-card mr-tee-main-card">
 				<div class="mr-tee-card-header">
@@ -381,10 +365,7 @@ class ProductPageRenderer {
 				<div class="mr-tee-text-inputs-wrap">
 					<?php foreach ( $config['text_lines'] as $idx => $line ) : ?>
 						<?php
-						$field_id      = 'mr_tee_line_' . $idx;
-						$cur_font      = isset( $fonts[ $line['font'] ] ) ? $fonts[ $line['font'] ] : FontRegistry::get_font( $line['font'] );
-						$is_cur_ot_svg = ( ! empty( $cur_font['font_type'] ) && 'opentype_svg' === $cur_font['font_type'] ) || ! empty( $cur_font['color_svg'] );
-						$preview_ff    = $is_cur_ot_svg ? 'Arial Black, Impact, sans-serif' : "'" . esc_attr( $cur_font['family'] ) . "', Arial Black, Impact, sans-serif";
+						$field_id = 'mr_tee_line_' . $idx;
 						?>
 						<div class="mr-tee-field-group" data-line-index="<?php echo esc_attr( $idx ); ?>" data-line-id="<?php echo esc_attr( $line['id'] ); ?>">
 							<div class="mr-tee-input-row">
@@ -421,12 +402,6 @@ class ProductPageRenderer {
 										<span class="mr-tee-char-count"><?php echo mb_strlen( $line['default_text'] ); ?></span>/<?php echo esc_attr( $line['max_chars'] ); ?>
 									</span>
 								</div>
-							</div>
-
-							<!-- Live Typography Preview Pill -->
-							<div class="mr-tee-inline-typography-preview" id="mr-tee-inline-preview-<?php echo esc_attr( $idx ); ?>">
-								<span class="mr-tee-inline-preview-label"><?php esc_html_e( 'Rendu typographique :', 'mr-tee-editor' ); ?></span>
-								<span class="mr-tee-inline-preview-text" id="mr-tee-preview-text-<?php echo esc_attr( $idx ); ?>" style="font-family: <?php echo $preview_ff; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>;"><?php echo esc_html( $line['default_text'] ); ?></span>
 							</div>
 
 							<!-- Color Swatch Selector Pills (for embroidery thread or ink) -->

@@ -11,7 +11,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.3.7';
+import { SvgRenderer } from './svg-renderer.js?v=2.3.10';
 
 export class FormController {
 	constructor(store, config, onExportRequested) {
@@ -36,13 +36,12 @@ export class FormController {
 	bindEvents() {
 		if (!this.container) return;
 
-		// 1. Text Inputs with Live Character Counters & Inline Typography Sync
+		// 1. Text Inputs with Live Character Counters & Stage Sync
 		this.container.querySelectorAll('.mr-tee-text-inputs-wrap .mr-tee-text-input').forEach((input) => {
 			const group = input.closest('.mr-tee-field-group');
 			const lineIdx = parseInt(group.getAttribute('data-line-index'), 10);
 			const lineConfig = (this.config.text_lines && this.config.text_lines[lineIdx]) || {};
 			const charCounter = group.querySelector('.mr-tee-char-count');
-			const previewText = document.getElementById(`mr-tee-preview-text-${lineIdx}`);
 
 			const warmLineFont = () => {
 				const activeFontId = lineConfig.font || (Array.isArray(lineConfig.allowed_fonts) && lineConfig.allowed_fonts[0]);
@@ -67,16 +66,13 @@ export class FormController {
 				if (charCounter) {
 					charCounter.textContent = val.length;
 				}
-				if (previewText) {
-					previewText.textContent = val || '(vide)';
-				}
 				if (lineConfig.ref_id) {
 					this.store.setTextValue(lineConfig.ref_id, val);
 				}
 			});
 		});
 
-		// 2. Font Selector Pills with Live Typography Sync
+		// 2. Font Selector Pills
 		this.container.querySelectorAll('.mr-tee-font-pill').forEach((pill) => {
 			pill.addEventListener('pointerdown', () => {
 				const fontId = pill.getAttribute('data-font-id');
@@ -102,13 +98,6 @@ export class FormController {
 					|| {};
 				const fontDef = fonts[fontId] || null;
 				const isOtSvg = Boolean(fontDef && (fontDef.font_type === 'opentype_svg' || fontDef.color_svg));
-
-				const previewText = document.getElementById(`mr-tee-preview-text-${lineIdx}`);
-				if (previewText && fontDef) {
-					previewText.style.fontFamily = isOtSvg ? 'Arial Black, Impact, sans-serif' : `'${fontDef.family}', sans-serif`;
-					previewText.style.letterSpacing = fontDef.letter_spacing !== undefined ? `${fontDef.letter_spacing}em` : '0.05em';
-					previewText.style.textTransform = fontDef.uppercase ? 'uppercase' : 'none';
-				}
 
 				const refId = lineConfig.ref_id || `id-ref-text-line-${lineIdx + 1}`;
 				lineConfig.font = fontId;
@@ -141,10 +130,6 @@ export class FormController {
 
 				if (colorHex) {
 					this.store.setColorSelection(colorRefId, colorHex);
-					const previewText = group ? group.closest('.mr-tee-field-group')?.querySelector('.mr-tee-inline-preview-text') : null;
-					if (previewText) {
-						previewText.style.color = colorHex;
-					}
 				}
 			});
 		});

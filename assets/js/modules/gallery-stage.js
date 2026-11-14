@@ -29,8 +29,11 @@ export class GalleryStage {
 	 * Mount overlay on the active WooCommerce gallery slide.
 	 */
 	init() {
+		this.isPinned = false;
+		this.isInputFocused = false;
+		this.lastPinnedKey = '';
 		this.mountOverlay();
-		this.initStickyPreview();
+		this.initLiveMobileStage();
 		this.bindGalleryEvents();
 		this.suppressZoom();
 		this.initPhotoSwipeSync();
@@ -327,48 +330,180 @@ export class GalleryStage {
 	}
 
 	/**
-	 * Initialize mobile sticky preview bar showing live updates when gallery is scrolled out of view.
+	 * Keep the real product image + live SVG overlay pinned cleanly at the top on mobile/tablet
+	 * while scrolling or typing in customization inputs, so clients always see their real-time
+	 * personalization directly on the product image without a separate tiny preview bar.
 	 */
-	initStickyPreview() {
-		this.stickyBar = document.getElementById('mr-tee-mobile-sticky-preview');
-		const btnScroll = document.getElementById('mr-tee-btn-scroll-mockup');
+	initLiveMobileStage() {
+		const gallery = document.querySelector('.woocommerce-product-gallery') || document.querySelector('.product .images');
+		if (!gallery || !gallery.parentNode) return;
 
-		if (btnScroll) {
-			btnScroll.addEventListener('click', () => {
-				const target = document.querySelector('.woocommerce-product-gallery') || document.querySelector('.product .images') || document.body;
-				target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-			});
+		let spacer = gallery.parentNode.querySelector('.mr-tee-gallery-spacer');
+		if (!spacer) {
+			spacer = document.createElement('div');
+			spacer.className = 'mr-tee-gallery-spacer';
+			spacer.style.display = 'none';
+			gallery.parentNode.insertBefore(spacer, gallery);
 		}
+		this.gallerySpacer = spacer;
+		this.galleryElem = gallery;
 
-		const checkScroll = () => {
-			if (!this.stickyBar) return;
-			const isMobile = window.innerWidth <= 768;
-			if (!isMobile) {
-				this.stickyBar.style.display = 'none';
-				return;
+		const getHeaderBottom = () => {
+			const header = document.querySelector('header.site-header, #masthead');
+			if (!header) return 0;
+			const cs = window.getComputedStyle(header);
+			if (cs.position !== 'fixed' && cs.position !== 'sticky') return 0;
+			const r = header.getBoundingClientRect();
+			if (r.height > 0 && r.bottom > 0 && r.top <= 4) {
+				return Math.round(r.bottom);
 			}
+			return 0;
+		};
 
-			const gallery = document.querySelector('.woocommerce-product-gallery') || document.querySelector('.product .images');
-			if (!gallery) return;
+		const getPinnedHeight = (headerBottom) => {
+			const vpH = (window.visualViewport && window.visualViewport.height) || window.innerHeight || 800;
+			const avail = Math.max(260, vpH - headerBottom);
+			if (this.isInputFocused || vpH < 600) {
+				return Math.max(145, Math.min(195, Math.round(avail * 0.35)));
+			}
+			return Math.max(185, Math.min(235, Math.round(avail * 0.31)));
+		};
 
-			const rect = gallery.getBoundingClientRect();
-			// If bottom of gallery is near top of viewport (user scrolled to form), show sticky preview
-			if (rect.bottom < 220) {
-				if (this.stickyBar.style.display !== 'block') {
-					this.stickyBar.style.display = 'block';
-					const miniOverlay = document.querySelector('.mr-tee-mobile-overlay-mini');
-					if (miniOverlay && this.currentSvgMarkup && miniOverlay.innerHTML !== this.currentSvgMarkup) {
-						miniOverlay.innerHTML = this.currentSvgMarkup;
-					}
-				}
-			} else {
-				this.stickyBar.style.display = 'none';
+		const recalibrateActive = () => {
+			if (this.overlayElem && this.overlayElem.parentElement) {
+				this.recalibrateOverlayPosition(this.overlayElem.parentElement, this.overlayElem);
 			}
 		};
 
-		window.addEventListener('scroll', checkScroll, { passive: true });
-		window.addEventListener('resize', checkScroll, { passive: true });
-		checkScroll();
+		const unpin = () => {
+			if (!this.isPinned) return;
+			this.isPinned = false;
+			this.lastPinnedKey = '';
+			gallery.classList.remove('mr-tee-gallery-pinned');
+			gallery.style.removeProperty('top');
+			gallery.style.removeProperty('--mr-tee-pinned-h');
+			document.body.classList.remove('mr-tee-has-pinned-gallery');
+			spacer.style.display = 'none';
+			spacer.style.height = '0px';
+			requestAnimationFrame(recalibrateActive);
+		};
+
+		const updatePinState = () => {
+			const isMobileLayout = window.innerWidth <= 991;
+			const pswpOpen = Boolean(document.querySelector('.pswp--open'));
+			if (!isMobileLayout || pswpOpen) {
+				unpin();
+				return;
+			}
+
+			const headerBottom = getHeaderBottom();
+			const pinnedH = getPinnedHeight(headerBottom);
+			const anchorRect = (this.isPinned ? spacer : gallery).getBoundingClientRect();
+
+			const editor = document.getElementById('mr-tee-editor-container');
+			const cartForm = document.querySelector('form.cart');
+			const activeArea = cartForm || editor;
+			const areaBottom = activeArea ? activeArea.getBoundingClientRect().bottom : 99999;
+			const footer = document.querySelector('footer, .site-footer, #colophon, [data-elementor-type="footer"]');
+			const footerHigh = Boolean(!this.isInputFocused && footer && footer.getBoundingClientRect().top < (headerBottom + pinnedH + 80));
+			const atPageBottom = Boolean(!this.isInputFocused && (window.innerHeight + window.scrollY) >= (document.documentElement.scrollHeight - 16));
+
+			const scrolledPastGalleryTop = anchorRect.top < (headerBottom - 4);
+			const stillNearEditor = areaBottom > (headerBottom + pinnedH + 24) && !footerHigh && !atPageBottom;
+
+			if (scrolledPastGalleryTop && stillNearEditor) {
+				if (!this.isPinned) {
+					const naturalH = Math.round(gallery.getBoundingClientRect().height);
+					if (naturalH > 40) {
+						spacer.style.height = `${naturalH}px`;
+						spacer.style.display = 'block';
+					}
+					this.isPinned = true;
+					gallery.classList.add('mr-tee-gallery-pinned');
+					document.body.classList.add('mr-tee-has-pinned-gallery');
+				}
+				const key = `${headerBottom}:${pinnedH}`;
+				if (this.lastPinnedKey !== key) {
+					this.lastPinnedKey = key;
+					gallery.style.top = `${headerBottom}px`;
+					gallery.style.setProperty('--mr-tee-pinned-h', `${pinnedH}px`);
+					requestAnimationFrame(recalibrateActive);
+				}
+			} else {
+				unpin();
+			}
+		};
+
+		this.updateMobileStagePin = updatePinState;
+
+		window.addEventListener('scroll', updatePinState, { passive: true });
+		window.addEventListener('resize', updatePinState, { passive: true });
+		if (window.visualViewport) {
+			window.visualViewport.addEventListener('resize', updatePinState, { passive: true });
+			window.visualViewport.addEventListener('scroll', updatePinState, { passive: true });
+		}
+
+		const editor = document.getElementById('mr-tee-editor-container');
+		if (editor) {
+			let blurTimer = null;
+			const ensureInputVisible = (targetEl) => {
+				if (window.innerWidth > 991 || !targetEl) return;
+				updatePinState();
+				const headerBottom = getHeaderBottom();
+				const vpH = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+				const pinnedH = getPinnedHeight(headerBottom);
+				const group = targetEl.closest('.mr-tee-field-group, .mr-tee-repeater-item-card') || targetEl;
+				const r = group.getBoundingClientRect();
+
+				if (this.isPinned) {
+					const safeTop = headerBottom + pinnedH + 10;
+					if (r.top < safeTop) {
+						window.scrollBy({ top: r.top - safeTop, behavior: 'smooth' });
+					} else if (r.bottom > vpH - 12) {
+						const maxShift = Math.max(0, r.top - safeTop);
+						const neededShift = r.bottom - (vpH - 12);
+						const delta = Math.min(neededShift, maxShift);
+						if (delta > 4) {
+							window.scrollBy({ top: delta, behavior: 'smooth' });
+						}
+					}
+				} else if (vpH < 600 || r.bottom > vpH - 12) {
+					// Compact keyboard viewport or input near bottom: scroll gallery top past header so compact stage pins cleanly without a white gap
+					const galRect = gallery.getBoundingClientRect();
+					const scrollNeeded = Math.max(galRect.top - headerBottom + 12, r.bottom - (vpH - 16));
+					if (scrollNeeded > 4) {
+						window.scrollBy({ top: scrollNeeded, behavior: 'smooth' });
+					}
+				}
+			};
+
+			editor.addEventListener('focusin', (e) => {
+				const textTarget = e.target && e.target.closest('.mr-tee-text-input, .mr-tee-rep-name-input');
+				const editorTarget = e.target && e.target.closest('input, textarea, button');
+				if (!editorTarget) return;
+				clearTimeout(blurTimer);
+				if (textTarget) {
+					this.isInputFocused = true;
+					setTimeout(() => ensureInputVisible(textTarget), 60);
+					setTimeout(() => ensureInputVisible(textTarget), 320);
+				} else {
+					updatePinState();
+				}
+			});
+
+			editor.addEventListener('focusout', () => {
+				clearTimeout(blurTimer);
+				blurTimer = setTimeout(() => {
+					const active = document.activeElement;
+					if (!active || !editor.contains(active) || !active.closest('.mr-tee-text-input, .mr-tee-rep-name-input')) {
+						this.isInputFocused = false;
+						updatePinState();
+					}
+				}, 150);
+			});
+		}
+
+		updatePinState();
 	}
 
 	/**
@@ -381,6 +516,7 @@ export class GalleryStage {
 				setTimeout(() => {
 					this.mountOverlay();
 					this.suppressZoom();
+					if (this.updateMobileStagePin) this.updateMobileStagePin();
 				}, 150);
 			}
 		});
@@ -391,6 +527,7 @@ export class GalleryStage {
 				setTimeout(() => {
 					this.mountOverlay();
 					this.suppressZoom();
+					if (this.updateMobileStagePin) this.updateMobileStagePin();
 				}, 100);
 			});
 		}
@@ -412,6 +549,7 @@ export class GalleryStage {
 					}
 				}
 				this.suppressZoom();
+				if (this.updateMobileStagePin) this.updateMobileStagePin();
 			}, 100);
 		});
 	}
@@ -436,19 +574,6 @@ export class GalleryStage {
 				this._lastDefsHtml = mountedDefs ? mountedDefs.innerHTML : '';
 			} else {
 				this.patchSvgInPlace(existingSvg, this.currentSvgMarkup);
-			}
-		}
-
-		// Synchronize mobile sticky preview ONLY when visible so hidden DOM never triggers double image decode
-		if (this.stickyBar && this.stickyBar.style.display === 'block') {
-			const miniOverlay = document.querySelector('.mr-tee-mobile-overlay-mini');
-			if (miniOverlay) {
-				const existingMiniSvg = miniOverlay.querySelector('svg#mr-tee-svg-element');
-				if (!existingMiniSvg || !this.currentSvgMarkup) {
-					miniOverlay.innerHTML = this.currentSvgMarkup;
-				} else {
-					this.patchSvgInPlace(existingMiniSvg, this.currentSvgMarkup);
-				}
 			}
 		}
 

@@ -7,7 +7,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.3.4';
+import { SvgRenderer } from './svg-renderer.js?v=2.3.7';
 
 export class PrintExporter {
 	/**
@@ -181,7 +181,19 @@ export class PrintExporter {
 				return;
 			}
 			try {
-				const resp = await fetch(url);
+				let fetchUrl = url;
+				if (typeof window !== 'undefined' && window.location && window.location.protocol === 'http:') {
+					try {
+						const parsed = new URL(url, window.location.origin);
+						if (parsed.hostname === window.location.hostname && parsed.protocol === 'https:') {
+							fetchUrl = parsed.pathname + parsed.search;
+						}
+					} catch (e) {}
+				}
+				const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+				const timer = ctrl ? setTimeout(() => ctrl.abort(), 12000) : null;
+				const resp = await fetch(fetchUrl, ctrl ? { signal: ctrl.signal } : undefined);
+				if (timer) clearTimeout(timer);
 				if (resp.ok) {
 					const blob = await resp.blob();
 					const b64 = await new Promise((res, rej) => {
@@ -218,21 +230,41 @@ export class PrintExporter {
 			const blob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
 			const url = URL.createObjectURL(blob);
 			const img = new Image();
+			let settled = false;
+
+			const timer = setTimeout(() => {
+				if (!settled) {
+					settled = true;
+					URL.revokeObjectURL(url);
+					reject(new Error('SVG rasterization timeout'));
+				}
+			}, 15000);
 
 			img.onload = () => {
-				const canvas = document.createElement('canvas');
-				canvas.width = width;
-				canvas.height = height;
-				const ctx = canvas.getContext('2d');
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				try {
+					const canvas = document.createElement('canvas');
+					canvas.width = width;
+					canvas.height = height;
+					const ctx = canvas.getContext('2d');
 
-				ctx.clearRect(0, 0, width, height);
-				ctx.drawImage(img, 0, 0, width, height);
-				URL.revokeObjectURL(url);
+					ctx.clearRect(0, 0, width, height);
+					ctx.drawImage(img, 0, 0, width, height);
+					URL.revokeObjectURL(url);
 
-				resolve(canvas.toDataURL('image/png'));
+					resolve(canvas.toDataURL('image/png'));
+				} catch (err) {
+					URL.revokeObjectURL(url);
+					reject(err);
+				}
 			};
 
 			img.onerror = (err) => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
 				URL.revokeObjectURL(url);
 				reject(err);
 			};
@@ -269,33 +301,73 @@ export class PrintExporter {
 			ctx.fillStyle = '#ffffff';
 			ctx.fillRect(0, 0, canvasW, canvasH);
 
+			let settled = false;
+			const finish = (val) => {
+				if (!settled) {
+					settled = true;
+					clearTimeout(safetyTimer);
+					resolve(val);
+				}
+			};
+			const safetyTimer = setTimeout(() => {
+				try {
+					finish(canvas.toDataURL('image/jpeg', 0.85));
+				} catch (e) {
+					finish('');
+				}
+			}, 15000);
+
 			const drawDesign = () => {
 				const blob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
 				const url = URL.createObjectURL(blob);
 				const designImg = new Image();
 
-				designImg.onload = () => {
-					let left, top, w, h;
+				const getPlacement = () => {
 					if (isFlatObject || hasPerLineBoxes) {
-						left = 0;
-						top = 0;
-						w = canvasW;
-						h = canvasH;
-					} else {
-						left = (parseFloat(config.box_left) || 26.0) / 100 * canvasW;
-						top = (parseFloat(config.box_top) || 23.0) / 100 * canvasH;
-						w = (parseFloat(config.box_width) || 48.0) / 100 * canvasW;
-						h = (parseFloat(config.box_height) || 54.0) / 100 * canvasH;
+						return { left: 0, top: 0, w: canvasW, h: canvasH };
 					}
+					return {
+						left: (parseFloat(config.box_left) || 26.0) / 100 * canvasW,
+						top: (parseFloat(config.box_top) || 23.0) / 100 * canvasH,
+						w: (parseFloat(config.box_width) || 48.0) / 100 * canvasW,
+						h: (parseFloat(config.box_height) || 54.0) / 100 * canvasH,
+					};
+				};
 
-					ctx.drawImage(designImg, left, top, w, h);
-					URL.revokeObjectURL(url);
-					resolve(canvas.toDataURL('image/jpeg', 0.85));
+				designImg.onload = () => {
+					const { left, top, w, h } = getPlacement();
+					try {
+						ctx.drawImage(designImg, left, top, w, h);
+						const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+						URL.revokeObjectURL(url);
+						finish(dataUrl);
+					} catch (err) {
+						// Recover from tainted canvas (cross-origin garmentImg) by exporting design on clean backdrop
+						try {
+							const cleanCanvas = document.createElement('canvas');
+							cleanCanvas.width = canvasW;
+							cleanCanvas.height = canvasH;
+							const cleanCtx = cleanCanvas.getContext('2d');
+							cleanCtx.fillStyle = '#ffffff';
+							cleanCtx.fillRect(0, 0, canvasW, canvasH);
+							cleanCtx.drawImage(designImg, left, top, w, h);
+							const cleanUrl = cleanCanvas.toDataURL('image/jpeg', 0.85);
+							URL.revokeObjectURL(url);
+							finish(cleanUrl);
+						} catch (fallbackErr) {
+							URL.revokeObjectURL(url);
+							finish('');
+						}
+					}
 				};
 
 				designImg.onerror = () => {
 					URL.revokeObjectURL(url);
-					resolve(canvas.toDataURL('image/jpeg', 0.85));
+					try {
+						finish(canvas.toDataURL('image/jpeg', 0.85));
+					} catch (e) {
+						finish('');
+					}
 				};
 
 				designImg.src = url;

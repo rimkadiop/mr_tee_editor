@@ -180,12 +180,16 @@ class ProductPageRenderer {
 			// Preload glyph images for default text characters with high priority (active font manifest is already inlined in HTML)
 			$default_text = ! empty( $line['default_text'] ) ? $line['default_text'] : '';
 			if ( '' !== $default_text ) {
+				$is_upper = ( isset( $line['casing'] ) && 'UPPER' === $line['casing'] ) || ! empty( $font['uppercase'] );
+				if ( $is_upper ) {
+					$default_text = mb_strtoupper( $default_text, 'UTF-8' );
+				}
 				$svg_data = FontRegistry::get_svg_font_data( $font_id );
 				if ( ! empty( $svg_data['glyphs'] ) ) {
 					$chars = preg_split( '//u', $default_text, -1, PREG_SPLIT_NO_EMPTY );
 					$seen  = array();
 					foreach ( $chars as $ch ) {
-						if ( ' ' === $ch || isset( $seen[ $ch ] ) ) {
+						if ( ' ' === $ch || "\n" === $ch || "\r" === $ch || isset( $seen[ $ch ] ) ) {
 							continue;
 						}
 						$seen[ $ch ] = true;
@@ -240,7 +244,7 @@ class ProductPageRenderer {
 		if ( empty( $filtered_fonts ) ) {
 			$filtered_fonts = $all_fonts;
 		}
-		$config['fonts'] = $filtered_fonts;
+		unset( $config['fonts'] );
 
 		// Frontend styles (all fancy display fonts bundled locally in assets/fonts/ with font-display: swap)
 		wp_enqueue_style(

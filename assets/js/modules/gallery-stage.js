@@ -498,7 +498,7 @@ export class GalleryStage {
 				}
 			}
 
-			// 3. Reconcile #mr-tee-scene-root in-place
+			// 3. Reconcile #mr-tee-scene-root in-place (recursively traversing .mrtee-group containers)
 			const existingRoot = existingSvg.querySelector('#mr-tee-scene-root');
 			const newRoot = newSvg.querySelector('#mr-tee-scene-root');
 			if (!existingRoot || !newRoot) {
@@ -506,64 +506,110 @@ export class GalleryStage {
 				return;
 			}
 
-			const newRootTransform = newRoot.getAttribute('transform');
-			if (newRootTransform) {
-				if (existingRoot.getAttribute('transform') !== newRootTransform) {
-					existingRoot.setAttribute('transform', newRootTransform);
-				}
-			} else if (existingRoot.hasAttribute('transform')) {
-				existingRoot.removeAttribute('transform');
-			}
-
-			const exChildren = existingRoot.children;
-			const nwChildren = newRoot.children;
-
-			if (exChildren.length === nwChildren.length) {
-				for (let i = 0; i < nwChildren.length; i++) {
-					const exChild = exChildren[i];
-					const nwChild = nwChildren[i];
-					if (
-						exChild.classList.contains('mrtee-opentype-svg-text') &&
-						nwChild.classList.contains('mrtee-opentype-svg-text')
-					) {
-						this.reconcileOpenTypeTextGroup(exChild, nwChild);
-					} else if (exChild.outerHTML !== nwChild.outerHTML) {
-						existingRoot.replaceChild(document.importNode(nwChild, true), exChild);
-					}
-				}
-			} else {
-				// Preserve existing OpenType-SVG text groups by data-node-id across line additions/removals
-				const existingOtMap = new Map();
-				for (let i = 0; i < exChildren.length; i++) {
-					const c = exChildren[i];
-					if (c.classList.contains('mrtee-opentype-svg-text')) {
-						const nid = c.getAttribute('data-node-id') || `__idx_${i}`;
-						existingOtMap.set(nid, c);
-					}
-				}
-
-				const nextNodes = [];
-				for (let i = 0; i < nwChildren.length; i++) {
-					const nwChild = nwChildren[i];
-					if (nwChild.classList.contains('mrtee-opentype-svg-text')) {
-						const nid = nwChild.getAttribute('data-node-id') || `__idx_${i}`;
-						const matchedEx = existingOtMap.get(nid);
-						if (matchedEx) {
-							existingOtMap.delete(nid);
-							this.reconcileOpenTypeTextGroup(matchedEx, nwChild);
-							nextNodes.push(matchedEx);
-							continue;
-						}
-					}
-					nextNodes.push(document.importNode(nwChild, true));
-				}
-
-				existingRoot.replaceChildren(...nextNodes);
-			}
+			this.reconcileContainer(existingRoot, newRoot);
 		} catch (err) {
 			if (existingSvg && existingSvg.parentNode) {
 				existingSvg.parentNode.innerHTML = svgMarkup;
 			}
+		}
+	}
+
+	/**
+	 * Recursively reconcile an SVG container (#mr-tee-scene-root or .mrtee-group)
+	 * in-place so existing .mrtee-opentype-svg-text glyph <image> nodes are never destroyed.
+	 *
+	 * @param {Element} existingContainer Currently mounted container element.
+	 * @param {Element} newContainer Newly parsed container element.
+	 */
+	reconcileContainer(existingContainer, newContainer) {
+		const newTransform = newContainer.getAttribute('transform');
+		if (newTransform) {
+			if (existingContainer.getAttribute('transform') !== newTransform) {
+				existingContainer.setAttribute('transform', newTransform);
+			}
+		} else if (existingContainer.hasAttribute('transform')) {
+			existingContainer.removeAttribute('transform');
+		}
+
+		const newClass = newContainer.getAttribute('class');
+		if (newClass !== null) {
+			if (existingContainer.getAttribute('class') !== newClass) {
+				existingContainer.setAttribute('class', newClass);
+			}
+		} else if (existingContainer.hasAttribute('class')) {
+			existingContainer.removeAttribute('class');
+		}
+
+		const exChildren = existingContainer.children;
+		const nwChildren = newContainer.children;
+
+		if (exChildren.length === nwChildren.length) {
+			for (let i = 0; i < nwChildren.length; i++) {
+				const exChild = exChildren[i];
+				const nwChild = nwChildren[i];
+				if (
+					exChild.classList.contains('mrtee-opentype-svg-text') &&
+					nwChild.classList.contains('mrtee-opentype-svg-text')
+				) {
+					this.reconcileOpenTypeTextGroup(exChild, nwChild);
+				} else if (
+					exChild.nodeName.toLowerCase() === 'g' &&
+					nwChild.nodeName.toLowerCase() === 'g' &&
+					(exChild.classList.contains('mrtee-group') || exChild.querySelector('.mrtee-opentype-svg-text, .mrtee-group')) &&
+					(nwChild.classList.contains('mrtee-group') || nwChild.querySelector('.mrtee-opentype-svg-text, .mrtee-group'))
+				) {
+					this.reconcileContainer(exChild, nwChild);
+				} else if (exChild.outerHTML !== nwChild.outerHTML) {
+					existingContainer.replaceChild(document.importNode(nwChild, true), exChild);
+				}
+			}
+		} else {
+			// Preserve existing OpenType-SVG text groups & .mrtee-group containers across line additions/removals
+			const existingMap = new Map();
+			const pushExisting = (key, el) => {
+				if (!existingMap.has(key)) existingMap.set(key, []);
+				existingMap.get(key).push(el);
+			};
+			const popExisting = (key) => {
+				const list = existingMap.get(key);
+				return list && list.length ? list.shift() : null;
+			};
+
+			for (let i = 0; i < exChildren.length; i++) {
+				const c = exChildren[i];
+				if (c.classList.contains('mrtee-opentype-svg-text')) {
+					const nid = c.getAttribute('data-node-id') || `__idx_${i}`;
+					pushExisting(`ot:${nid}`, c);
+				} else if (c.nodeName.toLowerCase() === 'g' && c.classList.contains('mrtee-group')) {
+					const cls = c.getAttribute('class') || `__idx_${i}`;
+					pushExisting(`grp:${cls}`, c);
+				}
+			}
+
+			const nextNodes = [];
+			for (let i = 0; i < nwChildren.length; i++) {
+				const nwChild = nwChildren[i];
+				if (nwChild.classList.contains('mrtee-opentype-svg-text')) {
+					const nid = nwChild.getAttribute('data-node-id') || `__idx_${i}`;
+					const matchedEx = popExisting(`ot:${nid}`);
+					if (matchedEx) {
+						this.reconcileOpenTypeTextGroup(matchedEx, nwChild);
+						nextNodes.push(matchedEx);
+						continue;
+					}
+				} else if (nwChild.nodeName.toLowerCase() === 'g' && nwChild.classList.contains('mrtee-group')) {
+					const cls = nwChild.getAttribute('class') || `__idx_${i}`;
+					const matchedEx = popExisting(`grp:${cls}`);
+					if (matchedEx) {
+						this.reconcileContainer(matchedEx, nwChild);
+						nextNodes.push(matchedEx);
+						continue;
+					}
+				}
+				nextNodes.push(document.importNode(nwChild, true));
+			}
+
+			existingContainer.replaceChildren(...nextNodes);
 		}
 	}
 

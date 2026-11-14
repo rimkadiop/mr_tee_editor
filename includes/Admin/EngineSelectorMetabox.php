@@ -173,7 +173,7 @@ class EngineSelectorMetabox {
 						<div class="mr-tee-registered-svg-fonts-grid" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap:12px;">
 							<?php foreach ( $fonts as $f_id => $f_data ) : ?>
 								<?php if ( ! empty( $f_data['font_type'] ) && 'opentype_svg' === $f_data['font_type'] ) : ?>
-									<div class="mr-tee-svg-font-card" style="background:#f1f5f9; border:1px solid #e2e8f0; border-radius:6px; padding:10px 14px; display:flex; align-items:center; justify-content:space-between;">
+									<div class="mr-tee-svg-font-card" data-font-id="<?php echo esc_attr( $f_id ); ?>" style="background:#f1f5f9; border:1px solid #e2e8f0; border-radius:6px; padding:10px 14px; display:flex; align-items:center; justify-content:space-between;">
 										<div>
 											<strong style="color:#0f172a; font-size:13px; display:block;"><?php echo esc_html( $f_data['name'] ); ?></strong>
 											<span style="font-size:11px; color:#64748b; font-family:monospace;"><?php echo esc_html( $f_data['file'] ); ?></span>

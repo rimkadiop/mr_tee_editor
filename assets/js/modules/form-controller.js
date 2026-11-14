@@ -11,7 +11,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.3.5';
+import { SvgRenderer } from './svg-renderer.js?v=2.3.7';
 
 export class FormController {
 	constructor(store, config, onExportRequested) {
@@ -116,7 +116,9 @@ export class FormController {
 				const currentText = currentInput ? currentInput.value : (lineConfig.default_text || '');
 
 				if (isOtSvg) {
-					SvgRenderer.ensureSvgFontLoaded(fontId, fontDef, { prewarmGlyphs: true, priorityText: currentText }).then(() => {
+					const isUpper = (lineConfig.casing === 'UPPER') || Boolean(fontDef && fontDef.uppercase);
+					const warmText = isUpper ? currentText.toUpperCase() : currentText;
+					SvgRenderer.ensureSvgFontLoaded(fontId, fontDef, { prewarmGlyphs: true, priorityText: warmText }).then(() => {
 						this.store.setTextFont(refId, fontId, fontDef);
 					});
 				} else {

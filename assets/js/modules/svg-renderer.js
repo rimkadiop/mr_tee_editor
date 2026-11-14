@@ -636,7 +636,7 @@ export class SvgRenderer {
 
 		for (let i = 0; i < text.length; i++) {
 			const ch = text[i];
-			if (ch === ' ' || ch === '\n') continue;
+			if (ch === ' ' || ch === '\n' || ch === '\r' || ch === '\t') continue;
 			const g = glyphs[ch] || glyphs[ch.toUpperCase()] || glyphs[ch.toLowerCase()];
 			if (!g || !g.svg) continue;
 
@@ -730,10 +730,17 @@ export class SvgRenderer {
 		if (!manifest) return null;
 		if (manifest.hydrated) return this.prepareFontData(manifest, fontId);
 
-		const pluginUrl = (typeof window !== 'undefined' && window.mrTeeProductData && window.mrTeeProductData.pluginUrl)
+		const rawPluginUrl = (typeof window !== 'undefined' && window.mrTeeProductData && window.mrTeeProductData.pluginUrl)
 			|| (typeof window !== 'undefined' && window.mrTeeAdminData && window.mrTeeAdminData.pluginUrl)
 			|| '/wp-content/plugins/mr_tee_editor/';
-		const base = manifest.base || `${pluginUrl}assets/fonts/cache/${fontId}/`;
+		let pluginPath = '/wp-content/plugins/mr_tee_editor/';
+		try {
+			pluginPath = new URL(rawPluginUrl, (typeof window !== 'undefined' && window.location) ? window.location.origin : 'http://localhost').pathname;
+		} catch (e) {
+			pluginPath = rawPluginUrl;
+		}
+		if (!pluginPath.endsWith('/')) pluginPath += '/';
+		const base = manifest.base || `${pluginPath}assets/fonts/cache/${fontId}/`;
 		const ver = manifest.v || '';
 		const images = manifest.images || {};
 		const previewUrls = {};
@@ -977,7 +984,8 @@ export class SvgRenderer {
 
 		const rotateAngle = parseFloat(node.box_rotate !== undefined ? node.box_rotate : (node.rotate !== undefined ? node.rotate : 0)) || 0;
 		const transformAttr = (rotateAngle !== 0) ? ` transform="rotate(${rotateAngle.toFixed(2)}, ${x.toFixed(2)}, ${y.toFixed(2)})"` : '';
-		const nodeIdAttr = (node.id || node.name) ? ` data-node-id="${String(node.id || node.name).replace(/"/g, '&quot;')}"` : '';
+		const rawNodeId = node.id || node.name || node.reference;
+		const nodeIdAttr = rawNodeId ? ` data-node-id="${String(rawNodeId).replace(/"/g, '&quot;')}"` : '';
 
 		return `<g class="mrtee-opentype-svg-text"${nodeIdAttr}${transformAttr}>\n${glyphsMarkup}</g>`;
 	}

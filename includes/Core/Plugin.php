@@ -112,13 +112,25 @@ final class Plugin {
 			return;
 		}
 
-		// Google Fonts for Admin Preview
-		wp_enqueue_style(
-			'mr-tee-google-fonts',
-			'https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Bebas+Neue&family=Bungee&family=Cinzel+Decorative:wght@700&family=Luckiest+Guy&family=Pacifico&family=Permanent+Marker&family=Press+Start+2P&display=swap',
-			array(),
-			MR_TEE_EDITOR_VERSION
-		);
+		$config = SceneGraphSchema::get_product_config( $post->ID );
+		$proto  = is_ssl() ? 'https' : 'http';
+
+		// Collect strictly the fonts selected on this product (allowed_fonts + active line fonts)
+		$all_fonts         = \MrTeeEditor\Registry\FontRegistry::get_fonts();
+		$selected_font_ids = array();
+		if ( ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
+			$selected_font_ids = $config['allowed_fonts'];
+		} elseif ( ! empty( $config['text_lines'][0]['allowed_fonts'] ) && is_array( $config['text_lines'][0]['allowed_fonts'] ) ) {
+			$selected_font_ids = $config['text_lines'][0]['allowed_fonts'];
+		}
+		if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
+			foreach ( $config['text_lines'] as $tl ) {
+				if ( ! empty( $tl['font'] ) ) {
+					$selected_font_ids[] = $tl['font'];
+				}
+			}
+		}
+		$selected_font_ids = array_values( array_unique( array_filter( $selected_font_ids ) ) );
 
 		wp_enqueue_style(
 			'mr-tee-admin-style',
@@ -127,9 +139,12 @@ final class Plugin {
 			MR_TEE_EDITOR_VERSION
 		);
 
-		// Dynamic @font-face CSS for bundled fonts
-		$font_face_css = \MrTeeEditor\Registry\FontRegistry::get_font_face_css();
-		wp_add_inline_style( 'mr-tee-admin-style', $font_face_css );
+		// Dynamic @font-face CSS for ONLY selected standard vector fonts (OpenType-SVG .otf files are skipped;
+		// additional TTF fonts added dynamically in the admin UI are injected on-demand by mr-tee-admin.js)
+		$font_face_css = \MrTeeEditor\Registry\FontRegistry::get_font_face_css( ! empty( $selected_font_ids ) ? $selected_font_ids : array() );
+		if ( '' !== $font_face_css ) {
+			wp_add_inline_style( 'mr-tee-admin-style', $font_face_css );
+		}
 
 		wp_enqueue_script(
 			'mr-tee-admin-js',
@@ -139,14 +154,15 @@ final class Plugin {
 			true
 		);
 
-		$config = SceneGraphSchema::get_product_config( $post->ID );
-		$proto  = is_ssl() ? 'https' : 'http';
-
-		// Preload active SVG fonts
+		// Preload ONLY active line OpenType-SVG fonts (other allowed OpenType-SVG fonts are lazy-loaded when selected)
 		$preloaded_svg_fonts = array();
 		if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
 			foreach ( $config['text_lines'] as $line ) {
-				if ( ! empty( $line['font'] ) ) {
+				if ( empty( $line['font'] ) || isset( $preloaded_svg_fonts[ $line['font'] ] ) ) {
+					continue;
+				}
+				$f_def = isset( $all_fonts[ $line['font'] ] ) ? $all_fonts[ $line['font'] ] : null;
+				if ( $f_def && ( ( ! empty( $f_def['font_type'] ) && 'opentype_svg' === $f_def['font_type'] ) || ! empty( $f_def['color_svg'] ) ) ) {
 					$svg_data = \MrTeeEditor\Registry\FontRegistry::get_svg_font_data( $line['font'] );
 					if ( $svg_data ) {
 						$preloaded_svg_fonts[ $line['font'] ] = $svg_data;
@@ -161,7 +177,7 @@ final class Plugin {
 			array(
 				'productId' => $post->ID,
 				'config'    => $config,
-				'fonts'     => \MrTeeEditor\Registry\FontRegistry::get_fonts(),
+				'fonts'     => $all_fonts,
 				'svgFonts'  => $preloaded_svg_fonts,
 				'ajaxUrl'   => admin_url( 'admin-ajax.php', $proto ),
 				'nonce'     => wp_create_nonce( 'mr_tee_admin_nonce' ),

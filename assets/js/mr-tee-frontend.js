@@ -7,12 +7,12 @@
  * @package MrTeeEditor\Assets
  */
 
-import { StateStore } from './modules/state-store.js?v=2.3.5';
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.3.5';
-import { SvgRenderer } from './modules/svg-renderer.js?v=2.3.5';
-import { GalleryStage } from './modules/gallery-stage.js?v=2.3.5';
-import { FormController } from './modules/form-controller.js?v=2.3.5';
-import { PrintExporter } from './modules/print-exporter.js?v=2.3.5';
+import { StateStore } from './modules/state-store.js?v=2.3.7';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.3.7';
+import { SvgRenderer } from './modules/svg-renderer.js?v=2.3.7';
+import { GalleryStage } from './modules/gallery-stage.js?v=2.3.7';
+import { FormController } from './modules/form-controller.js?v=2.3.7';
+import { PrintExporter } from './modules/print-exporter.js?v=2.3.7';
 
 window.mrTeePrintExporter = PrintExporter;
 window.mrTeeSvgRenderer = SvgRenderer;
@@ -89,12 +89,19 @@ class MrTeeFrontendApp {
 	 */
 	prewarmDefaultTextGlyphs() {
 		const preloaded = (this.data && this.data.svgFonts) || {};
+		const fonts = (this.data && this.data.fonts) || {};
 		const textLines = this.config.text_lines || [];
 
 		for (const line of textLines) {
 			const activeFontId = line.font || (Array.isArray(line.allowed_fonts) && line.allowed_fonts[0]);
-			const defaultText = line.default_text || '';
+			let defaultText = line.default_text || '';
 			if (!activeFontId || !defaultText) continue;
+
+			const fDef = fonts[activeFontId];
+			const isUpper = (line.casing === 'UPPER') || Boolean(fDef && fDef.uppercase);
+			if (isUpper) {
+				defaultText = defaultText.toUpperCase();
+			}
 
 			const sData = preloaded[activeFontId] || SvgRenderer.getSvgFontData(activeFontId);
 			if (sData) {
@@ -189,7 +196,6 @@ class MrTeeFrontendApp {
 					this._cachedAspectRatio = ratio;
 				} else if (img && img.offsetWidth > 0 && img.offsetHeight > 0) {
 					ratio = img.offsetWidth / img.offsetHeight;
-					this._cachedAspectRatio = ratio;
 				} else if (realW > 0 && realH > 0) {
 					ratio = realW / realH;
 				} else {

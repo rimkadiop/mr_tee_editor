@@ -65,6 +65,31 @@ class VisualPlacementStage {
 		}
 
 		$fonts       = FontRegistry::get_fonts();
+		$allowed_fonts = ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] )
+			? $config['allowed_fonts']
+			: ( ! empty( $text_lines[0]['allowed_fonts'] ) && is_array( $text_lines[0]['allowed_fonts'] ) ? $text_lines[0]['allowed_fonts'] : array() );
+		if ( empty( $allowed_fonts ) ) {
+			foreach ( $text_lines as $tl ) {
+				if ( ! empty( $tl['font'] ) ) {
+					$allowed_fonts[] = $tl['font'];
+				}
+			}
+		}
+		$allowed_fonts = array_values(
+			array_unique(
+				array_filter(
+					$allowed_fonts,
+					function ( $fid ) use ( $fonts ) {
+						return isset( $fonts[ $fid ] );
+					}
+				)
+			)
+		);
+		if ( empty( $allowed_fonts ) ) {
+			$first_font_key = array_key_first( $fonts );
+			$allowed_fonts  = $first_font_key ? array( $first_font_key ) : array();
+		}
+
 		$unit        = ! empty( $config['print_unit'] ) ? $config['print_unit'] : 'cm';
 		$real_w      = isset( $config['print_real_width'] ) ? floatval( $config['print_real_width'] ) : 30.0;
 		$real_h      = isset( $config['print_real_height'] ) ? floatval( $config['print_real_height'] ) : 40.0;
@@ -160,15 +185,6 @@ class VisualPlacementStage {
 			</div>
 
 			<!-- Product Allowed Fonts & Ordering Selector (Speed & Mobile UX Optimization) -->
-			<?php
-			$allowed_fonts = ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] )
-				? $config['allowed_fonts']
-				: ( ! empty( $text_lines[0]['allowed_fonts'] ) && is_array( $text_lines[0]['allowed_fonts'] ) ? $text_lines[0]['allowed_fonts'] : array( isset( $text_lines[0]['font'] ) ? $text_lines[0]['font'] : 'super_mario' ) );
-			$allowed_fonts = array_values( array_unique( array_filter( $allowed_fonts ) ) );
-			if ( empty( $allowed_fonts ) ) {
-				$allowed_fonts = array( 'super_mario' );
-			}
-			?>
 			<div class="mr-tee-allowed-fonts-card" id="mr-tee-allowed-fonts-card">
 				<div class="mr-tee-allowed-fonts-header">
 					<div>
@@ -224,7 +240,8 @@ class VisualPlacementStage {
 							<option value=""><?php esc_html_e( '-- Choisir une police à ajouter --', 'mr-tee-editor' ); ?></option>
 							<optgroup label="<?php esc_attr_e( '✨ Polices OpenType-SVG', 'mr-tee-editor' ); ?>">
 								<?php foreach ( $fonts as $f_id => $f_data ) : ?>
-									<?php if ( ( ! empty( $f_data['font_type'] ) && 'opentype_svg' === $f_data['font_type'] ) || ! empty( $f_data['color_svg'] ) ) : ?>
+									<?php $is_svg_picker = ( ! empty( $f_data['font_type'] ) && 'opentype_svg' === $f_data['font_type'] ) || ! empty( $f_data['color_svg'] ); ?>
+									<?php if ( $is_svg_picker ) : ?>
 										<option value="<?php echo esc_attr( $f_id ); ?>" <?php echo in_array( $f_id, $allowed_fonts, true ) ? 'disabled' : ''; ?>>
 											<?php echo esc_html( $f_data['name'] ); ?><?php echo in_array( $f_id, $allowed_fonts, true ) ? ' (déjà active)' : ''; ?>
 										</option>
@@ -233,7 +250,8 @@ class VisualPlacementStage {
 							</optgroup>
 							<optgroup label="<?php esc_attr_e( '🔤 Polices Stylisées TTF', 'mr-tee-editor' ); ?>">
 								<?php foreach ( $fonts as $f_id => $f_data ) : ?>
-									<?php if ( empty( $f_data['font_type'] ) || 'opentype_svg' !== $f_data['font_type'] ) : ?>
+									<?php $is_svg_picker = ( ! empty( $f_data['font_type'] ) && 'opentype_svg' === $f_data['font_type'] ) || ! empty( $f_data['color_svg'] ); ?>
+									<?php if ( ! $is_svg_picker ) : ?>
 										<option value="<?php echo esc_attr( $f_id ); ?>" <?php echo in_array( $f_id, $allowed_fonts, true ) ? 'disabled' : ''; ?>>
 											<?php echo esc_html( $f_data['name'] ); ?><?php echo in_array( $f_id, $allowed_fonts, true ) ? ' (déjà active)' : ''; ?>
 										</option>
@@ -378,41 +396,72 @@ class VisualPlacementStage {
 									<tr>
 										<th><label><?php esc_html_e( 'Texte par Défaut', 'mr-tee-editor' ); ?></label></th>
 										<td>
-											<input
-												type="text"
-												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][default_text]"
-												value="<?php echo esc_attr( $line['default_text'] ); ?>"
-												class="regular-text mr-tee-field-text-input"
-												data-field-index="<?php echo esc_attr( $idx ); ?>"
-											/>
+											<?php if ( ! empty( $line['multiline'] ) ) : ?>
+												<textarea
+													rows="2"
+													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][default_text]"
+													class="regular-text mr-tee-field-text-input"
+													data-field-index="<?php echo esc_attr( $idx ); ?>"
+													style="min-height: 54px;"
+												><?php echo esc_textarea( isset( $line['default_text'] ) ? $line['default_text'] : '' ); ?></textarea>
+											<?php else : ?>
+												<input
+													type="text"
+													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][default_text]"
+													value="<?php echo esc_attr( isset( $line['default_text'] ) ? $line['default_text'] : '' ); ?>"
+													class="regular-text mr-tee-field-text-input"
+													data-field-index="<?php echo esc_attr( $idx ); ?>"
+												/>
+											<?php endif; ?>
 										</td>
 									</tr>
 									<tr>
 										<th><label><?php esc_html_e( 'Police par Défaut', 'mr-tee-editor' ); ?></label></th>
 										<td>
+											<?php
+											$selected_line_font = ( ! empty( $line['font'] ) && in_array( $line['font'], $allowed_fonts, true ) )
+												? $line['font']
+												: ( ! empty( $allowed_fonts[0] ) ? $allowed_fonts[0] : '' );
+											$svg_allowed_ids = array();
+											$std_allowed_ids = array();
+											foreach ( $allowed_fonts as $af_id ) {
+												if ( ! isset( $fonts[ $af_id ] ) ) {
+													continue;
+												}
+												$af_data = $fonts[ $af_id ];
+												$af_svg  = ( ! empty( $af_data['font_type'] ) && 'opentype_svg' === $af_data['font_type'] ) || ! empty( $af_data['color_svg'] );
+												if ( $af_svg ) {
+													$svg_allowed_ids[] = $af_id;
+												} else {
+													$std_allowed_ids[] = $af_id;
+												}
+											}
+											?>
 											<select
 												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][font]"
 												class="mr-tee-field-font-select"
 												data-field-index="<?php echo esc_attr( $idx ); ?>"
 											>
-												<optgroup label="<?php esc_attr_e( '✨ Polices OpenType-SVG (Couleurs & Dégradés)', 'mr-tee-editor' ); ?>">
-													<?php foreach ( $fonts as $f_id => $f_data ) : ?>
-														<?php if ( ! empty( $f_data['font_type'] ) && 'opentype_svg' === $f_data['font_type'] ) : ?>
-															<option value="<?php echo esc_attr( $f_id ); ?>" <?php selected( isset( $line['font'] ) ? $line['font'] : 'super_mario', $f_id ); ?>>
+												<?php if ( ! empty( $svg_allowed_ids ) ) : ?>
+													<optgroup label="<?php esc_attr_e( '✨ Polices OpenType-SVG (Couleurs & Dégradés)', 'mr-tee-editor' ); ?>">
+														<?php foreach ( $svg_allowed_ids as $f_id ) : ?>
+															<?php $f_data = $fonts[ $f_id ]; ?>
+															<option value="<?php echo esc_attr( $f_id ); ?>" <?php selected( $selected_line_font, $f_id ); ?>>
 																<?php echo esc_html( $f_data['name'] ); ?>
 															</option>
-														<?php endif; ?>
-													<?php endforeach; ?>
-												</optgroup>
-												<optgroup label="<?php esc_attr_e( '🔤 Polices Stylisées Standalone (TTF / Multi-Couleurs)', 'mr-tee-editor' ); ?>">
-													<?php foreach ( $fonts as $f_id => $f_data ) : ?>
-														<?php if ( empty( $f_data['font_type'] ) || 'opentype_svg' !== $f_data['font_type'] ) : ?>
-															<option value="<?php echo esc_attr( $f_id ); ?>" <?php selected( isset( $line['font'] ) ? $line['font'] : 'super_mario', $f_id ); ?>>
+														<?php endforeach; ?>
+													</optgroup>
+												<?php endif; ?>
+												<?php if ( ! empty( $std_allowed_ids ) ) : ?>
+													<optgroup label="<?php esc_attr_e( '🔤 Polices Stylisées Standalone (TTF / Multi-Couleurs)', 'mr-tee-editor' ); ?>">
+														<?php foreach ( $std_allowed_ids as $f_id ) : ?>
+															<?php $f_data = $fonts[ $f_id ]; ?>
+															<option value="<?php echo esc_attr( $f_id ); ?>" <?php selected( $selected_line_font, $f_id ); ?>>
 																<?php echo esc_html( $f_data['name'] ); ?>
 															</option>
-														<?php endif; ?>
-													<?php endforeach; ?>
-												</optgroup>
+														<?php endforeach; ?>
+													</optgroup>
+												<?php endif; ?>
 											</select>
 											<div class="mr-tee-font-upload-quick" style="margin-top:6px;">
 												<label class="button button-small" style="cursor:pointer; display:inline-flex; align-items:center; gap:4px;">
@@ -427,7 +476,7 @@ class VisualPlacementStage {
 									<tr>
 										<th><label><?php esc_html_e( 'Mode Couleur', 'mr-tee-editor' ); ?></label></th>
 										<td>
-											<select name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][color_mode]" class="mr-tee-field-color-mode">
+											<select name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][color_mode]" class="mr-tee-field-color-mode" data-field-index="<?php echo esc_attr( $idx ); ?>">
 												<option value="multi" <?php selected( isset( $line['color_mode'] ) ? $line['color_mode'] : 'multi', 'multi' ); ?>><?php esc_html_e( 'Multicolore (COLOR_SET cyclique)', 'mr-tee-editor' ); ?></option>
 												<option value="solid" <?php selected( isset( $line['color_mode'] ) ? $line['color_mode'] : 'multi', 'solid' ); ?>><?php esc_html_e( 'Couleur Unie', 'mr-tee-editor' ); ?></option>
 											</select>
@@ -443,6 +492,7 @@ class VisualPlacementStage {
 												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][max_chars]"
 												value="<?php echo esc_attr( isset( $line['max_chars'] ) ? $line['max_chars'] : 25 ); ?>"
 												class="small-text mr-tee-field-max-chars"
+												data-field-index="<?php echo esc_attr( $idx ); ?>"
 											/>
 										</td>
 									</tr>
@@ -455,6 +505,7 @@ class VisualPlacementStage {
 													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][allow_font_pick]"
 													value="1"
 													class="mr-tee-field-font-pick"
+													data-field-index="<?php echo esc_attr( $idx ); ?>"
 													<?php checked( ! isset( $line['allow_font_pick'] ) || ! empty( $line['allow_font_pick'] ) ); ?>
 												/>
 												<?php esc_html_e( 'Choix de police client', 'mr-tee-editor' ); ?>
@@ -466,6 +517,7 @@ class VisualPlacementStage {
 													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][multiline]"
 													value="1"
 													class="mr-tee-field-multiline"
+													data-field-index="<?php echo esc_attr( $idx ); ?>"
 													<?php checked( ! empty( $line['multiline'] ) ); ?>
 												/>
 												<?php esc_html_e( 'Autoriser retours à la ligne', 'mr-tee-editor' ); ?>
@@ -477,6 +529,7 @@ class VisualPlacementStage {
 													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][warning_unedited]"
 													value="1"
 													class="mr-tee-field-warning"
+													data-field-index="<?php echo esc_attr( $idx ); ?>"
 													<?php checked( ! empty( $line['warning_unedited'] ) ); ?>
 												/>
 												<?php esc_html_e( 'Alerter si non personnalisé', 'mr-tee-editor' ); ?>

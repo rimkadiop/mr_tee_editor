@@ -50,9 +50,10 @@ class NBDesignerBridge {
 	 * @param string               $svg_markup   Vector SVG string.
 	 * @param string               $print_b64    Base64 300 DPI transparent raster.
 	 * @param int                  $product_id   Product ID.
+	 * @param array<string, string> $source_files Optional pre-uploaded disk file paths (preview_file, svg_file, print_file).
 	 * @return array<string, mixed> Metadata for order line item.
 	 */
-	public static function inject_nbd_artifacts( $nbd_item_key, array $custom_data, $preview_b64, $svg_markup, $print_b64, $product_id ) {
+	public static function inject_nbd_artifacts( $nbd_item_key, array $custom_data, $preview_b64, $svg_markup, $print_b64, $product_id, array $source_files = array() ) {
 		$wp_upload = wp_upload_dir();
 		$nbd_dir   = trailingslashit( $wp_upload['basedir'] ) . 'nbdesigner/designs/' . sanitize_file_name( $nbd_item_key );
 		$nbd_url   = trailingslashit( $wp_upload['baseurl'] ) . 'nbdesigner/designs/' . sanitize_file_name( $nbd_item_key );
@@ -78,6 +79,14 @@ class NBDesignerBridge {
 				file_put_contents( trailingslashit( $nbd_dir ) . 'design_preview.jpg', $decoded );
 				file_put_contents( trailingslashit( $nbd_dir ) . 'preview/frame_0.jpg', $decoded );
 			}
+		} elseif ( ! empty( $source_files['preview_file'] ) && file_exists( $source_files['preview_file'] ) ) {
+			@copy( $source_files['preview_file'], trailingslashit( $nbd_dir ) . 'design_preview.png' );
+			@copy( $source_files['preview_file'], trailingslashit( $nbd_dir ) . 'preview/frame_0.png' );
+			$ext = strtolower( pathinfo( $source_files['preview_file'], PATHINFO_EXTENSION ) );
+			if ( 'jpg' === $ext || 'jpeg' === $ext ) {
+				@copy( $source_files['preview_file'], trailingslashit( $nbd_dir ) . 'design_preview.jpg' );
+				@copy( $source_files['preview_file'], trailingslashit( $nbd_dir ) . 'preview/frame_0.jpg' );
+			}
 		}
 
 		// 2. Artifacts: SVG scene-graphs (root frame_0.svg, root design.svg, and svg/frame_0.svg)
@@ -85,6 +94,10 @@ class NBDesignerBridge {
 			file_put_contents( trailingslashit( $nbd_dir ) . 'design.svg', $svg_markup );
 			file_put_contents( trailingslashit( $nbd_dir ) . 'frame_0.svg', $svg_markup );
 			file_put_contents( trailingslashit( $nbd_dir ) . 'svg/frame_0.svg', $svg_markup );
+		} elseif ( ! empty( $source_files['svg_file'] ) && file_exists( $source_files['svg_file'] ) ) {
+			@copy( $source_files['svg_file'], trailingslashit( $nbd_dir ) . 'design.svg' );
+			@copy( $source_files['svg_file'], trailingslashit( $nbd_dir ) . 'frame_0.svg' );
+			@copy( $source_files['svg_file'], trailingslashit( $nbd_dir ) . 'svg/frame_0.svg' );
 		}
 
 		// 3. Artifacts: 300 DPI Transparent print rasters (frame_0.png, print_file_front.png, print_300dpi.png)
@@ -94,6 +107,10 @@ class NBDesignerBridge {
 			file_put_contents( trailingslashit( $nbd_dir ) . 'frame_0.png', $decoded );
 			file_put_contents( trailingslashit( $nbd_dir ) . 'print_file_front.png', $decoded );
 			file_put_contents( trailingslashit( $nbd_dir ) . 'print_300dpi.png', $decoded );
+		} elseif ( ! empty( $source_files['print_file'] ) && file_exists( $source_files['print_file'] ) ) {
+			@copy( $source_files['print_file'], trailingslashit( $nbd_dir ) . 'frame_0.png' );
+			@copy( $source_files['print_file'], trailingslashit( $nbd_dir ) . 'print_file_front.png' );
+			@copy( $source_files['print_file'], trailingslashit( $nbd_dir ) . 'print_300dpi.png' );
 		}
 
 		// 4. Product sides configuration with dynamic physical dimensions

@@ -11,7 +11,8 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.3.13';
+import { SvgRenderer } from './svg-renderer.js?v=2.3.14';
+import { PrintExporter } from './print-exporter.js?v=2.3.14';
 
 export class FormController {
 	constructor(store, config, onExportRequested) {
@@ -19,6 +20,7 @@ export class FormController {
 		this.config = config || {};
 		this.onExportRequested = onExportRequested;
 		this.bypassWarning = false;
+		this.isSubmitting = false;
 		this.pendingUploads = [];
 
 		this.initDom();
@@ -311,15 +313,60 @@ export class FormController {
 	}
 
 	async runExportAndSubmit() {
+		if (this.isSubmitting) return;
+		this.isSubmitting = true;
+
+		const i18n = (window.mrTeeProductData && window.mrTeeProductData.i18n) || {};
+		const btn = this.addToCartBtn;
+		let origText = '';
+		let origHtml = '';
+		if (btn) {
+			origText = btn.tagName === 'INPUT' ? btn.value : btn.textContent;
+			origHtml = btn.tagName === 'INPUT' ? '' : btn.innerHTML;
+			btn.setAttribute('aria-busy', 'true');
+			btn.style.pointerEvents = 'none';
+			btn.style.opacity = '0.75';
+			if (btn.tagName === 'INPUT') {
+				btn.value = i18n.preparingOrder || 'Préparation...';
+			} else {
+				btn.textContent = i18n.preparingOrder || 'Préparation...';
+			}
+		}
+
+		const restoreBtn = () => {
+			this.isSubmitting = false;
+			if (btn) {
+				btn.removeAttribute('aria-busy');
+				btn.style.pointerEvents = '';
+				btn.style.opacity = '';
+				if (btn.tagName === 'INPUT') {
+					btn.value = origText;
+				} else if (origHtml) {
+					btn.innerHTML = origHtml;
+				}
+			}
+		};
+
 		if (this.pendingUploads.length > 0) {
 			try {
 				await Promise.allSettled(this.pendingUploads);
 			} catch (e) {}
 		}
 		if (this.onExportRequested) {
-			this.onExportRequested(() => {
+			this.onExportRequested((ok = true) => {
+				if (ok === false) {
+					restoreBtn();
+					window.alert(i18n.exportUploadError || 'Impossible d\'envoyer votre personnalisation. Veuillez réessayer.');
+					return;
+				}
+				if (btn) {
+					btn.style.pointerEvents = '';
+					btn.style.opacity = '';
+				}
 				this.submitCartForm();
 			});
+		} else {
+			restoreBtn();
 		}
 	}
 
@@ -414,8 +461,8 @@ export class FormController {
 						this.store.setImageValue(refId, previewDataUrl, file.name, true);
 					}
 
-					// Upload file to server in background for lightweight persistent order storage
-					const uploadPromise = this.uploadCustomerImage(file).then((serverUrl) => {
+					// Upload file to server in background (chunked when large) for lightweight persistent order storage
+					const uploadPromise = this.uploadCustomerImage(file, previewDataUrl).then((serverUrl) => {
 						if (card._uploadToken !== token) return;
 						if (serverUrl) {
 							if (typeof window !== 'undefined') {
@@ -488,22 +535,32 @@ export class FormController {
 		});
 	}
 
-	async uploadCustomerImage(file) {
+	async uploadCustomerImage(file, previewDataUrl = '') {
 		const data = window.mrTeeProductData || {};
-		const rawAjaxUrl = data.ajaxUrl || '/wp-admin/admin-ajax.php';
-		let ajaxUrl = rawAjaxUrl;
-		try {
-			const u = new URL(rawAjaxUrl, window.location.origin);
-			if (u.hostname === window.location.hostname) {
-				ajaxUrl = u.pathname + u.search;
+		const ajaxUrl = PrintExporter.resolveAjaxUrl();
+
+		let uploadBlob = file;
+		let uploadName = file.name || 'image.png';
+		if (previewDataUrl && file.type !== 'image/svg+xml' && (file.type === 'image/jpeg' || file.type === 'image/png')) {
+			const downscaledBlob = PrintExporter.dataUrlToBlob(previewDataUrl);
+			if (downscaledBlob && downscaledBlob.size > 0 && downscaledBlob.size < file.size) {
+				uploadBlob = downscaledBlob;
 			}
-		} catch (e) {}
+		}
+
+		if (uploadBlob.size > 280 * 1024) {
+			const res = await PrintExporter.uploadBlobInChunks(uploadBlob, {
+				artifact: 'customer_image',
+				fileName: uploadName,
+			});
+			return (res && res.url) ? String(res.url) : '';
+		}
 
 		const formData = new FormData();
 		formData.append('action', 'mr_tee_upload_customer_image');
 		formData.append('nonce', data.uploadNonce || '');
 		formData.append('product_id', String(this.config.productId || data.productId || 0));
-		formData.append('image_file', file);
+		formData.append('image_file', uploadBlob, uploadName);
 
 		const resp = await fetch(ajaxUrl, { method: 'POST', body: formData });
 		if (!resp.ok) return '';

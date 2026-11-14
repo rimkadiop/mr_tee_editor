@@ -344,6 +344,8 @@ class ProductPageRenderer {
 					'imageDefault'     => __( 'Image par défaut', 'mr-tee-editor' ),
 					'imageEmpty'       => __( 'Aucune image sélectionnée', 'mr-tee-editor' ),
 					'imageUploadError' => __( 'Erreur lors du chargement de l\'image.', 'mr-tee-editor' ),
+					'preparingOrder'   => __( 'Préparation...', 'mr-tee-editor' ),
+					'exportUploadError'=> __( 'Impossible d\'envoyer votre personnalisation. Veuillez réessayer.', 'mr-tee-editor' ),
 				),
 			)
 		);
@@ -700,6 +702,7 @@ class ProductPageRenderer {
 
 			<!-- Hidden Form Inputs for Cart Payload Submission -->
 			<input type="hidden" name="add-to-cart" value="<?php echo esc_attr( $post->ID ); ?>" />
+			<input type="hidden" name="mr_tee_design_key" id="mr_tee_design_key" value="" />
 			<input type="hidden" name="mr_tee_editor_payload" id="mr_tee_editor_payload" value="" />
 			<input type="hidden" name="mr_tee_preview_png" id="mr_tee_preview_png" value="" />
 			<input type="hidden" name="mr_tee_vector_svg" id="mr_tee_vector_svg" value="" />

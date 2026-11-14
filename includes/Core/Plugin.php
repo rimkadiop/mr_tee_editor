@@ -86,6 +86,8 @@ final class Plugin {
 
 		add_action( 'wp_ajax_mr_tee_upload_customer_image', array( $this, 'handle_customer_image_upload' ) );
 		add_action( 'wp_ajax_nopriv_mr_tee_upload_customer_image', array( $this, 'handle_customer_image_upload' ) );
+		add_action( 'wp_ajax_mr_tee_upload_design_artifact', array( $this, 'handle_design_artifact_upload' ) );
+		add_action( 'wp_ajax_nopriv_mr_tee_upload_design_artifact', array( $this, 'handle_design_artifact_upload' ) );
 		add_action( 'wp_ajax_mr_tee_upload_default_image', array( $this, 'handle_admin_default_image_upload' ) );
 	}
 
@@ -146,6 +148,177 @@ final class Plugin {
 			array(
 				'url'      => $dest_url,
 				'filename' => $orig_name,
+			)
+		);
+	}
+
+	/**
+	 * Handle chunked binary uploads for customer photos and print export artifacts
+	 * (preview JPEG/PNG, vector SVG, and 300 DPI print PNG) so WooCommerce Add-to-Cart
+	 * POST bodies remain tiny and never trigger HTTP 413 Request Entity Too Large.
+	 */
+	public function handle_design_artifact_upload() {
+		check_ajax_referer( 'mr_tee_frontend_upload', 'nonce' );
+
+		$artifact = isset( $_POST['artifact'] ) ? sanitize_key( wp_unslash( $_POST['artifact'] ) ) : '';
+		$allowed_artifacts = array( 'preview_jpg', 'preview_png', 'svg', 'print_png', 'customer_image' );
+		if ( ! in_array( $artifact, $allowed_artifacts, true ) ) {
+			wp_send_json_error( array( 'message' => __( 'Type de fichier non autorisé.', 'mr-tee-editor' ) ), 400 );
+		}
+
+		$chunk_index  = isset( $_POST['chunk_index'] ) ? intval( $_POST['chunk_index'] ) : 0;
+		$total_chunks = isset( $_POST['total_chunks'] ) ? intval( $_POST['total_chunks'] ) : 1;
+		if ( $total_chunks < 1 || $total_chunks > 200 || $chunk_index < 0 || $chunk_index >= $total_chunks ) {
+			wp_send_json_error( array( 'message' => __( 'Paramètres de transfert invalides.', 'mr-tee-editor' ) ), 400 );
+		}
+
+		$upload_id = isset( $_POST['upload_id'] ) ? preg_replace( '/[^a-zA-Z0-9_-]/', '', wp_unslash( $_POST['upload_id'] ) ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		if ( strlen( $upload_id ) < 6 || strlen( $upload_id ) > 64 ) {
+			wp_send_json_error( array( 'message' => __( 'Identifiant de transfert invalide.', 'mr-tee-editor' ) ), 400 );
+		}
+
+		if ( empty( $_FILES['chunk_file'] ) || ! empty( $_FILES['chunk_file']['error'] ) ) {
+			wp_send_json_error( array( 'message' => __( 'Fragment de fichier manquant.', 'mr-tee-editor' ) ), 400 );
+		}
+
+		$chunk_file  = $_FILES['chunk_file']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		$chunk_bytes = @file_get_contents( $chunk_file['tmp_name'] );
+		if ( false === $chunk_bytes || strlen( $chunk_bytes ) > 2 * 1024 * 1024 ) {
+			wp_send_json_error( array( 'message' => __( 'Fragment de fichier invalide ou trop volumineux.', 'mr-tee-editor' ) ), 400 );
+		}
+
+		$design_key = '';
+		$orig_name  = '';
+		$ext        = '';
+
+		if ( 'customer_image' === $artifact ) {
+			$orig_name = ! empty( $_POST['file_name'] ) ? sanitize_file_name( wp_unslash( $_POST['file_name'] ) ) : 'image.png';
+			$ext       = strtolower( pathinfo( $orig_name, PATHINFO_EXTENSION ) );
+			$allowed   = array( 'jpg', 'jpeg', 'png', 'webp', 'gif', 'svg' );
+			if ( ! in_array( $ext, $allowed, true ) ) {
+				wp_send_json_error( array( 'message' => __( 'Format non supporté. Utilisez PNG, JPG, WEBP, GIF ou SVG.', 'mr-tee-editor' ) ), 400 );
+			}
+			$sub_dir = 'customer_uploads/' . gmdate( 'Y-m' );
+		} else {
+			$raw_key    = isset( $_POST['design_key'] ) ? wp_unslash( $_POST['design_key'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+			$design_key = preg_replace( '/[^a-zA-Z0-9_-]/', '', $raw_key );
+			if ( ! preg_match( '/^mrtee_[a-zA-Z0-9_-]{8,64}$/', $design_key ) ) {
+				wp_send_json_error( array( 'message' => __( 'Clé de création invalide.', 'mr-tee-editor' ) ), 400 );
+			}
+			$sub_dir = 'designs/' . $design_key;
+		}
+
+		$paths     = \MrTeeEditor\Export\PrintAssetGenerator::get_upload_dir( $sub_dir );
+		$part_file = trailingslashit( $paths['dir'] ) . '.part_' . $upload_id;
+
+		if ( 0 === $chunk_index ) {
+			@unlink( $part_file );
+			$written = @file_put_contents( $part_file, $chunk_bytes );
+		} else {
+			if ( ! file_exists( $part_file ) ) {
+				wp_send_json_error( array( 'message' => __( 'Session de transfert expirée.', 'mr-tee-editor' ) ), 400 );
+			}
+			$current_size = @filesize( $part_file );
+			if ( false === $current_size || ( $current_size + strlen( $chunk_bytes ) ) > 25 * 1024 * 1024 ) {
+				@unlink( $part_file );
+				wp_send_json_error( array( 'message' => __( 'Fichier assemblé trop volumineux (max 25 Mo).', 'mr-tee-editor' ) ), 400 );
+			}
+			$written = @file_put_contents( $part_file, $chunk_bytes, FILE_APPEND );
+		}
+
+		if ( false === $written ) {
+			@unlink( $part_file );
+			wp_send_json_error( array( 'message' => __( 'Erreur d\'écriture sur le serveur.', 'mr-tee-editor' ) ), 500 );
+		}
+
+		if ( $chunk_index < ( $total_chunks - 1 ) ) {
+			wp_send_json_success(
+				array(
+					'done'        => false,
+					'chunk_index' => $chunk_index,
+				)
+			);
+		}
+
+		// Final chunk: validate complete assembled file and atomically move into place
+		if ( 'customer_image' === $artifact ) {
+			if ( 'svg' === $ext ) {
+				$svg_content = @file_get_contents( $part_file );
+				if ( false === $svg_content || stripos( $svg_content, '<svg' ) === false ) {
+					@unlink( $part_file );
+					wp_send_json_error( array( 'message' => __( 'Fichier SVG invalide.', 'mr-tee-editor' ) ), 400 );
+				}
+				$svg_content = preg_replace( '#<script\b[^>]*>.*?</script>#is', '', $svg_content );
+				$svg_content = preg_replace( '/\son[a-z]+\s*=\s*(?:"[^"]*"|\'[^\']*\')/i', '', $svg_content );
+				@file_put_contents( $part_file, $svg_content );
+			} else {
+				$img_info = @getimagesize( $part_file );
+				if ( false === $img_info || empty( $img_info['mime'] ) || strpos( $img_info['mime'], 'image/' ) !== 0 ) {
+					@unlink( $part_file );
+					wp_send_json_error( array( 'message' => __( 'Le fichier envoyé n\'est pas une image valide.', 'mr-tee-editor' ) ), 400 );
+				}
+			}
+
+			$unique_fn = wp_unique_filename( $paths['dir'], wp_generate_uuid4() . '-' . $orig_name );
+			$dest_file = trailingslashit( $paths['dir'] ) . $unique_fn;
+			$dest_url  = trailingslashit( $paths['url'] ) . $unique_fn;
+
+			if ( ! @rename( $part_file, $dest_file ) ) {
+				@unlink( $part_file );
+				wp_send_json_error( array( 'message' => __( 'Erreur lors de la finalisation de l\'image.', 'mr-tee-editor' ) ), 500 );
+			}
+
+			wp_send_json_success(
+				array(
+					'done'     => true,
+					'url'      => $dest_url,
+					'filename' => $orig_name,
+				)
+			);
+		}
+
+		$target_names = array(
+			'preview_jpg' => 'design_preview.jpg',
+			'preview_png' => 'design_preview.png',
+			'svg'         => 'design.svg',
+			'print_png'   => 'print_300dpi.png',
+		);
+		$target_name = $target_names[ $artifact ];
+
+		if ( 'svg' === $artifact ) {
+			$svg_raw = @file_get_contents( $part_file );
+			if ( false === $svg_raw || stripos( $svg_raw, '<svg' ) === false ) {
+				@unlink( $part_file );
+				wp_send_json_error( array( 'message' => __( 'Fichier SVG invalide.', 'mr-tee-editor' ) ), 400 );
+			}
+			$svg_raw = preg_replace( '#<script\b[^>]*>.*?</script>#is', '', $svg_raw );
+			@file_put_contents( $part_file, $svg_raw );
+		} else {
+			$img_info = @getimagesize( $part_file );
+			if ( false === $img_info || empty( $img_info['mime'] ) || strpos( $img_info['mime'], 'image/' ) !== 0 ) {
+				@unlink( $part_file );
+				wp_send_json_error( array( 'message' => __( 'Fichier image généré invalide.', 'mr-tee-editor' ) ), 400 );
+			}
+		}
+
+		$dest_file = trailingslashit( $paths['dir'] ) . $target_name;
+		$dest_url  = trailingslashit( $paths['url'] ) . $target_name;
+
+		if ( ! @rename( $part_file, $dest_file ) ) {
+			@unlink( $part_file );
+			wp_send_json_error( array( 'message' => __( 'Erreur lors de la finalisation du fichier.', 'mr-tee-editor' ) ), 500 );
+		}
+
+		if ( 'preview_jpg' === $artifact ) {
+			@copy( $dest_file, trailingslashit( $paths['dir'] ) . 'design_preview.png' );
+		}
+
+		wp_send_json_success(
+			array(
+				'done'     => true,
+				'artifact' => $artifact,
+				'url'      => $dest_url,
+				'bytes'    => @filesize( $dest_file ),
 			)
 		);
 	}

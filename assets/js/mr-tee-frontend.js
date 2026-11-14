@@ -7,12 +7,12 @@
  * @package MrTeeEditor\Assets
  */
 
-import { StateStore } from './modules/state-store.js?v=2.3.13';
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.3.13';
-import { SvgRenderer } from './modules/svg-renderer.js?v=2.3.13';
-import { GalleryStage } from './modules/gallery-stage.js?v=2.3.13';
-import { FormController } from './modules/form-controller.js?v=2.3.13';
-import { PrintExporter } from './modules/print-exporter.js?v=2.3.13';
+import { StateStore } from './modules/state-store.js?v=2.3.14';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.3.14';
+import { SvgRenderer } from './modules/svg-renderer.js?v=2.3.14';
+import { GalleryStage } from './modules/gallery-stage.js?v=2.3.14';
+import { FormController } from './modules/form-controller.js?v=2.3.14';
+import { PrintExporter } from './modules/print-exporter.js?v=2.3.14';
 
 window.mrTeePrintExporter = PrintExporter;
 window.mrTeeSvgRenderer = SvgRenderer;
@@ -251,11 +251,13 @@ class MrTeeFrontendApp {
 	}
 
 	/**
-	 * Handle Add-to-Cart export request: rasterizes 300 DPI PNG and submits.
+	 * Handle Add-to-Cart export request: rasterizes 300 DPI PNG, uploads artifacts, and submits.
 	 *
-	 * @param {Function} onDone Callback invoked after inputs are populated.
+	 * @param {Function} onDone Callback invoked after inputs are populated with (ok, err).
 	 */
 	async handleExport(onDone) {
+		let ok = false;
+		let exportErr = null;
 		try {
 			await PrintExporter.prepareExport(
 				this.currentLayers,
@@ -263,12 +265,14 @@ class MrTeeFrontendApp {
 				this.store,
 				this.config
 			);
+			ok = true;
 		} catch (err) {
+			exportErr = err;
 			console.error('[MrTee Editor] Export preparation failed: ' + (err && err.stack ? err.stack : err));
 		}
 
 		if (typeof onDone === 'function') {
-			onDone();
+			onDone(ok, exportErr);
 		}
 	}
 }

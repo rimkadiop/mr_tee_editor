@@ -7,11 +7,150 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.3.13';
+import { SvgRenderer } from './svg-renderer.js?v=2.3.14';
 
 export class PrintExporter {
+	static CHUNK_SIZE_BYTES = 300 * 1024; // 300 KB binary chunks stay safely below shared host 413 limits
+
+	static generateDesignKey() {
+		if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+			return `mrtee_${crypto.randomUUID()}`;
+		}
+		const rnd = () => Math.floor((1 + Math.random()) * 0x10000).toString(16).slice(1);
+		return `mrtee_${rnd()}${rnd()}-${rnd()}-4${rnd().slice(1)}-${rnd()}-${rnd()}${rnd()}${rnd()}`;
+	}
+
+	static generateUploadId() {
+		if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+			return crypto.randomUUID().replace(/-/g, '').slice(0, 24);
+		}
+		return `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
+	}
+
+	static resolveAjaxUrl() {
+		const data = (typeof window !== 'undefined' && window.mrTeeProductData) ? window.mrTeeProductData : {};
+		const rawAjaxUrl = data.ajaxUrl || '/wp-admin/admin-ajax.php';
+		try {
+			const u = new URL(rawAjaxUrl, window.location.origin);
+			if (u.hostname === window.location.hostname) {
+				return u.pathname + u.search;
+			}
+		} catch (e) {}
+		return rawAjaxUrl;
+	}
+
+	static dataUrlToBlob(dataUrl) {
+		if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.includes(',')) {
+			return null;
+		}
+		const commaIdx = dataUrl.indexOf(',');
+		const header = dataUrl.slice(0, commaIdx);
+		const body = dataUrl.slice(commaIdx + 1);
+		const mimeMatch = header.match(/data:([^;]+)/i);
+		const mime = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+
+		if (header.includes(';base64')) {
+			const binStr = atob(body);
+			const len = binStr.length;
+			const bytes = new Uint8Array(len);
+			for (let i = 0; i < len; i++) {
+				bytes[i] = binStr.charCodeAt(i);
+			}
+			return new Blob([bytes], { type: mime });
+		}
+		return new Blob([decodeURIComponent(body)], { type: mime });
+	}
+
+	static async uploadBlobInChunks(blob, { artifact, designKey = '', fileName = '' }) {
+		if (!blob || blob.size === 0) {
+			return null;
+		}
+		const data = (typeof window !== 'undefined' && window.mrTeeProductData) ? window.mrTeeProductData : {};
+		const nonce = data.uploadNonce || '';
+		if (!nonce) {
+			throw new Error('Missing upload nonce');
+		}
+
+		const ajaxUrl = this.resolveAjaxUrl();
+		const chunkSize = this.CHUNK_SIZE_BYTES;
+		const totalChunks = Math.max(1, Math.ceil(blob.size / chunkSize));
+		const uploadId = this.generateUploadId();
+		let finalResult = null;
+
+		for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+			const start = chunkIndex * chunkSize;
+			const end = Math.min(blob.size, start + chunkSize);
+			const slice = blob.slice(start, end, blob.type || 'application/octet-stream');
+
+			let attempt = 0;
+			let okResp = null;
+			while (attempt < 2 && !okResp) {
+				attempt++;
+				const formData = new FormData();
+				formData.append('action', 'mr_tee_upload_design_artifact');
+				formData.append('nonce', nonce);
+				formData.append('artifact', artifact);
+				formData.append('upload_id', uploadId);
+				formData.append('chunk_index', String(chunkIndex));
+				formData.append('total_chunks', String(totalChunks));
+				if (designKey) formData.append('design_key', designKey);
+				if (fileName) formData.append('file_name', fileName);
+				formData.append('chunk_file', slice, fileName || `${artifact}.part`);
+
+				const resp = await fetch(ajaxUrl, { method: 'POST', body: formData });
+				if (!resp.ok) {
+					if (attempt >= 2) {
+						throw new Error(`Upload HTTP ${resp.status} (${artifact} chunk ${chunkIndex + 1}/${totalChunks})`);
+					}
+					continue;
+				}
+				const json = await resp.json();
+				if (!json || !json.success) {
+					const errMsg = (json && json.data && json.data.message) ? json.data.message : `Upload error (${artifact})`;
+					throw new Error(errMsg);
+				}
+				okResp = json.data;
+			}
+			finalResult = okResp;
+		}
+
+		return finalResult;
+	}
+
+	static async ensureStoreImagesUploaded(store, config) {
+		if (!store || !config || !Array.isArray(config.text_lines)) return;
+		for (const line of config.text_lines) {
+			if (line.field_type !== 'image' || !line.ref_id) continue;
+			const ref = store.getReference(line.ref_id);
+			if (!ref || typeof ref.url !== 'string' || !ref.url.startsWith('data:image/')) continue;
+
+			const dataUrl = ref.url;
+			const props = Array.isArray(ref.customProperties) ? ref.customProperties : [];
+			const fileProp = props.find(p => p.key === 'fileName');
+			const mimeMatch = dataUrl.match(/^data:image\/([a-z0-9+.-]+)/i);
+			const rawExt = mimeMatch ? mimeMatch[1].toLowerCase() : 'png';
+			const safeExt = rawExt === 'jpeg' ? 'jpg' : (rawExt.includes('svg') ? 'svg' : rawExt);
+			const origName = (fileProp && fileProp.value) ? fileProp.value : `customer-image.${safeExt}`;
+			const blob = this.dataUrlToBlob(dataUrl);
+			if (!blob) continue;
+
+			const res = await this.uploadBlobInChunks(blob, {
+				artifact: 'customer_image',
+				fileName: origName,
+			});
+			if (res && res.url) {
+				if (typeof window !== 'undefined') {
+					window.mrTeeImageB64Cache = window.mrTeeImageB64Cache || {};
+					window.mrTeeImageB64Cache[res.url] = dataUrl;
+				}
+				store.setImageValue(line.ref_id, res.url, res.filename || origName, true);
+			}
+		}
+	}
+
 	/**
-	 * Prepare complete print export assets and populate form inputs.
+	 * Prepare complete print export assets, upload binary artifacts in chunks,
+	 * and populate lightweight form inputs.
 	 *
 	 * @param {Array} layers Merged scene-graph layers.
 	 * @param {Object} zoomTransform { scale, translateX, translateY }
@@ -20,6 +159,8 @@ export class PrintExporter {
 	 * @return {Promise<boolean>}
 	 */
 	static async prepareExport(layers, zoomTransform, store, config) {
+		await this.ensureStoreImagesUploaded(store, config);
+
 		const isFlatObject = config.product_type === 'flat_object';
 		const hasPerLineBoxes = Array.isArray(config.text_lines) && config.text_lines.some(l => l.box_left !== undefined && l.box_width !== undefined);
 		const realW  = parseFloat(config.print_real_width) || 30.0;
@@ -124,7 +265,7 @@ export class PrintExporter {
 		// 4. Render Composite Mockup Preview (Garment + Design) as compact high-quality JPEG
 		const compositeB64 = await this.renderCompositePreview(inlinedFullPreviewSvg, config);
 
-		// 5. Serialize payload with print dimensions attached
+		// 5. Serialize lightweight payload with print dimensions attached
 		const payload = store.getExportPayload();
 		payload.crop_print_width = exportRealW;
 		payload.crop_print_height = exportRealH;
@@ -132,17 +273,52 @@ export class PrintExporter {
 		payload.crop_height_px = exportPxH;
 		payload.print_unit = unit;
 		payload.dpi = dpi;
+		const payloadJson = JSON.stringify(payload);
 
-		// 5. Populate hidden form inputs
+		const designKeyInput = document.getElementById('mr_tee_design_key');
 		const payloadInput = document.getElementById('mr_tee_editor_payload');
 		const previewInput = document.getElementById('mr_tee_preview_png');
 		const svgInput = document.getElementById('mr_tee_vector_svg');
 		const printInput = document.getElementById('mr_tee_print_300dpi_png');
 
-		if (payloadInput) payloadInput.value = JSON.stringify(payload);
-		if (previewInput) previewInput.value = compositeB64;
-		if (svgInput) svgInput.value = inlinedExportSvg || svgMarkup;
-		if (printInput) printInput.value = print300DpiB64;
+		const exportSvgText = inlinedExportSvg || svgMarkup;
+		const designKey = this.generateDesignKey();
+		let uploadedToServer = false;
+
+		try {
+			const previewBlob = this.dataUrlToBlob(compositeB64);
+			const previewArtifact = (compositeB64 && compositeB64.includes('image/jpeg')) ? 'preview_jpg' : 'preview_png';
+			const svgBlob = exportSvgText ? new Blob([exportSvgText], { type: 'image/svg+xml;charset=utf-8' }) : null;
+			const printBlob = this.dataUrlToBlob(print300DpiB64);
+
+			const tasks = [];
+			if (previewBlob) tasks.push(this.uploadBlobInChunks(previewBlob, { artifact: previewArtifact, designKey }));
+			if (svgBlob) tasks.push(this.uploadBlobInChunks(svgBlob, { artifact: 'svg', designKey }));
+			if (printBlob) tasks.push(this.uploadBlobInChunks(printBlob, { artifact: 'print_png', designKey }));
+
+			await Promise.all(tasks);
+			uploadedToServer = true;
+		} catch (uploadErr) {
+			const approxBytes = payloadJson.length + (compositeB64 || '').length + exportSvgText.length + (print300DpiB64 || '').length;
+			if (approxBytes >= 180 * 1024) {
+				throw uploadErr;
+			}
+			console.warn('[MrTee PrintExporter] Chunk upload failed on small payload, using inline fallback:', uploadErr);
+		}
+
+		if (uploadedToServer) {
+			if (designKeyInput) designKeyInput.value = designKey;
+			if (payloadInput) payloadInput.value = payloadJson;
+			if (previewInput) previewInput.value = '';
+			if (svgInput) svgInput.value = '';
+			if (printInput) printInput.value = '';
+		} else {
+			if (designKeyInput) designKeyInput.value = '';
+			if (payloadInput) payloadInput.value = payloadJson;
+			if (previewInput) previewInput.value = compositeB64;
+			if (svgInput) svgInput.value = exportSvgText;
+			if (printInput) printInput.value = print300DpiB64;
+		}
 
 		return true;
 	}

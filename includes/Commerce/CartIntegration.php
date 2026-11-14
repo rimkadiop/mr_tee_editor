@@ -56,21 +56,62 @@ class CartIntegration {
 			return $cart_item_data;
 		}
 
-		$design_key   = 'mrtee_' . wp_generate_uuid4();
+		$posted_key = isset( $_POST['mr_tee_design_key'] ) ? preg_replace( '/[^a-zA-Z0-9_-]/', '', wp_unslash( $_POST['mr_tee_design_key'] ) ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.NonceVerification.Missing
+		$design_key = preg_match( '/^mrtee_[a-zA-Z0-9_-]{8,64}$/', $posted_key ) ? $posted_key : ( 'mrtee_' . wp_generate_uuid4() );
 		$preview_png  = isset( $_POST['mr_tee_preview_png'] ) ? wp_unslash( $_POST['mr_tee_preview_png'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.NonceVerification.Missing
 		$vector_svg   = isset( $_POST['mr_tee_vector_svg'] ) ? wp_unslash( $_POST['mr_tee_vector_svg'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.NonceVerification.Missing
 		$print_300dpi = isset( $_POST['mr_tee_print_300dpi_png'] ) ? wp_unslash( $_POST['mr_tee_print_300dpi_png'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.NonceVerification.Missing
 
-		// Save files to disk
-		$sub_dir     = 'designs/' . $design_key;
-		$is_jpeg     = ( strpos( $preview_png, 'image/jpeg' ) !== false || strpos( $preview_png, 'image/jpg' ) !== false );
-		$preview_ext = $is_jpeg ? 'design_preview.jpg' : 'design_preview.png';
-		$preview_res = PrintAssetGenerator::save_base64_png( $preview_png, $sub_dir, $preview_ext );
-		if ( $preview_res && $is_jpeg ) {
-			@copy( $preview_res['file'], dirname( $preview_res['file'] ) . '/design_preview.png' );
+		// Save inline files to disk, or reuse pre-uploaded chunked artifacts already stored under designs/{design_key}
+		$sub_dir = 'designs/' . $design_key;
+		$paths   = PrintAssetGenerator::get_upload_dir( $sub_dir );
+
+		$preview_res = false;
+		if ( ! empty( $preview_png ) ) {
+			$is_jpeg     = ( strpos( $preview_png, 'image/jpeg' ) !== false || strpos( $preview_png, 'image/jpg' ) !== false );
+			$preview_ext = $is_jpeg ? 'design_preview.jpg' : 'design_preview.png';
+			$preview_res = PrintAssetGenerator::save_base64_png( $preview_png, $sub_dir, $preview_ext );
+			if ( $preview_res && $is_jpeg ) {
+				@copy( $preview_res['file'], dirname( $preview_res['file'] ) . '/design_preview.png' );
+			}
+		} else {
+			foreach ( array( 'design_preview.jpg', 'design_preview.png' ) as $cand ) {
+				$cand_file = trailingslashit( $paths['dir'] ) . $cand;
+				if ( file_exists( $cand_file ) && filesize( $cand_file ) > 0 ) {
+					$preview_res = array(
+						'file' => $cand_file,
+						'url'  => trailingslashit( $paths['url'] ) . $cand,
+					);
+					break;
+				}
+			}
 		}
-		$svg_res     = PrintAssetGenerator::save_svg( $vector_svg, $sub_dir, 'design.svg' );
-		$print_res   = PrintAssetGenerator::save_base64_png( $print_300dpi, $sub_dir, 'print_300dpi.png' );
+
+		$svg_res = false;
+		if ( ! empty( $vector_svg ) ) {
+			$svg_res = PrintAssetGenerator::save_svg( $vector_svg, $sub_dir, 'design.svg' );
+		} else {
+			$svg_file = trailingslashit( $paths['dir'] ) . 'design.svg';
+			if ( file_exists( $svg_file ) && filesize( $svg_file ) > 0 ) {
+				$svg_res = array(
+					'file' => $svg_file,
+					'url'  => trailingslashit( $paths['url'] ) . 'design.svg',
+				);
+			}
+		}
+
+		$print_res = false;
+		if ( ! empty( $print_300dpi ) ) {
+			$print_res = PrintAssetGenerator::save_base64_png( $print_300dpi, $sub_dir, 'print_300dpi.png' );
+		} else {
+			$print_file = trailingslashit( $paths['dir'] ) . 'print_300dpi.png';
+			if ( file_exists( $print_file ) && filesize( $print_file ) > 0 ) {
+				$print_res = array(
+					'file' => $print_file,
+					'url'  => trailingslashit( $paths['url'] ) . 'print_300dpi.png',
+				);
+			}
+		}
 
 		$config       = SceneGraphSchema::get_product_config( $product_id );
 		$is_flat      = isset( $config['product_type'] ) && 'flat_object' === $config['product_type'];
@@ -123,7 +164,12 @@ class CartIntegration {
 				$preview_png,
 				$vector_svg,
 				$print_300dpi,
-				$product_id
+				$product_id,
+				array(
+					'preview_file' => $preview_res ? $preview_res['file'] : '',
+					'svg_file'     => $svg_res ? $svg_res['file'] : '',
+					'print_file'   => $print_res ? $print_res['file'] : '',
+				)
 			);
 			$cart_item_data['mr_tee_editor']['nbd'] = $nbd_meta;
 		}

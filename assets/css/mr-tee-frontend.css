@@ -601,10 +601,11 @@
 .mr-tee-live-stage-overlay {
 	position: absolute !important;
 	pointer-events: none !important;
-	z-index: 50 !important;
+	z-index: 2 !important;
 	display: flex !important;
 	align-items: center !important;
 	justify-content: center !important;
+	overflow: hidden !important;
 }
 
 .mr-tee-live-svg-container {
@@ -653,14 +654,9 @@
 	.woocommerce-product-gallery {
 		position: sticky !important;
 		top: 90px !important;
-		z-index: 10 !important;
+		z-index: 5 !important;
 		align-self: flex-start;
 	}
-}
-
-.mr-tee-live-stage-overlay {
-	overflow: hidden !important;
-	z-index: 20 !important;
 }
 
 .mr-tee-pill-thumb {

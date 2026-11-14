@@ -119,7 +119,7 @@ export class GalleryStage {
 			overlay.className = 'mr-tee-live-stage-overlay';
 			overlay.style.position = 'absolute';
 			overlay.style.pointerEvents = 'none';
-			overlay.style.zIndex = '20';
+			overlay.style.zIndex = '2';
 			overlay.style.display = 'flex';
 			overlay.style.alignItems = 'center';
 			overlay.style.justifyContent = 'center';

@@ -1198,13 +1198,30 @@
 					const lineHeightRatio = 0.92;
 					const letterSpacingUnits = (fontDef.letter_spacing !== undefined ? fontDef.letter_spacing : 0.05) * unitsPerEm;
 
+					const resolveAdminGlyph = (ch) => {
+						const cands = [ch, ch.toUpperCase(), ch.toLowerCase()];
+						if (typeof ch.normalize === 'function') {
+							const base = ch.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+							if (base && base !== ch) cands.push(base, base.toUpperCase(), base.toLowerCase());
+						}
+						let firstHit = null;
+						for (const k of cands) {
+							const entry = k ? svgData.glyphs[k] : null;
+							if (entry) {
+								if (!firstHit) firstHit = entry;
+								if (entry.svg || ch === ' ') return entry;
+							}
+						}
+						return firstHit || { adv: svgData.defaultAdv || 500, svg: '' };
+					};
+
 					const lineWidths = [];
 					let maxWidthUnits = 0;
 					for (const lineStr of lines) {
 						let wUnits = 0;
 						for (let i = 0; i < lineStr.length; i++) {
 							const ch = lineStr[i];
-							const g = svgData.glyphs[ch] || svgData.glyphs[ch.toUpperCase()] || svgData.glyphs[ch.toLowerCase()] || { adv: svgData.defaultAdv || 500 };
+							const g = resolveAdminGlyph(ch);
 							wUnits += (g.adv || 500) + (i < lineStr.length - 1 ? letterSpacingUnits : 0);
 						}
 						lineWidths.push(wUnits);
@@ -1230,7 +1247,7 @@
 
 						for (let i = 0; i < lineStr.length; i++) {
 							const ch = lineStr[i];
-							const g = svgData.glyphs[ch] || svgData.glyphs[ch.toUpperCase()] || svgData.glyphs[ch.toLowerCase()] || { adv: svgData.defaultAdv || 500, svg: '' };
+							const g = resolveAdminGlyph(ch);
 							if (g.svg) {
 								glyphsMarkup += `<g class="mrtee-ot-glyph" transform="translate(${cursorX.toFixed(3)}, ${baselineY.toFixed(3)}) scale(${scale.toFixed(5)})">${g.svg}</g>\n`;
 							}

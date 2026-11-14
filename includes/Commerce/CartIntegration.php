@@ -105,6 +105,7 @@ class CartIntegration {
 			'print_unit'         => $unit,
 			'print_aspect_ratio' => $crop_ratio,
 			'product_type'       => isset( $config['product_type'] ) ? $config['product_type'] : 'garment',
+			'repeater_enabled'   => ! empty( $config['repeater']['enabled'] ),
 			'preview_url'        => $preview_res ? $preview_res['url'] : '',
 			'preview_file'       => $preview_res ? $preview_res['file'] : '',
 			'svg_url'            => $svg_res ? $svg_res['url'] : '',
@@ -203,30 +204,33 @@ class CartIntegration {
 
 		// Repeater items (Mushrooms)
 		if ( isset( $payload['repeater_count'] ) ) {
-			$count = intval( $payload['repeater_count'] );
-			$item_data[] = array(
-				'key'     => __( 'Nombre de champignons', 'mr-tee-editor' ),
-				'value'   => $count,
-				'display' => $count,
-			);
+			$count            = intval( $payload['repeater_count'] );
+			$repeater_enabled = array_key_exists( 'repeater_enabled', $data ) ? ! empty( $data['repeater_enabled'] ) : ( $count > 0 );
+			if ( $repeater_enabled || $count > 0 ) {
+				$item_data[] = array(
+					'key'     => __( 'Nombre de champignons', 'mr-tee-editor' ),
+					'value'   => $count,
+					'display' => $count,
+				);
 
-			if ( ! empty( $payload['repeater_items'] ) && is_array( $payload['repeater_items'] ) ) {
-				$mushroom_summary = array();
-				foreach ( $payload['repeater_items'] as $idx => $m_item ) {
-					if ( $idx >= $count ) {
-						break;
+				if ( ! empty( $payload['repeater_items'] ) && is_array( $payload['repeater_items'] ) ) {
+					$mushroom_summary = array();
+					foreach ( $payload['repeater_items'] as $idx => $m_item ) {
+						if ( $idx >= $count ) {
+							break;
+						}
+						$name     = ! empty( $m_item['name'] ) ? $m_item['name'] : 'Sans nom';
+						$ic_key   = ! empty( $m_item['icon'] ) ? $m_item['icon'] : 'mushroom_red';
+						$ic_name  = isset( $icons[ $ic_key ] ) ? $icons[ $ic_key ]['name'] : $ic_key;
+						$mushroom_summary[] = sprintf( '%s (%s)', $name, $ic_name );
 					}
-					$name     = ! empty( $m_item['name'] ) ? $m_item['name'] : 'Sans nom';
-					$ic_key   = ! empty( $m_item['icon'] ) ? $m_item['icon'] : 'mushroom_red';
-					$ic_name  = isset( $icons[ $ic_key ] ) ? $icons[ $ic_key ]['name'] : $ic_key;
-					$mushroom_summary[] = sprintf( '%s (%s)', $name, $ic_name );
-				}
-				if ( ! empty( $mushroom_summary ) ) {
-					$item_data[] = array(
-						'key'     => __( 'Détail des champignons', 'mr-tee-editor' ),
-						'value'   => implode( ', ', $mushroom_summary ),
-						'display' => implode( '<br>', array_map( 'esc_html', $mushroom_summary ) ),
-					);
+					if ( ! empty( $mushroom_summary ) ) {
+						$item_data[] = array(
+							'key'     => __( 'Détail des champignons', 'mr-tee-editor' ),
+							'value'   => implode( ', ', $mushroom_summary ),
+							'display' => implode( '<br>', array_map( 'esc_html', $mushroom_summary ) ),
+						);
+					}
 				}
 			}
 		}
@@ -278,21 +282,24 @@ class CartIntegration {
 
 		// Repeater summary readable meta
 		if ( isset( $payload['repeater_count'] ) ) {
-			$count = intval( $payload['repeater_count'] );
-			$item->add_meta_data( __( 'Nombre de champignons', 'mr-tee-editor' ), $count, true );
+			$count            = intval( $payload['repeater_count'] );
+			$repeater_enabled = array_key_exists( 'repeater_enabled', $data ) ? ! empty( $data['repeater_enabled'] ) : ( $count > 0 );
+			if ( $repeater_enabled || $count > 0 ) {
+				$item->add_meta_data( __( 'Nombre de champignons', 'mr-tee-editor' ), $count, true );
 
-			if ( ! empty( $payload['repeater_items'] ) && is_array( $payload['repeater_items'] ) ) {
-				$summary = array();
-				foreach ( $payload['repeater_items'] as $idx => $m_item ) {
-					if ( $idx >= $count ) {
-						break;
+				if ( ! empty( $payload['repeater_items'] ) && is_array( $payload['repeater_items'] ) ) {
+					$summary = array();
+					foreach ( $payload['repeater_items'] as $idx => $m_item ) {
+						if ( $idx >= $count ) {
+							break;
+						}
+						$name     = ! empty( $m_item['name'] ) ? $m_item['name'] : 'Sans nom';
+						$ic_key   = ! empty( $m_item['icon'] ) ? $m_item['icon'] : 'mushroom_red';
+						$ic_name  = isset( $icons[ $ic_key ] ) ? $icons[ $ic_key ]['name'] : $ic_key;
+						$summary[] = sprintf( '%d. %s (%s)', $idx + 1, $name, $ic_name );
 					}
-					$name     = ! empty( $m_item['name'] ) ? $m_item['name'] : 'Sans nom';
-					$ic_key   = ! empty( $m_item['icon'] ) ? $m_item['icon'] : 'mushroom_red';
-					$ic_name  = isset( $icons[ $ic_key ] ) ? $icons[ $ic_key ]['name'] : $ic_key;
-					$summary[] = sprintf( '%d. %s (%s)', $idx + 1, $name, $ic_name );
+					$item->add_meta_data( __( 'Détail des champignons', 'mr-tee-editor' ), implode( "\n", $summary ), true );
 				}
-				$item->add_meta_data( __( 'Détail des champignons', 'mr-tee-editor' ), implode( "\n", $summary ), true );
 			}
 		}
 

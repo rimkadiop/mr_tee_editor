@@ -687,6 +687,41 @@ export class SvgRenderer {
 	 * @param {Object} fontData Hydrated OpenType-SVG font dataset.
 	 * @param {string} text Text string whose characters should be warmed immediately.
 	 */
+	/**
+	 * Resolve an OpenType-SVG glyph entry for a character, falling back across
+	 * case variants and NFD diacritic-stripped base Latin characters (e.g. É -> E).
+	 *
+	 * @param {Object} glyphs Font glyph map.
+	 * @param {string} ch Single character.
+	 * @param {number} defaultAdv Fallback advance width.
+	 * @return {{ adv: number, svg?: string, liveSvg?: string, exportSvg?: string, glyphKey?: string }}
+	 */
+	static resolveSvgGlyph(glyphs, ch, defaultAdv = 500) {
+		if (!glyphs || !ch) {
+			return { adv: defaultAdv, svg: '' };
+		}
+		const isSpace = (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r');
+		const candidates = [ch, ch.toUpperCase(), ch.toLowerCase()];
+		if (typeof ch.normalize === 'function') {
+			const base = ch.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+			if (base && base !== ch) {
+				candidates.push(base, base.toUpperCase(), base.toLowerCase());
+			}
+		}
+		let firstHit = null;
+		for (let i = 0; i < candidates.length; i++) {
+			const key = candidates[i];
+			const g = key ? glyphs[key] : null;
+			if (g) {
+				if (!firstHit) firstHit = g;
+				if (g.svg || isSpace) {
+					return g;
+				}
+			}
+		}
+		return firstHit || { adv: defaultAdv, svg: '' };
+	}
+
 	static prewarmTextGlyphs(fontData, text = '') {
 		if (typeof window === 'undefined' || !fontData || !text) return;
 		this.prepareFontData(fontData, fontData.id || '');
@@ -698,7 +733,7 @@ export class SvgRenderer {
 		for (let i = 0; i < text.length; i++) {
 			const ch = text[i];
 			if (ch === ' ' || ch === '\n' || ch === '\r' || ch === '\t') continue;
-			const g = glyphs[ch] || glyphs[ch.toUpperCase()] || glyphs[ch.toLowerCase()];
+			const g = this.resolveSvgGlyph(glyphs, ch, fontData.defaultAdv || 500);
 			if (!g || !g.svg) continue;
 
 			re.lastIndex = 0;
@@ -990,7 +1025,7 @@ export class SvgRenderer {
 			let widthUnits = 0;
 			for (let i = 0; i < lineText.length; i++) {
 				const ch = lineText[i];
-				const g = (fontData.glyphs && (fontData.glyphs[ch] || fontData.glyphs[ch.toUpperCase()])) || { adv: fontData.defaultAdv || 500 };
+				const g = this.resolveSvgGlyph(fontData.glyphs, ch, fontData.defaultAdv || 500);
 				widthUnits += (g.adv || 500) + (i < lineText.length - 1 ? letterSpacingUnits : 0);
 			}
 			if (widthUnits > maxLineDesignWidth) maxLineDesignWidth = widthUnits;
@@ -1033,7 +1068,7 @@ export class SvgRenderer {
 
 			for (let i = 0; i < lm.text.length; i++) {
 				const ch = lm.text[i];
-				const g = (fontData.glyphs && (fontData.glyphs[ch] || fontData.glyphs[ch.toUpperCase()])) || { adv: fontData.defaultAdv || 500, svg: '' };
+				const g = this.resolveSvgGlyph(fontData.glyphs, ch, fontData.defaultAdv || 500);
 				if (g.svg) {
 					const glyphSvg = options.isExport ? (g.exportSvg || g.svg) : (g.liveSvg || g.svg);
 					const glyphKeyAttr = g.glyphKey ? ` data-glyph-key="${g.glyphKey}"` : '';

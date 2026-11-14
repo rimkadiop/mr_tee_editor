@@ -64,12 +64,23 @@ class VisualPlacementStage {
 			);
 		}
 
-		$fonts       = FontRegistry::get_fonts();
-		$allowed_fonts = ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] )
-			? $config['allowed_fonts']
-			: ( ! empty( $text_lines[0]['allowed_fonts'] ) && is_array( $text_lines[0]['allowed_fonts'] ) ? $text_lines[0]['allowed_fonts'] : array() );
+		$fonts         = FontRegistry::get_fonts();
+		$allowed_fonts = array();
+		if ( ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
+			$allowed_fonts = $config['allowed_fonts'];
+		} else {
+			foreach ( $text_lines as $tl ) {
+				if ( ( ! isset( $tl['field_type'] ) || 'image' !== $tl['field_type'] ) && ! empty( $tl['allowed_fonts'] ) && is_array( $tl['allowed_fonts'] ) ) {
+					$allowed_fonts = $tl['allowed_fonts'];
+					break;
+				}
+			}
+		}
 		if ( empty( $allowed_fonts ) ) {
 			foreach ( $text_lines as $tl ) {
+				if ( isset( $tl['field_type'] ) && 'image' === $tl['field_type'] ) {
+					continue;
+				}
 				if ( ! empty( $tl['font'] ) ) {
 					$allowed_fonts[] = $tl['font'];
 				}
@@ -284,25 +295,36 @@ class VisualPlacementStage {
 				<div class="mr-tee-pills-scroll" id="mr-tee-pills-list">
 					<?php foreach ( $text_lines as $idx => $line ) : ?>
 						<?php
-						$color = self::$field_colors[ $idx % count( self::$field_colors ) ];
-						$bw    = isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : 40.0;
-						$bh    = isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : 8.5;
+						$color      = self::$field_colors[ $idx % count( self::$field_colors ) ];
+						$field_type = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) ? 'image' : 'text';
+						$is_image   = ( 'image' === $field_type );
+						$bw         = isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : 40.0;
+						$bh         = isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : ( $is_image ? 30.0 : 8.5 );
 						?>
 						<button
 							type="button"
-							class="mr-tee-field-pill <?php echo 0 === $idx ? 'is-active' : ''; ?>"
+							class="mr-tee-field-pill <?php echo 0 === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-pill' : ''; ?>"
 							data-field-index="<?php echo esc_attr( $idx ); ?>"
+							data-field-type="<?php echo esc_attr( $field_type ); ?>"
 							style="--pill-color: <?php echo esc_attr( $color ); ?>;"
 						>
 							<span class="mr-tee-pill-badge" style="background: <?php echo esc_attr( $color ); ?>;"><?php echo esc_html( $idx + 1 ); ?></span>
+							<?php if ( $is_image ) : ?>
+								<span class="mr-tee-pill-type-icon" aria-hidden="true">🖼️</span>
+							<?php endif; ?>
 							<span class="mr-tee-pill-label"><?php echo esc_html( $line['label'] ); ?></span>
 							<span class="mr-tee-pill-dims"><?php echo esc_html( round( $bw, 1 ) . '×' . round( $bh, 1 ) . '%' ); ?></span>
 						</button>
 					<?php endforeach; ?>
 				</div>
-				<button type="button" class="button button-secondary mr-tee-btn-add-field-pill" id="mr-tee-btn-add-field-pill">
-					<span class="dashicons dashicons-plus-alt2"></span> <?php esc_html_e( '+ Ajouter un champ', 'mr-tee-editor' ); ?>
-				</button>
+				<div class="mr-tee-add-buttons-group">
+					<button type="button" class="button button-secondary mr-tee-btn-add-field-pill" id="mr-tee-btn-add-field-pill">
+						<span class="dashicons dashicons-plus-alt2"></span> <?php esc_html_e( '+ Ajouter un Texte', 'mr-tee-editor' ); ?>
+					</button>
+					<button type="button" class="button button-secondary mr-tee-btn-add-image-field-pill" id="mr-tee-btn-add-image-field-pill">
+						<span>🖼️</span> <?php esc_html_e( '+ Ajouter une Image', 'mr-tee-editor' ); ?>
+					</button>
+				</div>
 			</div>
 
 			<div class="mr-tee-stage-container">
@@ -315,21 +337,24 @@ class VisualPlacementStage {
 						<div id="mr-tee-boxes-container">
 							<?php foreach ( $text_lines as $idx => $line ) : ?>
 								<?php
-								$color = self::$field_colors[ $idx % count( self::$field_colors ) ];
-								$bl    = isset( $line['box_left'] ) ? floatval( $line['box_left'] ) : 30.0;
-								$bt    = isset( $line['box_top'] ) ? floatval( $line['box_top'] ) : ( 25.0 + $idx * 12.0 );
-								$bw    = isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : 40.0;
-								$bh    = isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : 8.5;
-								$br    = isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0;
+								$color      = self::$field_colors[ $idx % count( self::$field_colors ) ];
+								$field_type = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) ? 'image' : 'text';
+								$is_image   = ( 'image' === $field_type );
+								$bl         = isset( $line['box_left'] ) ? floatval( $line['box_left'] ) : 30.0;
+								$bt         = isset( $line['box_top'] ) ? floatval( $line['box_top'] ) : ( 25.0 + $idx * 12.0 );
+								$bw         = isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : 40.0;
+								$bh         = isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : ( $is_image ? 30.0 : 8.5 );
+								$br         = isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0;
 								?>
 								<div
 									id="mr-tee-field-box-<?php echo esc_attr( $idx ); ?>"
-									class="mr-tee-field-box <?php echo 0 === $idx ? 'is-active' : ''; ?>"
+									class="mr-tee-field-box <?php echo 0 === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-field' : ''; ?>"
 									data-field-index="<?php echo esc_attr( $idx ); ?>"
+									data-field-type="<?php echo esc_attr( $field_type ); ?>"
 									style="left: <?php echo esc_attr( $bl ); ?>%; top: <?php echo esc_attr( $bt ); ?>%; width: <?php echo esc_attr( $bw ); ?>%; height: <?php echo esc_attr( $bh ); ?>%; transform: rotate(<?php echo esc_attr( $br ); ?>deg); transform-origin: center center; --field-color: <?php echo esc_attr( $color ); ?>;"
 								>
 									<span class="mr-tee-box-badge" style="background: <?php echo esc_attr( $color ); ?>;">
-										<?php echo esc_html( ( $idx + 1 ) . '. ' . $line['label'] ); ?>
+										<?php echo esc_html( ( $idx + 1 ) . '. ' . ( $is_image ? '🖼️ ' : '' ) . $line['label'] ); ?>
 									</span>
 									<div class="mr-tee-box-svg-holder" id="mr-tee-box-svg-<?php echo esc_attr( $idx ); ?>">
 										<!-- Live SVG rendered by admin JS engine -->
@@ -337,7 +362,7 @@ class VisualPlacementStage {
 
 									<!-- Interactive Rotation Handle & Stem -->
 									<div class="mr-tee-handle-rot-stem" style="background: <?php echo esc_attr( $color ); ?>;"></div>
-									<div class="mr-tee-handle-rot" data-handle="rot" style="border-color: <?php echo esc_attr( $color ); ?>;" title="<?php esc_attr_e( 'Faire pivoter le texte (ou entrer les degrés ci-contre)', 'mr-tee-editor' ); ?>"></div>
+									<div class="mr-tee-handle-rot" data-handle="rot" style="border-color: <?php echo esc_attr( $color ); ?>;" title="<?php esc_attr_e( 'Faire pivoter la zone (ou entrer les degrés ci-contre)', 'mr-tee-editor' ); ?>"></div>
 
 									<!-- Interactive Corner Resize Handles -->
 									<div class="mr-tee-handle mr-tee-handle-nw" data-handle="nw" style="border-color: <?php echo esc_attr( $color ); ?>;"></div>
@@ -350,7 +375,7 @@ class VisualPlacementStage {
 					</div>
 
 					<p class="description mr-tee-stage-instructions">
-						<?php esc_html_e( 'Cliquez sur un rectangle pour l\'activer. Déplacez-le par glisser-déposer sur le fond et tirez sur les poignées pour modifier sa largeur/hauteur. Le texte s\'adapte automatiquement aux dimensions du rectangle sans déborder.', 'mr-tee-editor' ); ?>
+						<?php esc_html_e( 'Cliquez sur un rectangle pour l\'activer. Déplacez-le par glisser-déposer sur le fond et tirez sur les poignées pour modifier sa largeur/hauteur. Le texte ou l\'image reste strictement à l\'intérieur du rectangle défini sans jamais déborder.', 'mr-tee-editor' ); ?>
 					</p>
 				</div>
 
@@ -363,17 +388,24 @@ class VisualPlacementStage {
 					<div id="mr-tee-field-panels-container">
 						<?php foreach ( $text_lines as $idx => $line ) : ?>
 							<?php
-							$color = self::$field_colors[ $idx % count( self::$field_colors ) ];
-							$bl    = isset( $line['box_left'] ) ? floatval( $line['box_left'] ) : 30.0;
-							$bt    = isset( $line['box_top'] ) ? floatval( $line['box_top'] ) : ( 25.0 + $idx * 12.0 );
-							$bw    = isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : 40.0;
-							$bh    = isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : 8.5;
-							$br    = isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0;
+							$color        = self::$field_colors[ $idx % count( self::$field_colors ) ];
+							$field_type   = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) ? 'image' : 'text';
+							$is_image     = ( 'image' === $field_type );
+							$bl           = isset( $line['box_left'] ) ? floatval( $line['box_left'] ) : 30.0;
+							$bt           = isset( $line['box_top'] ) ? floatval( $line['box_top'] ) : ( 25.0 + $idx * 12.0 );
+							$bw           = isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : 40.0;
+							$bh           = isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : ( $is_image ? 30.0 : 8.5 );
+							$br           = isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0;
+							$def_img_url  = ! empty( $line['default_image'] ) ? $line['default_image'] : '';
+							$def_img_id   = ! empty( $line['default_image_id'] ) ? absint( $line['default_image_id'] ) : 0;
+							$image_fit    = ( isset( $line['image_fit'] ) && 'cover' === $line['image_fit'] ) ? 'cover' : 'contain';
+							$allow_upload = ! isset( $line['allow_image_upload'] ) || ! empty( $line['allow_image_upload'] );
 							?>
 							<div
-								class="mr-tee-field-panel <?php echo 0 === $idx ? 'is-active' : ''; ?>"
+								class="mr-tee-field-panel <?php echo 0 === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-panel' : ''; ?>"
 								id="mr-tee-field-panel-<?php echo esc_attr( $idx ); ?>"
 								data-field-index="<?php echo esc_attr( $idx ); ?>"
+								data-field-type="<?php echo esc_attr( $field_type ); ?>"
 							>
 								<div class="mr-tee-panel-badge-row">
 									<span class="mr-tee-panel-indicator" style="background: <?php echo esc_attr( $color ); ?>;"></span>
@@ -394,6 +426,84 @@ class VisualPlacementStage {
 										</td>
 									</tr>
 									<tr>
+										<th><label><?php esc_html_e( 'Type de Champ', 'mr-tee-editor' ); ?></label></th>
+										<td>
+											<select
+												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][field_type]"
+												class="mr-tee-field-type-select"
+												data-field-index="<?php echo esc_attr( $idx ); ?>"
+											>
+												<option value="text" <?php selected( $field_type, 'text' ); ?>><?php esc_html_e( '📝 Champ Texte', 'mr-tee-editor' ); ?></option>
+												<option value="image" <?php selected( $field_type, 'image' ); ?>><?php esc_html_e( '🖼️ Champ Image (Strictement dans le rectangle)', 'mr-tee-editor' ); ?></option>
+											</select>
+										</td>
+									</tr>
+
+									<!-- Image Field Specific Controls -->
+									<tr class="mr-tee-row-image-only" <?php echo $is_image ? '' : 'style="display:none;"'; ?>>
+										<th><label><?php esc_html_e( 'Image par Défaut', 'mr-tee-editor' ); ?></label></th>
+										<td>
+											<div class="mr-tee-default-img-picker" data-field-index="<?php echo esc_attr( $idx ); ?>">
+												<div class="mr-tee-default-img-preview-wrap">
+													<?php if ( $def_img_url ) : ?>
+														<img src="<?php echo esc_url( $def_img_url ); ?>" alt="" class="mr-tee-default-img-preview" />
+													<?php else : ?>
+														<span class="mr-tee-default-img-empty"><?php esc_html_e( 'Aucune image par défaut', 'mr-tee-editor' ); ?></span>
+													<?php endif; ?>
+												</div>
+												<input
+													type="hidden"
+													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][default_image_id]"
+													value="<?php echo esc_attr( $def_img_id ); ?>"
+													class="mr-tee-field-default-image-id"
+													data-field-index="<?php echo esc_attr( $idx ); ?>"
+												/>
+												<input
+													type="url"
+													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][default_image]"
+													value="<?php echo esc_attr( $def_img_url ); ?>"
+													placeholder="https://..."
+													class="regular-text mr-tee-field-default-image-input"
+													data-field-index="<?php echo esc_attr( $idx ); ?>"
+													style="margin-bottom:6px; width:100%;"
+												/>
+												<div class="mr-tee-default-img-actions">
+													<button type="button" class="button button-secondary button-small mr-tee-btn-select-default-image" data-field-index="<?php echo esc_attr( $idx ); ?>">
+														📁 <?php esc_html_e( 'Bibliothèque WP', 'mr-tee-editor' ); ?>
+													</button>
+													<label class="button button-small" style="cursor:pointer; display:inline-flex; align-items:center; gap:4px;">
+														<span>⬆️ <?php esc_html_e( 'Importer fichier', 'mr-tee-editor' ); ?></span>
+														<input type="file" accept="image/*" class="mr-tee-quick-image-file" style="display:none;" data-field-index="<?php echo esc_attr( $idx ); ?>" />
+													</label>
+													<button
+														type="button"
+														class="button button-small mr-tee-btn-clear-default-image"
+														data-field-index="<?php echo esc_attr( $idx ); ?>"
+														<?php echo $def_img_url ? '' : 'style="display:none;"'; ?>
+													>
+														✕ <?php esc_html_e( 'Retirer', 'mr-tee-editor' ); ?>
+													</button>
+												</div>
+												<span class="mr-tee-img-upload-status" style="display:block; font-size:11px; margin-top:4px; color:#64748b;"></span>
+											</div>
+										</td>
+									</tr>
+									<tr class="mr-tee-row-image-only" <?php echo $is_image ? '' : 'style="display:none;"'; ?>>
+										<th><label><?php esc_html_e( 'Ajustement dans le rectangle', 'mr-tee-editor' ); ?></label></th>
+										<td>
+											<select
+												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][image_fit]"
+												class="mr-tee-field-image-fit"
+												data-field-index="<?php echo esc_attr( $idx ); ?>"
+											>
+												<option value="contain" <?php selected( $image_fit, 'contain' ); ?>><?php esc_html_e( 'Ajuster entier (Contain — sans rogner)', 'mr-tee-editor' ); ?></option>
+												<option value="cover" <?php selected( $image_fit, 'cover' ); ?>><?php esc_html_e( 'Remplir le rectangle (Cover — centré & recadré)', 'mr-tee-editor' ); ?></option>
+											</select>
+										</td>
+									</tr>
+
+									<!-- Text Field Specific Controls -->
+									<tr class="mr-tee-row-text-only" <?php echo $is_image ? 'style="display:none;"' : ''; ?>>
 										<th><label><?php esc_html_e( 'Texte par Défaut', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<?php if ( ! empty( $line['multiline'] ) ) : ?>
@@ -415,7 +525,7 @@ class VisualPlacementStage {
 											<?php endif; ?>
 										</td>
 									</tr>
-									<tr>
+									<tr class="mr-tee-row-text-only" <?php echo $is_image ? 'style="display:none;"' : ''; ?>>
 										<th><label><?php esc_html_e( 'Police par Défaut', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<?php
@@ -473,7 +583,7 @@ class VisualPlacementStage {
 											</div>
 										</td>
 									</tr>
-									<tr>
+									<tr class="mr-tee-row-text-only" <?php echo $is_image ? 'style="display:none;"' : ''; ?>>
 										<th><label><?php esc_html_e( 'Mode Couleur', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<select name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][color_mode]" class="mr-tee-field-color-mode" data-field-index="<?php echo esc_attr( $idx ); ?>">
@@ -482,7 +592,7 @@ class VisualPlacementStage {
 											</select>
 										</td>
 									</tr>
-									<tr>
+									<tr class="mr-tee-row-text-only" <?php echo $is_image ? 'style="display:none;"' : ''; ?>>
 										<th><label><?php esc_html_e( 'Max Caractères', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<input
@@ -499,31 +609,50 @@ class VisualPlacementStage {
 									<tr>
 										<th><label><?php esc_html_e( 'Options', 'mr-tee-editor' ); ?></label></th>
 										<td>
+											<span class="mr-tee-opt-text-only" <?php echo $is_image ? 'style="display:none;"' : ''; ?>>
+												<label>
+													<input type="hidden" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][allow_font_pick]" value="0" />
+													<input
+														type="checkbox"
+														name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][allow_font_pick]"
+														value="1"
+														class="mr-tee-field-font-pick"
+														data-field-index="<?php echo esc_attr( $idx ); ?>"
+														<?php checked( ! isset( $line['allow_font_pick'] ) || ! empty( $line['allow_font_pick'] ) ); ?>
+													/>
+													<?php esc_html_e( 'Choix de police client', 'mr-tee-editor' ); ?>
+												</label>
+												<br />
+												<label>
+													<input
+														type="checkbox"
+														name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][multiline]"
+														value="1"
+														class="mr-tee-field-multiline"
+														data-field-index="<?php echo esc_attr( $idx ); ?>"
+														<?php checked( ! empty( $line['multiline'] ) ); ?>
+													/>
+													<?php esc_html_e( 'Autoriser retours à la ligne', 'mr-tee-editor' ); ?>
+												</label>
+												<br />
+											</span>
+											<span class="mr-tee-opt-image-only" <?php echo $is_image ? '' : 'style="display:none;"'; ?>>
+												<label>
+													<input type="hidden" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][allow_image_upload]" value="0" />
+													<input
+														type="checkbox"
+														name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][allow_image_upload]"
+														value="1"
+														class="mr-tee-field-allow-image-upload"
+														data-field-index="<?php echo esc_attr( $idx ); ?>"
+														<?php checked( $allow_upload ); ?>
+													/>
+													<?php esc_html_e( 'Autoriser le client à changer/importer une image', 'mr-tee-editor' ); ?>
+												</label>
+												<br />
+											</span>
 											<label>
-												<input
-													type="checkbox"
-													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][allow_font_pick]"
-													value="1"
-													class="mr-tee-field-font-pick"
-													data-field-index="<?php echo esc_attr( $idx ); ?>"
-													<?php checked( ! isset( $line['allow_font_pick'] ) || ! empty( $line['allow_font_pick'] ) ); ?>
-												/>
-												<?php esc_html_e( 'Choix de police client', 'mr-tee-editor' ); ?>
-											</label>
-											<br />
-											<label>
-												<input
-													type="checkbox"
-													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][multiline]"
-													value="1"
-													class="mr-tee-field-multiline"
-													data-field-index="<?php echo esc_attr( $idx ); ?>"
-													<?php checked( ! empty( $line['multiline'] ) ); ?>
-												/>
-												<?php esc_html_e( 'Autoriser retours à la ligne', 'mr-tee-editor' ); ?>
-											</label>
-											<br />
-											<label>
+												<input type="hidden" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][warning_unedited]" value="0" />
 												<input
 													type="checkbox"
 													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][warning_unedited]"
@@ -644,7 +773,10 @@ class VisualPlacementStage {
 
 					<div class="mr-tee-add-field-action-wrap">
 						<button type="button" class="button button-secondary mr-tee-btn-add-field" id="mr-tee-btn-add-field">
-							<span class="dashicons dashicons-plus-alt2"></span> <?php esc_html_e( '+ Ajouter un nouveau rectangle / champ', 'mr-tee-editor' ); ?>
+							<span class="dashicons dashicons-plus-alt2"></span> <?php esc_html_e( '+ Ajouter un Texte', 'mr-tee-editor' ); ?>
+						</button>
+						<button type="button" class="button button-secondary mr-tee-btn-add-image-field" id="mr-tee-btn-add-image-field">
+							<span>🖼️</span> <?php esc_html_e( '+ Ajouter une Image', 'mr-tee-editor' ); ?>
 						</button>
 					</div>
 

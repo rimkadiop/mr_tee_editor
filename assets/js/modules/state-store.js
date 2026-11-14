@@ -116,6 +116,48 @@ export class StateStore {
 	}
 
 	/**
+	 * Update image reference URL and track customization state.
+	 *
+	 * @param {string}  refId    Reference ID.
+	 * @param {string}  imageUrl New image URL or data URI.
+	 * @param {string}  fileName Optional uploaded file name.
+	 * @param {boolean} isCustom Whether customer uploaded/changed from default.
+	 */
+	setImageValue(refId, imageUrl, fileName = '', isCustom = true) {
+		const ref = this.getReference(refId);
+		if (!ref) return;
+
+		const nextUrl = imageUrl || '';
+		const props = ref.customProperties = ref.customProperties || [];
+		const editedProp = props.find(p => p.key === 'edited');
+		const wasEdited = Boolean(editedProp && editedProp.value);
+		const nextEdited = Boolean(isCustom);
+
+		if (ref.url === nextUrl && wasEdited === nextEdited) return;
+
+		ref.url = nextUrl;
+
+		if (editedProp) {
+			editedProp.value = nextEdited;
+		} else {
+			props.push({ key: 'edited', value: nextEdited });
+		}
+
+		let fileProp = props.find(p => p.key === 'fileName');
+		if (fileProp) {
+			fileProp.value = fileName || '';
+		} else {
+			props.push({ key: 'fileName', value: fileName || '' });
+		}
+
+		if (nextEdited) {
+			this.state.isDirty = true;
+		}
+		this.validateWarnings();
+		this.notify('image_change');
+	}
+
+	/**
 	 * Update font family for a text line.
 	 *
 	 * @param {string} refId Reference ID.
@@ -265,7 +307,7 @@ export class StateStore {
 				warnings.push({
 					id: ref.id,
 					name: ref.name,
-					value: ref.value,
+					value: ref.value !== undefined ? ref.value : (ref.name || ''),
 				});
 			}
 
@@ -304,9 +346,33 @@ export class StateStore {
 	getExportPayload() {
 		const textLines = (this.config.text_lines || []).map(line => {
 			const ref = this.getReference(line.ref_id);
+			const fieldType = line.field_type === 'image' ? 'image' : 'text';
+			if (fieldType === 'image') {
+				const props = (ref && Array.isArray(ref.customProperties)) ? ref.customProperties : [];
+				const fileProp = props.find(p => p.key === 'fileName');
+				const editedProp = props.find(p => p.key === 'edited');
+				const imageUrl = ref ? (ref.url || '') : (line.default_image || '');
+				const isEdited = Boolean(editedProp && editedProp.value);
+				const fileName = (fileProp && fileProp.value) ? fileProp.value : '';
+				const displaySummary = isEdited
+					? (fileName ? `Image personnalisée (${fileName})` : 'Image personnalisée')
+					: (imageUrl ? 'Image par défaut' : '');
+				return {
+					id: line.id,
+					label: line.label,
+					fieldType: 'image',
+					value: displaySummary,
+					imageUrl: imageUrl,
+					fileName: fileName,
+					edited: isEdited,
+					imageFit: line.image_fit === 'cover' ? 'cover' : 'contain',
+					rotate: parseFloat(line.box_rotate !== undefined ? line.box_rotate : (line.rotate !== undefined ? line.rotate : 0.0)) || 0.0,
+				};
+			}
 			return {
 				id: line.id,
 				label: line.label,
+				fieldType: 'text',
 				value: ref ? ref.value : line.default_text,
 				fontId: ref ? ref.fontId : line.font,
 				rotate: parseFloat(line.box_rotate !== undefined ? line.box_rotate : (line.rotate !== undefined ? line.rotate : 0.0)) || 0.0,

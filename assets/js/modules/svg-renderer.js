@@ -72,7 +72,11 @@ export class SvgRenderer {
 		const vbHeight = (hasPerLineBoxes && ratio > 0 && Math.abs(ratio - 1.0) > 0.001) ? Number((100 / ratio).toFixed(4)) : 100;
 		const viewBoxAttr = `viewBox="0 0 ${vbWidth} ${vbHeight}"`;
 
-		const layersMarkup = this.renderLayersMarkup(layers, { ...options, ratio, hasPerLineBoxes, vbHeight });
+		const extraDefs = [];
+		const layersMarkup = this.renderLayersMarkup(layers, { ...options, ratio, hasPerLineBoxes, vbHeight, _extraDefs: extraDefs });
+		if (extraDefs.length > 0) {
+			defs += '\n' + extraDefs.join('\n');
+		}
 		const widthAttr = (options.isExport && options.realWidth) ? `${options.realWidth}${options.unit || 'cm'}` : '100%';
 		const heightAttr = (options.isExport && options.realHeight) ? `${options.realHeight}${options.unit || 'cm'}` : '100%';
 		const realDimAttrs = (options.realWidth && options.realHeight) ? `data-real-width="${options.realWidth}" data-real-height="${options.realHeight}" data-unit="${options.unit || 'cm'}" data-dpi="${options.dpi || 300}"` : '';
@@ -390,6 +394,63 @@ export class SvgRenderer {
 
 		const ratio = (options.ratio && options.ratio > 0) ? options.ratio : 1.0;
 		const hasPerLine = Boolean(options.hasPerLineBoxes);
+		const isFieldImage = Boolean(node.isFieldImage || (node.box_width !== undefined && node.box_height !== undefined));
+
+		if (isFieldImage) {
+			let boxL = (node.box_left !== undefined) ? parseFloat(node.box_left) : (parseFloat(node.x) || 30);
+			let boxT = (node.box_top !== undefined) ? parseFloat(node.box_top) : (parseFloat(node.y) || 30);
+			let boxW = (node.box_width !== undefined) ? parseFloat(node.box_width) : (parseFloat(node.width) || 35);
+			let boxH = (node.box_height !== undefined) ? parseFloat(node.box_height) : (parseFloat(node.height) || 30);
+
+			if (options.cropBoundingBox && options.cropBoundingBox.spanW > 0 && options.cropBoundingBox.spanH > 0) {
+				const c = options.cropBoundingBox;
+				boxL = ((boxL - c.xMin) / c.spanW) * 100;
+				boxT = ((boxT - c.yMin) / c.spanH) * 100;
+				boxW = (boxW / c.spanW) * 100;
+				boxH = (boxH / c.spanH) * 100;
+			}
+
+			const x = boxL;
+			const w = Math.max(0.1, boxW);
+			const y = (hasPerLine && ratio !== 1.0) ? (boxT / ratio) : boxT;
+			const h = Math.max(0.1, (hasPerLine && ratio !== 1.0) ? (boxH / ratio) : boxH);
+
+			const cx = x + (w / 2);
+			const cy = y + (h / 2);
+			const rotateAngle = parseFloat(node.box_rotate !== undefined ? node.box_rotate : (node.rotate !== undefined ? node.rotate : 0)) || 0;
+			const transformAttr = (rotateAngle !== 0) ? ` transform="rotate(${rotateAngle.toFixed(2)}, ${cx.toFixed(4)}, ${cy.toFixed(4)})"` : '';
+
+			const rawId = String(node.id || node.reference || node.name || `img_${Math.round(x * 100)}_${Math.round(y * 100)}`);
+			const safeId = rawId.replace(/[^a-zA-Z0-9_-]/g, '_');
+			const clipId = `mrtee-img-clip-${safeId}`;
+			const clipMarkup = `<clipPath id="${clipId}" clipPathUnits="userSpaceOnUse"><rect x="${x.toFixed(4)}" y="${y.toFixed(4)}" width="${w.toFixed(4)}" height="${h.toFixed(4)}" /></clipPath>`;
+
+			let inlineDefs = '';
+			if (Array.isArray(options._extraDefs)) {
+				options._extraDefs.push(clipMarkup);
+			} else {
+				inlineDefs = `<defs>${clipMarkup}</defs>`;
+			}
+
+			const preserveRatio = (node.imageFit === 'cover') ? 'xMidYMid slice' : 'xMidYMid meet';
+			const nodeIdAttr = node.reference ? ` data-node-id="${this.escapeXml(node.reference)}"` : (node.id ? ` data-node-id="${this.escapeXml(node.id)}"` : '');
+
+			return `
+		<g class="mrtee-image-field"${nodeIdAttr}${transformAttr}>
+			${inlineDefs}
+			<g clip-path="url(#${clipId})">
+				<image
+					href="${this.escapeXml(url)}"
+					xlink:href="${this.escapeXml(url)}"
+					x="${x.toFixed(4)}"
+					y="${y.toFixed(4)}"
+					width="${w.toFixed(4)}"
+					height="${h.toFixed(4)}"
+					preserveAspectRatio="${preserveRatio}"
+				/>
+			</g>
+		</g>`;
+		}
 
 		const x = parseFloat(node.x) || 30;
 		const rawY = parseFloat(node.y) || 50;

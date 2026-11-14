@@ -366,6 +366,8 @@
 	border-radius: 12px;
 	padding: 16px 18px;
 	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+	min-width: 0;
+	overflow: hidden;
 }
 
 .mr-tee-controls-header h4 {
@@ -407,14 +409,29 @@
 	color: #1e293b;
 }
 
+.mr-tee-coords-table {
+	table-layout: fixed;
+	width: 100%;
+}
+
 .mr-tee-coords-table th {
-	width: 140px;
-	font-size: 12.5px;
+	width: 112px;
+	font-size: 12px;
 	padding: 6px 8px 6px 0;
+	vertical-align: top;
 }
 
 .mr-tee-coords-table td {
 	padding: 6px 0;
+	min-width: 0;
+}
+
+.mr-tee-coords-table td input.regular-text,
+.mr-tee-coords-table td select,
+.mr-tee-coords-table td textarea {
+	max-width: 100%;
+	width: 100%;
+	box-sizing: border-box;
 }
 
 .mr-tee-field-actions {
@@ -752,5 +769,101 @@
 	display: inline-flex;
 	align-items: center;
 	gap: 8px;
+}
+
+/* Image Field Styles (Admin Stage & Controls) */
+.mr-tee-add-buttons-group {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.mr-tee-btn-add-image-field-pill {
+	white-space: nowrap;
+	font-weight: 600;
+}
+
+.mr-tee-add-field-action-wrap {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 8px;
+}
+
+.mr-tee-field-box.is-image-field {
+	background: rgba(16, 185, 129, 0.07);
+}
+
+.mr-tee-field-box.is-image-field.is-active {
+	background: rgba(16, 185, 129, 0.14);
+}
+
+.mr-tee-field-box.is-image-field .mr-tee-box-svg-holder {
+	overflow: hidden !important;
+}
+
+.mr-tee-admin-img-placeholder {
+	width: 100%;
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	text-align: center;
+	padding: 6px;
+	box-sizing: border-box;
+	color: #334155;
+	line-height: 1.3;
+}
+
+.mr-tee-admin-img-placeholder span {
+	font-size: 12px;
+	font-weight: 700;
+}
+
+.mr-tee-admin-img-placeholder small {
+	font-size: 10px;
+	color: #64748b;
+	margin-top: 2px;
+}
+
+.mr-tee-default-img-preview-wrap {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 68px;
+	max-height: 92px;
+	padding: 6px;
+	margin-bottom: 8px;
+	border: 1px dashed #cbd5e1;
+	border-radius: 8px;
+	background-color: #f8fafc;
+	background-image: linear-gradient(45deg, #f1f5f9 25%, transparent 25%),
+		linear-gradient(-45deg, #f1f5f9 25%, transparent 25%),
+		linear-gradient(45deg, transparent 75%, #f1f5f9 75%),
+		linear-gradient(-45deg, transparent 75%, #f1f5f9 75%);
+	background-size: 12px 12px;
+	background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+	overflow: hidden;
+}
+
+.mr-tee-default-img-preview {
+	max-width: 100%;
+	max-height: 76px;
+	object-fit: contain;
+	display: block;
+}
+
+.mr-tee-default-img-empty {
+	font-size: 11.5px;
+	color: #64748b;
+	font-style: italic;
+}
+
+.mr-tee-default-img-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	align-items: center;
 }
 

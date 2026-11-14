@@ -11,7 +11,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.3.11';
+import { SvgRenderer } from './svg-renderer.js?v=2.3.12';
 
 export class FormController {
 	constructor(store, config, onExportRequested) {
@@ -19,6 +19,7 @@ export class FormController {
 		this.config = config || {};
 		this.onExportRequested = onExportRequested;
 		this.bypassWarning = false;
+		this.pendingUploads = [];
 
 		this.initDom();
 		this.bindEvents();
@@ -245,6 +246,9 @@ export class FormController {
 			});
 		});
 
+		// 4b. Customer Image Fields (Upload / Preview / Reset)
+		this.bindImageFields();
+
 		// 5. Intercept Add-to-Cart for Unedited Field Validation (IGNORE_PERSO_WARNINGS_LABEL)
 		if (this.addToCartBtn) {
 			this.addToCartBtn.addEventListener('click', (e) => {
@@ -263,11 +267,7 @@ export class FormController {
 				// If no warnings, proceed with 300 DPI rasterization and submission
 				e.preventDefault();
 				e.stopPropagation();
-				if (this.onExportRequested) {
-					this.onExportRequested(() => {
-						this.submitCartForm();
-					});
-				}
+				this.runExportAndSubmit();
 			});
 		}
 
@@ -279,11 +279,18 @@ export class FormController {
 		if (btnModify && this.warningModal) {
 			btnModify.addEventListener('click', () => {
 				this.warningModal.style.display = 'none';
-				// Focus first unedited field
-				const firstInput = this.container.querySelector('.mr-tee-text-input[data-warning="1"]');
+				// Focus first unedited text or image field
+				const firstInput = this.container.querySelector('.mr-tee-text-input[data-warning="1"], .mr-tee-image-file-input[data-warning="1"]');
 				if (firstInput) {
-					firstInput.focus();
-					firstInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+					if (firstInput.classList.contains('mr-tee-image-file-input')) {
+						const card = firstInput.closest('.mr-tee-image-field-card');
+						const btn = card ? card.querySelector('.mr-tee-image-upload-btn') : null;
+						if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+						if (btn) btn.focus();
+					} else {
+						firstInput.focus();
+						firstInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+					}
 				}
 			});
 		}
@@ -297,13 +304,213 @@ export class FormController {
 		if (btnProceed && this.warningModal) {
 			btnProceed.addEventListener('click', () => {
 				this.warningModal.style.display = 'none';
-				if (this.onExportRequested) {
-					this.onExportRequested(() => {
-						this.submitCartForm();
-					});
-				}
+				this.runExportAndSubmit();
 			});
 		}
+	}
+
+	async runExportAndSubmit() {
+		if (this.pendingUploads.length > 0) {
+			try {
+				await Promise.allSettled(this.pendingUploads);
+			} catch (e) {}
+		}
+		if (this.onExportRequested) {
+			this.onExportRequested(() => {
+				this.submitCartForm();
+			});
+		}
+	}
+
+	bindImageFields() {
+		if (!this.container) return;
+		const i18n = (window.mrTeeProductData && window.mrTeeProductData.i18n) || {};
+
+		this.container.querySelectorAll('.mr-tee-image-field-card').forEach((card) => {
+			const fileInput = card.querySelector('.mr-tee-image-file-input');
+			const uploadBtn = card.querySelector('.mr-tee-image-upload-btn');
+			const resetBtn = card.querySelector('.mr-tee-image-reset-btn');
+			const thumbWrap = card.querySelector('.mr-tee-img-field-thumb');
+			const statusEl = card.querySelector('.mr-tee-img-field-status');
+			const defaultImg = card.getAttribute('data-default-image') || '';
+
+			if (uploadBtn && fileInput) {
+				uploadBtn.addEventListener('click', () => {
+					fileInput.click();
+				});
+			}
+
+			if (resetBtn && fileInput) {
+				resetBtn.addEventListener('click', () => {
+					card._uploadToken = (card._uploadToken || 0) + 1;
+					fileInput.value = '';
+					const refId = fileInput.getAttribute('data-ref-id');
+					if (thumbWrap) {
+						if (defaultImg) {
+							thumbWrap.classList.remove('is-empty');
+							thumbWrap.innerHTML = `<img src="${SvgRenderer.escapeXml(defaultImg)}" alt="" />`;
+						} else {
+							thumbWrap.classList.add('is-empty');
+							thumbWrap.innerHTML = '<span class="mr-tee-img-field-placeholder-icon" aria-hidden="true">🖼️</span>';
+						}
+					}
+					if (statusEl) {
+						statusEl.textContent = defaultImg ? (i18n.imageDefault || 'Image par défaut') : (i18n.imageEmpty || 'Aucune image sélectionnée');
+						statusEl.style.color = '';
+						statusEl.removeAttribute('data-upload-state');
+					}
+					if (uploadBtn) {
+						uploadBtn.textContent = defaultImg ? (i18n.changeImage || 'Changer l\'image') : (i18n.importImage || 'Importer une image');
+					}
+					resetBtn.style.display = 'none';
+					if (refId) {
+						this.store.setImageValue(refId, defaultImg, '', false);
+					}
+				});
+			}
+
+			if (fileInput) {
+				fileInput.addEventListener('change', async () => {
+					const file = fileInput.files && fileInput.files[0];
+					if (!file) return;
+
+					const refId = fileInput.getAttribute('data-ref-id');
+					const token = (card._uploadToken || 0) + 1;
+					card._uploadToken = token;
+
+					let previewDataUrl = '';
+					try {
+						previewDataUrl = await this.readImageAsDataUrl(file);
+					} catch (err) {
+						if (statusEl) {
+							statusEl.textContent = i18n.imageUploadError || 'Erreur lors du chargement de l\'image.';
+							statusEl.style.color = '#dc2626';
+							statusEl.setAttribute('data-upload-state', 'error');
+						}
+						return;
+					}
+
+					if (card._uploadToken !== token) return;
+
+					if (thumbWrap) {
+						thumbWrap.classList.remove('is-empty');
+						thumbWrap.innerHTML = `<img src="${previewDataUrl}" alt="" />`;
+					}
+					if (statusEl) {
+						statusEl.textContent = `… ${file.name}`;
+						statusEl.style.color = '#2563eb';
+						statusEl.setAttribute('data-upload-state', 'uploading');
+					}
+					if (uploadBtn) {
+						uploadBtn.textContent = i18n.changeImage || 'Changer l\'image';
+					}
+					if (resetBtn && (defaultImg || previewDataUrl)) {
+						resetBtn.style.display = 'inline-flex';
+					}
+
+					// Immediate 0ms local preview in SVG scene graph
+					if (refId) {
+						this.store.setImageValue(refId, previewDataUrl, file.name, true);
+					}
+
+					// Upload file to server in background for lightweight persistent order storage
+					const uploadPromise = this.uploadCustomerImage(file).then((serverUrl) => {
+						if (card._uploadToken !== token) return;
+						if (serverUrl) {
+							if (typeof window !== 'undefined') {
+								window.mrTeeImageB64Cache = window.mrTeeImageB64Cache || {};
+								window.mrTeeImageB64Cache[serverUrl] = previewDataUrl;
+							}
+							if (refId) {
+								this.store.setImageValue(refId, serverUrl, file.name, true);
+							}
+							if (statusEl) {
+								statusEl.textContent = `✓ ${file.name}`;
+								statusEl.style.color = '#059669';
+								statusEl.setAttribute('data-upload-state', 'done');
+							}
+						} else if (statusEl) {
+							statusEl.textContent = file.name;
+							statusEl.style.color = '#0f172a';
+							statusEl.setAttribute('data-upload-state', 'local');
+						}
+					}).catch(() => {
+						if (card._uploadToken !== token) return;
+						if (statusEl) {
+							statusEl.textContent = file.name;
+							statusEl.style.color = '#0f172a';
+							statusEl.setAttribute('data-upload-state', 'local');
+						}
+					});
+
+					this.pendingUploads.push(uploadPromise);
+					uploadPromise.finally(() => {
+						const idx = this.pendingUploads.indexOf(uploadPromise);
+						if (idx !== -1) this.pendingUploads.splice(idx, 1);
+					});
+				});
+			}
+		});
+	}
+
+	readImageAsDataUrl(file) {
+		return new Promise((resolve, reject) => {
+			const reader = new FileReader();
+			reader.onerror = reject;
+			reader.onload = () => {
+				const rawResult = String(reader.result || '');
+				if (!rawResult || file.type === 'image/svg+xml' || !file.type.startsWith('image/')) {
+					resolve(rawResult);
+					return;
+				}
+				const img = new Image();
+				img.onload = () => {
+					const maxDim = 2400;
+					if (img.naturalWidth <= maxDim && img.naturalHeight <= maxDim) {
+						resolve(rawResult);
+						return;
+					}
+					const scale = Math.min(maxDim / img.naturalWidth, maxDim / img.naturalHeight);
+					const canvas = document.createElement('canvas');
+					canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+					canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+					const ctx = canvas.getContext('2d');
+					ctx.clearRect(0, 0, canvas.width, canvas.height);
+					ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+					const outType = (file.type === 'image/jpeg') ? 'image/jpeg' : 'image/png';
+					resolve(canvas.toDataURL(outType, 0.92));
+				};
+				img.onerror = () => resolve(rawResult);
+				img.src = rawResult;
+			};
+			reader.readAsDataURL(file);
+		});
+	}
+
+	async uploadCustomerImage(file) {
+		const data = window.mrTeeProductData || {};
+		const rawAjaxUrl = data.ajaxUrl || '/wp-admin/admin-ajax.php';
+		let ajaxUrl = rawAjaxUrl;
+		try {
+			const u = new URL(rawAjaxUrl, window.location.origin);
+			if (u.hostname === window.location.hostname) {
+				ajaxUrl = u.pathname + u.search;
+			}
+		} catch (e) {}
+
+		const formData = new FormData();
+		formData.append('action', 'mr_tee_upload_customer_image');
+		formData.append('nonce', data.uploadNonce || '');
+		formData.append('product_id', String(this.config.productId || data.productId || 0));
+		formData.append('image_file', file);
+
+		const resp = await fetch(ajaxUrl, { method: 'POST', body: formData });
+		if (!resp.ok) return '';
+		const json = await resp.json();
+		if (json && json.success && json.data && json.data.url) {
+			return String(json.data.url);
+		}
+		return '';
 	}
 
 	submitCartForm() {

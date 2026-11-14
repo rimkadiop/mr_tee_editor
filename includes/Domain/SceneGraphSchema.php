@@ -468,51 +468,82 @@ class SceneGraphSchema {
 			$config['allowed_fonts'] = null;
 		}
 
-		// Dynamic text lines parsing supporting arbitrary number of custom fields
+		// Dynamic fields parsing supporting arbitrary number of custom text & image fields
 		if ( empty( $config['text_lines'] ) || ! is_array( $config['text_lines'] ) ) {
 			$config['text_lines'] = $defaults['text_lines'];
 		} else {
 			$normalized_lines = array();
 			$line_index = 0;
 			foreach ( $config['text_lines'] as $idx => $line_data ) {
-				$line_num = $line_index + 1;
-				$def_line = isset( $defaults['text_lines'][ $line_index ] ) ? $defaults['text_lines'][ $line_index ] : array(
-					'id'               => 'custom_line_' . $line_num,
-					'ref_id'           => 'id-ref-text-line-' . $line_num,
-					'color_ref_id'     => 'id-ref-color-line-' . $line_num,
-					'label'            => sprintf( __( 'Champ %d', 'mr-tee-editor' ), $line_num ),
-					'default_text'     => sprintf( __( 'Texte %d', 'mr-tee-editor' ), $line_num ),
-					'box_left'         => 25.0,
-					'box_top'          => 20.0 + ( $line_index * 12.0 ),
-					'box_width'        => 50.0,
-					'box_height'       => 10.0,
-					'max_chars'        => 30,
-					'font'             => 'bebas',
-					'allowed_fonts'    => array_keys( FontRegistry::get_fonts() ),
-					'allow_font_pick'  => true,
-					'allow_color_pick' => true,
-					'color_mode'       => 'solid',
-					'color_hex'        => '#111827',
-				);
+				$line_num   = $line_index + 1;
+				$field_type = ( isset( $line_data['field_type'] ) && 'image' === $line_data['field_type'] ) ? 'image' : 'text';
 
-				$merged = wp_parse_args( $line_data, $def_line );
-
-				// Enforce product-level allowed_fonts if specified
-				if ( ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
-					$merged['allowed_fonts'] = $config['allowed_fonts'];
-					// First font in allowed_fonts is the primary / default font
-					if ( empty( $merged['font'] ) || ! in_array( $merged['font'], $config['allowed_fonts'], true ) ) {
-						$merged['font'] = $config['allowed_fonts'][0];
-					}
+				if ( 'image' === $field_type ) {
+					$def_line = array(
+						'id'                 => 'custom_line_' . $line_num,
+						'ref_id'             => 'id-ref-image-line-' . $line_num,
+						'color_ref_id'       => 'id-ref-color-line-' . $line_num,
+						'field_type'         => 'image',
+						'label'              => sprintf( __( 'Image %d', 'mr-tee-editor' ), $line_num ),
+						'default_text'       => '',
+						'default_image'      => '',
+						'default_image_id'   => 0,
+						'image_fit'          => 'contain',
+						'allow_image_upload' => true,
+						'box_left'           => 30.0,
+						'box_top'            => 25.0 + ( $line_index * 12.0 ),
+						'box_width'          => 40.0,
+						'box_height'         => 30.0,
+						'warning_unedited'   => false,
+					);
 				} else {
-					if ( empty( $merged['allowed_fonts'] ) || ! is_array( $merged['allowed_fonts'] ) ) {
-						$merged['allowed_fonts'] = array_keys( FontRegistry::get_fonts() );
-					}
-					if ( ! empty( $merged['font'] ) && ! in_array( $merged['font'], $merged['allowed_fonts'], true ) ) {
-						array_unshift( $merged['allowed_fonts'], $merged['font'] );
-					}
-					if ( empty( $config['allowed_fonts'] ) ) {
-						$config['allowed_fonts'] = $merged['allowed_fonts'];
+					$def_line = isset( $defaults['text_lines'][ $line_index ] ) ? $defaults['text_lines'][ $line_index ] : array(
+						'id'               => 'custom_line_' . $line_num,
+						'ref_id'           => 'id-ref-text-line-' . $line_num,
+						'color_ref_id'     => 'id-ref-color-line-' . $line_num,
+						'field_type'       => 'text',
+						'label'            => sprintf( __( 'Champ %d', 'mr-tee-editor' ), $line_num ),
+						'default_text'     => sprintf( __( 'Texte %d', 'mr-tee-editor' ), $line_num ),
+						'box_left'         => 25.0,
+						'box_top'          => 20.0 + ( $line_index * 12.0 ),
+						'box_width'        => 50.0,
+						'box_height'       => 10.0,
+						'max_chars'        => 30,
+						'font'             => 'bebas',
+						'allowed_fonts'    => array_keys( FontRegistry::get_fonts() ),
+						'allow_font_pick'  => true,
+						'allow_color_pick' => true,
+						'color_mode'       => 'solid',
+						'color_hex'        => '#111827',
+					);
+				}
+
+				$merged               = wp_parse_args( $line_data, $def_line );
+				$merged['field_type'] = $field_type;
+
+				if ( 'image' === $field_type ) {
+					$merged['default_image']      = ! empty( $merged['default_image'] ) ? esc_url_raw( $merged['default_image'] ) : '';
+					$merged['default_image_id']   = ! empty( $merged['default_image_id'] ) ? absint( $merged['default_image_id'] ) : 0;
+					$merged['image_fit']          = ( isset( $merged['image_fit'] ) && 'cover' === $merged['image_fit'] ) ? 'cover' : 'contain';
+					$merged['allow_image_upload'] = isset( $merged['allow_image_upload'] ) ? (bool) $merged['allow_image_upload'] : true;
+				} else {
+					// Enforce product-level allowed_fonts if specified
+					if ( ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
+						$merged['allowed_fonts'] = $config['allowed_fonts'];
+						// First font in allowed_fonts is the primary / default font
+						if ( empty( $merged['font'] ) || ! in_array( $merged['font'], $config['allowed_fonts'], true ) ) {
+							$merged['font'] = $config['allowed_fonts'][0];
+						}
+					} else {
+						if ( empty( $merged['allowed_fonts'] ) || ! is_array( $merged['allowed_fonts'] ) ) {
+							$merged['allowed_fonts'] = array_keys( FontRegistry::get_fonts() );
+						}
+						if ( ! empty( $merged['font'] ) && ! in_array( $merged['font'], $merged['allowed_fonts'], true ) ) {
+							array_unshift( $merged['allowed_fonts'], $merged['font'] );
+						}
+						if ( empty( $config['allowed_fonts'] ) ) {
+							$config['allowed_fonts'] = $merged['allowed_fonts'];
+						}
 					}
 				}
 
@@ -961,10 +992,66 @@ class SceneGraphSchema {
 		$layers     = array();
 		$references = array();
 
-		// 1. Build Primary Text Line Layers & References
+		// 1. Build Primary Field Layers & References (Text & Image fields)
 		$created_color_refs = array();
 		foreach ( $config['text_lines'] as $idx => $line ) {
-			$line_num     = $idx + 1;
+			$line_num   = $idx + 1;
+			$field_type = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) ? 'image' : 'text';
+			$box_w      = isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : ( isset( $line['max_width'] ) ? floatval( $line['max_width'] ) : 40.0 );
+			$box_h      = isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : ( isset( $line['font_size'] ) ? floatval( $line['font_size'] ) * 1.5 : 8.5 );
+			$box_l      = isset( $line['box_left'] ) ? floatval( $line['box_left'] ) : ( 50.0 - ( $box_w / 2.0 ) );
+			$box_t      = isset( $line['box_top'] ) ? floatval( $line['box_top'] ) : ( isset( $line['y_pct'] ) ? floatval( $line['y_pct'] ) - ( $box_h / 2.0 ) : 30.0 );
+			$box_r      = isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0;
+
+			if ( 'image' === $field_type ) {
+				$img_ref_id      = ! empty( $line['ref_id'] ) ? $line['ref_id'] : 'id-ref-image-line-' . $line_num;
+				$default_img_url = ! empty( $line['default_image'] ) ? $line['default_image'] : '';
+				$image_fit       = ( isset( $line['image_fit'] ) && 'cover' === $line['image_fit'] ) ? 'cover' : 'contain';
+
+				$references[] = array(
+					'id'               => $img_ref_id,
+					'type'             => 'IMAGE',
+					'name'             => $line['label'],
+					'url'              => $default_img_url,
+					'defaultUrl'       => $default_img_url,
+					'imageFit'         => $image_fit,
+					'editable'         => ! isset( $line['allow_image_upload'] ) || ! empty( $line['allow_image_upload'] ),
+					'isFieldImage'     => true,
+					'customProperties' => array(
+						array( 'key' => 'edited',   'value' => false ),
+						array( 'key' => 'warning',  'value' => ! empty( $line['warning_unedited'] ) ),
+						array( 'key' => 'fileName', 'value' => '' ),
+					),
+				);
+
+				$image_layer = array(
+					'type'         => 'IMAGE',
+					'id'           => ! empty( $line['id'] ) ? $line['id'] : 'line_' . $line_num,
+					'name'         => $line['label'],
+					'reference'    => $img_ref_id,
+					'isFieldImage' => true,
+					'url'          => $default_img_url,
+					'imageFit'     => $image_fit,
+					'x'            => $box_l,
+					'y'            => $box_t,
+					'width'        => $box_w,
+					'height'       => $box_h,
+					'box_left'     => $box_l,
+					'box_top'      => $box_t,
+					'box_width'    => $box_w,
+					'box_height'   => $box_h,
+					'box_rotate'   => $box_r,
+					'rotate'       => $box_r,
+				);
+
+				$layers[] = array(
+					'type'  => 'GROUP',
+					'name'  => $line['label'],
+					'items' => array( $image_layer ),
+				);
+				continue;
+			}
+
 			$text_ref_id  = ! empty( $line['ref_id'] ) ? $line['ref_id'] : 'id-ref-text-line-' . $line_num;
 			$color_ref_id = ! empty( $line['color_ref_id'] ) ? $line['color_ref_id'] : 'id-ref-color-line-' . $line_num;
 			$font_id      = isset( $line['font'] ) ? $line['font'] : array_key_first( $fonts );
@@ -1015,13 +1102,8 @@ class SceneGraphSchema {
 				$created_color_refs[] = $color_ref_id;
 			}
 
-			$box_w = isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : ( isset( $line['max_width'] ) ? floatval( $line['max_width'] ) : 40.0 );
-			$box_h = isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : ( isset( $line['font_size'] ) ? floatval( $line['font_size'] ) * 1.5 : 8.5 );
-			$box_l = isset( $line['box_left'] ) ? floatval( $line['box_left'] ) : ( 50.0 - ( $box_w / 2.0 ) );
-			$box_t = isset( $line['box_top'] ) ? floatval( $line['box_top'] ) : ( isset( $line['y_pct'] ) ? floatval( $line['y_pct'] ) - ( $box_h / 2.0 ) : 30.0 );
-			$box_r = isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0;
-			$center_x = $box_l + ( $box_w / 2.0 );
-			$center_y = $box_t + ( $box_h / 2.0 );
+			$center_x  = $box_l + ( $box_w / 2.0 );
+			$center_y  = $box_t + ( $box_h / 2.0 );
 			$font_size = isset( $line['font_size'] ) && floatval( $line['font_size'] ) > 0 ? floatval( $line['font_size'] ) : ( $box_h * 0.85 );
 
 			$text_layer = array(

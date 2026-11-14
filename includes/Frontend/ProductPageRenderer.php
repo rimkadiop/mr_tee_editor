@@ -168,6 +168,16 @@ class ProductPageRenderer {
 
 		$preloaded_images = array();
 		foreach ( $config['text_lines'] as $line ) {
+			if ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) {
+				if ( ! empty( $line['default_image'] ) && ! isset( $preloaded_images[ $line['default_image'] ] ) && count( $preloaded_images ) < 24 ) {
+					$preloaded_images[ $line['default_image'] ] = true;
+					printf(
+						"<link rel=\"preload\" href=\"%s\" as=\"image\" fetchpriority=\"high\" />\n",
+						esc_url( $line['default_image'] )
+					);
+				}
+				continue;
+			}
 			$font_id = ! empty( $line['font'] ) ? $line['font'] : ( ! empty( $line['allowed_fonts'][0] ) ? $line['allowed_fonts'][0] : '' );
 			if ( empty( $font_id ) ) {
 				continue;
@@ -228,10 +238,18 @@ class ProductPageRenderer {
 		$allowed_font_ids = array();
 		if ( ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
 			$allowed_font_ids = $config['allowed_fonts'];
-		} elseif ( ! empty( $config['text_lines'][0]['allowed_fonts'] ) && is_array( $config['text_lines'][0]['allowed_fonts'] ) ) {
-			$allowed_font_ids = $config['text_lines'][0]['allowed_fonts'];
 		} else {
-			$allowed_font_ids = array_keys( $all_fonts );
+			if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
+				foreach ( $config['text_lines'] as $tl ) {
+					if ( ( empty( $tl['field_type'] ) || 'image' !== $tl['field_type'] ) && ! empty( $tl['allowed_fonts'] ) && is_array( $tl['allowed_fonts'] ) ) {
+						$allowed_font_ids = $tl['allowed_fonts'];
+						break;
+					}
+				}
+			}
+			if ( empty( $allowed_font_ids ) ) {
+				$allowed_font_ids = array_keys( $all_fonts );
+			}
 		}
 
 		// Filter and strictly preserve the admin's chosen font order
@@ -284,6 +302,9 @@ class ProductPageRenderer {
 		$preloaded_svg_fonts = array();
 		if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
 			foreach ( $config['text_lines'] as $line ) {
+				if ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) {
+					continue;
+				}
 				$active_fid = ! empty( $line['font'] ) ? $line['font'] : ( ! empty( $line['allowed_fonts'][0] ) ? $line['allowed_fonts'][0] : '' );
 				if ( empty( $active_fid ) || isset( $preloaded_svg_fonts[ $active_fid ] ) ) {
 					continue;
@@ -307,15 +328,22 @@ class ProductPageRenderer {
 				'fonts'       => $filtered_fonts,
 				'svgFonts'    => $preloaded_svg_fonts,
 				'ajaxUrl'     => admin_url( 'admin-ajax.php', $proto ),
+				'uploadNonce' => wp_create_nonce( 'mr_tee_frontend_upload' ),
 				'pluginUrl'   => MR_TEE_EDITOR_URL,
 				'fontFaceCss' => $font_face_css,
 				'i18n'        => array(
-					'warningTitle'   => __( 'Attention ! Personnalisation incomplète', 'mr-tee-editor' ),
-					'warningMessage' => __( 'Un ou plusieurs champs n\'ont pas été personnalisés. Souhaitez-vous continuer avec les textes par défaut ?', 'mr-tee-editor' ),
-					'confirmKeep'    => __( 'Continuer quand même', 'mr-tee-editor' ),
-					'cancelEdit'     => __( 'Modifier mes textes', 'mr-tee-editor' ),
-					'characters'     => __( 'caractères', 'mr-tee-editor' ),
-					'generatingDpi'  => __( 'Génération du fichier d\'impression haute résolution...', 'mr-tee-editor' ),
+					'warningTitle'     => __( 'Attention ! Personnalisation incomplète', 'mr-tee-editor' ),
+					'warningMessage'   => __( 'Un ou plusieurs champs n\'ont pas été personnalisés. Souhaitez-vous continuer avec les valeurs par défaut ?', 'mr-tee-editor' ),
+					'confirmKeep'      => __( 'Continuer quand même', 'mr-tee-editor' ),
+					'cancelEdit'       => __( 'Modifier ma personnalisation', 'mr-tee-editor' ),
+					'characters'       => __( 'caractères', 'mr-tee-editor' ),
+					'generatingDpi'    => __( 'Génération du fichier d\'impression haute résolution...', 'mr-tee-editor' ),
+					'changeImage'      => __( 'Changer l\'image', 'mr-tee-editor' ),
+					'importImage'      => __( 'Importer une image', 'mr-tee-editor' ),
+					'uploadingImage'   => __( 'Envoi en cours...', 'mr-tee-editor' ),
+					'imageDefault'     => __( 'Image par défaut', 'mr-tee-editor' ),
+					'imageEmpty'       => __( 'Aucune image sélectionnée', 'mr-tee-editor' ),
+					'imageUploadError' => __( 'Erreur lors du chargement de l\'image.', 'mr-tee-editor' ),
 				),
 			)
 		);
@@ -332,9 +360,22 @@ class ProductPageRenderer {
 		global $post;
 		$config      = self::get_cached_config( $post->ID );
 		$all_fonts   = FontRegistry::get_fonts();
-		$allowed_ids = ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] )
-			? $config['allowed_fonts']
-			: ( ! empty( $config['text_lines'][0]['allowed_fonts'] ) && is_array( $config['text_lines'][0]['allowed_fonts'] ) ? $config['text_lines'][0]['allowed_fonts'] : array_keys( $all_fonts ) );
+		$allowed_ids = array();
+		if ( ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
+			$allowed_ids = $config['allowed_fonts'];
+		} else {
+			if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
+				foreach ( $config['text_lines'] as $tl ) {
+					if ( ( empty( $tl['field_type'] ) || 'image' !== $tl['field_type'] ) && ! empty( $tl['allowed_fonts'] ) && is_array( $tl['allowed_fonts'] ) ) {
+						$allowed_ids = $tl['allowed_fonts'];
+						break;
+					}
+				}
+			}
+			if ( empty( $allowed_ids ) ) {
+				$allowed_ids = array_keys( $all_fonts );
+			}
+		}
 		$fonts       = array();
 		foreach ( $allowed_ids as $aid ) {
 			if ( isset( $all_fonts[ $aid ] ) ) {
@@ -361,11 +402,58 @@ class ProductPageRenderer {
 					</h3>
 				</div>
 
-				<!-- Text Lines Controls -->
+				<!-- Text & Image Field Controls -->
 				<div class="mr-tee-text-inputs-wrap">
 					<?php foreach ( $config['text_lines'] as $idx => $line ) : ?>
 						<?php
-						$field_id = 'mr_tee_line_' . $idx;
+						$field_id       = 'mr_tee_line_' . $idx;
+						$is_image_field = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] );
+						if ( $is_image_field ) :
+							$default_img  = ! empty( $line['default_image'] ) ? $line['default_image'] : '';
+							$allow_upload = ! isset( $line['allow_image_upload'] ) || ! empty( $line['allow_image_upload'] );
+							$img_status   = $default_img ? __( 'Image par défaut', 'mr-tee-editor' ) : __( 'Aucune image sélectionnée', 'mr-tee-editor' );
+							?>
+							<div class="mr-tee-field-group mr-tee-field-group-image" data-line-index="<?php echo esc_attr( $idx ); ?>" data-line-id="<?php echo esc_attr( $line['id'] ); ?>" data-field-type="image">
+								<div class="mr-tee-image-field-card" data-ref-id="<?php echo esc_attr( $line['ref_id'] ); ?>" data-default-image="<?php echo esc_attr( $default_img ); ?>" data-warning="<?php echo ! empty( $line['warning_unedited'] ) ? '1' : '0'; ?>">
+									<div class="mr-tee-image-field-main">
+										<div class="mr-tee-img-field-thumb <?php echo $default_img ? '' : 'is-empty'; ?>">
+											<?php if ( $default_img ) : ?>
+												<img src="<?php echo esc_url( $default_img ); ?>" alt="<?php echo esc_attr( $line['label'] ); ?>" />
+											<?php else : ?>
+												<span class="mr-tee-img-field-placeholder-icon" aria-hidden="true">🖼️</span>
+											<?php endif; ?>
+										</div>
+										<div class="mr-tee-img-field-info">
+											<div class="mr-tee-img-field-label"><?php echo esc_html( $line['label'] ); ?></div>
+											<div class="mr-tee-img-field-status"><?php echo esc_html( $img_status ); ?></div>
+										</div>
+										<?php if ( $allow_upload ) : ?>
+											<div class="mr-tee-img-field-actions">
+												<input
+													type="file"
+													id="<?php echo esc_attr( $field_id ); ?>"
+													class="mr-tee-image-file-input"
+													accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+													data-line-index="<?php echo esc_attr( $idx ); ?>"
+													data-ref-id="<?php echo esc_attr( $line['ref_id'] ); ?>"
+													data-default-image="<?php echo esc_attr( $default_img ); ?>"
+													data-warning="<?php echo ! empty( $line['warning_unedited'] ) ? '1' : '0'; ?>"
+													style="display:none;"
+												/>
+												<button type="button" class="mr-tee-image-upload-btn" data-target-input="<?php echo esc_attr( $field_id ); ?>">
+													<?php echo $default_img ? esc_html__( 'Changer l\'image', 'mr-tee-editor' ) : esc_html__( 'Importer une image', 'mr-tee-editor' ); ?>
+												</button>
+												<button type="button" class="mr-tee-image-reset-btn" data-line-index="<?php echo esc_attr( $idx ); ?>" style="display:none;" title="<?php esc_attr_e( 'Revenir à l\'image par défaut', 'mr-tee-editor' ); ?>">
+													↺
+												</button>
+											</div>
+										<?php endif; ?>
+									</div>
+								</div>
+							</div>
+							<?php
+							continue;
+						endif;
 						?>
 						<div class="mr-tee-field-group" data-line-index="<?php echo esc_attr( $idx ); ?>" data-line-id="<?php echo esc_attr( $line['id'] ); ?>">
 							<div class="mr-tee-input-row">

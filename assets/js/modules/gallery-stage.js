@@ -433,7 +433,8 @@ export class GalleryStage {
 			if (existingDefs && newDefs) {
 				const newDefsHtml = newDefs.innerHTML;
 				if (this._lastDefsHtml !== newDefsHtml && existingDefs.innerHTML !== newDefsHtml) {
-					existingDefs.innerHTML = newDefsHtml;
+					const importedDefs = Array.from(newDefs.childNodes).map(n => document.importNode(n, true));
+					existingDefs.replaceChildren(...importedDefs);
 					this._lastDefsHtml = newDefsHtml;
 				}
 			}

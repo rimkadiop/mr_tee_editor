@@ -114,16 +114,32 @@
 			return this.allowedFonts;
 		}
 
+		getFirstTextFieldIndex() {
+			let firstText = 0;
+			const $panels = $('.mr-tee-field-panel');
+			if (!$panels.length) return 0;
+			for (let i = 0; i < $panels.length; i++) {
+				if (this.getFieldType(i) !== 'image') {
+					firstText = i;
+					break;
+				}
+			}
+			return firstText;
+		}
+
 		seedInitiallyLoadedTtfFonts() {
 			const initialIds = new Set();
 			if (Array.isArray(this.config.allowed_fonts)) {
 				this.config.allowed_fonts.forEach(fid => fid && initialIds.add(fid));
-			} else if (Array.isArray(this.config.text_lines) && this.config.text_lines[0] && Array.isArray(this.config.text_lines[0].allowed_fonts)) {
-				this.config.text_lines[0].allowed_fonts.forEach(fid => fid && initialIds.add(fid));
+			} else if (Array.isArray(this.config.text_lines)) {
+				const firstText = this.config.text_lines.find(tl => tl && tl.field_type !== 'image' && Array.isArray(tl.allowed_fonts));
+				if (firstText) {
+					firstText.allowed_fonts.forEach(fid => fid && initialIds.add(fid));
+				}
 			}
 			if (Array.isArray(this.config.text_lines)) {
 				this.config.text_lines.forEach(tl => {
-					if (tl && tl.font) initialIds.add(tl.font);
+					if (tl && tl.field_type !== 'image' && tl.font) initialIds.add(tl.font);
 				});
 			}
 			initialIds.forEach(fid => this._loadedTtfFonts.add(fid));
@@ -522,9 +538,145 @@
 			$(document).on('input change', '.mr-tee-field-label-input', function() {
 				const idx = getFieldIdx($(this));
 				const val = $(this).val() || `Champ ${idx + 1}`;
+				const prefix = self.getFieldType(idx) === 'image' ? '🖼️ ' : '';
 				$(`.mr-tee-field-pill[data-field-index="${idx}"] .mr-tee-pill-label`).text(val);
-				$(`#mr-tee-field-box-${idx} .mr-tee-box-badge`).text(`${idx + 1}. ${val}`);
+				$(`#mr-tee-field-box-${idx} .mr-tee-box-badge`).text(`${idx + 1}. ${prefix}${val}`);
 				$(`#mr-tee-field-panel-${idx} .mr-tee-panel-title`).text(`Champ #${idx + 1} : ${val}`);
+			});
+
+			// Field Type Switcher (Text <-> Image)
+			$(document).on('change', '.mr-tee-field-type-select', function() {
+				const idx = getFieldIdx($(this));
+				const newType = $(this).val() === 'image' ? 'image' : 'text';
+				const isImage = newType === 'image';
+				const $panel = $(`#mr-tee-field-panel-${idx}`);
+				const $box = $(`#mr-tee-field-box-${idx}`);
+				const $pill = $(`.mr-tee-field-pill[data-field-index="${idx}"]`);
+
+				$panel.attr('data-field-type', newType).toggleClass('is-image-panel', isImage);
+				$box.attr('data-field-type', newType).toggleClass('is-image-field', isImage);
+				$pill.attr('data-field-type', newType).toggleClass('is-image-pill', isImage);
+
+				$panel.find('.mr-tee-row-text-only, .mr-tee-opt-text-only').toggle(!isImage);
+				$panel.find('.mr-tee-row-image-only, .mr-tee-opt-image-only').toggle(isImage);
+
+				// Update pill icon & box badge
+				$pill.find('.mr-tee-pill-type-icon').remove();
+				if (isImage) {
+					$pill.find('.mr-tee-pill-badge').after('<span class="mr-tee-pill-type-icon" aria-hidden="true">🖼️</span>');
+				}
+				const labelVal = $panel.find('.mr-tee-field-label-input').val() || `Champ ${idx + 1}`;
+				$box.find('.mr-tee-box-badge').text(`${idx + 1}. ${isImage ? '🖼️ ' : ''}${labelVal}`);
+
+				// Give image fields a practical initial height if switching from a thin 1-line text box
+				if (isImage) {
+					const curTop = parseFloat($(`#mr_tee_field_top_${idx}`).val()) || 25.0;
+					const curW = parseFloat($(`#mr_tee_field_width_${idx}`).val()) || 35.0;
+					const curH = parseFloat($(`#mr_tee_field_height_${idx}`).val()) || 8.5;
+					if (curH < 15.0) {
+						const nextH = Math.max(15.0, Math.min(100 - curTop, 30.0));
+						const curL = parseFloat($(`#mr_tee_field_left_${idx}`).val()) || 30.0;
+						self.updateBoxBounds(idx, curL, curTop, curW, Math.round(nextH * 10) / 10);
+						return;
+					}
+				}
+
+				self.renderBoxPreview(idx);
+				self.recalculateDimensions();
+			});
+
+			// Default Image URL input & Fit Mode
+			$(document).on('input change', '.mr-tee-field-default-image-input', function() {
+				const idx = getFieldIdx($(this));
+				const url = ($(this).val() || '').trim();
+				self.syncDefaultImagePreviewUi(idx, url);
+				self.renderBoxPreview(idx);
+			});
+
+			$(document).on('change', '.mr-tee-field-image-fit', function() {
+				const idx = getFieldIdx($(this));
+				self.renderBoxPreview(idx);
+			});
+
+			// Clear Default Image
+			$(document).on('click', '.mr-tee-btn-clear-default-image', function(e) {
+				e.preventDefault();
+				const idx = getFieldIdx($(this));
+				const $panel = $(`#mr-tee-field-panel-${idx}`);
+				$panel.find('.mr-tee-field-default-image-input').val('');
+				$panel.find('.mr-tee-field-default-image-id').val('0');
+				self.syncDefaultImagePreviewUi(idx, '');
+				self.renderBoxPreview(idx);
+			});
+
+			// Open WordPress Media Library picker for Default Image
+			$(document).on('click', '.mr-tee-btn-select-default-image', function(e) {
+				e.preventDefault();
+				const idx = getFieldIdx($(this));
+				const $panel = $(`#mr-tee-field-panel-${idx}`);
+				if (!window.wp || !window.wp.media) {
+					$panel.find('.mr-tee-quick-image-file').trigger('click');
+					return;
+				}
+				const frame = window.wp.media({
+					title: 'Choisir une image par défaut',
+					button: { text: 'Utiliser cette image' },
+					library: { type: 'image' },
+					multiple: false,
+				});
+				frame.on('select', function() {
+					const att = frame.state().get('selection').first().toJSON();
+					const url = (att && att.url) ? att.url : '';
+					const attId = (att && att.id) ? att.id : 0;
+					$panel.find('.mr-tee-field-default-image-id').val(attId);
+					$panel.find('.mr-tee-field-default-image-input').val(url);
+					self.syncDefaultImagePreviewUi(idx, url);
+					self.renderBoxPreview(idx);
+				});
+				frame.open();
+			});
+
+			// Direct File Upload Fallback for Default Image
+			$(document).on('change', '.mr-tee-quick-image-file', function() {
+				const inputEl = this;
+				const file = inputEl.files && inputEl.files[0];
+				if (!file) return;
+				const idx = getFieldIdx($(this));
+				const $panel = $(`#mr-tee-field-panel-${idx}`);
+				const $status = $panel.find('.mr-tee-img-upload-status');
+				$status.text('⏳ Envoi de l\'image...').css('color', '#2563eb');
+
+				const formData = new FormData();
+				formData.append('action', 'mr_tee_upload_default_image');
+				formData.append('nonce', window.mrTeeAdminData ? window.mrTeeAdminData.nonce : '');
+				formData.append('product_id', window.mrTeeAdminData ? (window.mrTeeAdminData.productId || 0) : 0);
+				formData.append('image_file', file);
+
+				const ajaxUrl = self.toSameOriginPath((window.mrTeeAdminData && window.mrTeeAdminData.ajaxUrl) || '/wp-admin/admin-ajax.php');
+				$.ajax({
+					url: ajaxUrl,
+					type: 'POST',
+					data: formData,
+					processData: false,
+					contentType: false,
+					success: function(resp) {
+						inputEl.value = '';
+						if (resp && resp.success && resp.data && resp.data.url) {
+							$panel.find('.mr-tee-field-default-image-id').val(resp.data.id || 0);
+							$panel.find('.mr-tee-field-default-image-input').val(resp.data.url);
+							self.syncDefaultImagePreviewUi(idx, resp.data.url);
+							self.renderBoxPreview(idx);
+							$status.text('✅ Image définie !').css('color', '#059669');
+						} else {
+							const msg = (resp && resp.data && resp.data.message) ? resp.data.message : 'Erreur lors de l\'import.';
+							$status.text(`❌ ${msg}`).css('color', '#dc2626');
+						}
+					},
+					error: function(xhr, status, err) {
+						inputEl.value = '';
+						$status.text(`❌ Erreur réseau : ${err}`).css('color', '#dc2626');
+					}
+				});
 			});
 
 			// Default Text Input
@@ -537,7 +689,8 @@
 			$(document).on('change', '.mr-tee-field-font-select', function() {
 				const idx = getFieldIdx($(this));
 				const newFontId = $(this).val();
-				if (idx === 0 && newFontId && self.allowedFonts.includes(newFontId) && self.allowedFonts[0] !== newFontId) {
+				const firstTextIdx = self.getFirstTextFieldIndex();
+				if (idx === firstTextIdx && newFontId && self.allowedFonts.includes(newFontId) && self.allowedFonts[0] !== newFontId) {
 					self.allowedFonts = [newFontId, ...self.allowedFonts.filter(id => id !== newFontId)];
 					if (typeof self.renderAllowedFontsList === 'function') {
 						self.renderAllowedFontsList({ skipBoxSelectSync: true });
@@ -578,192 +731,273 @@
 			});
 		}
 
+		getFieldType(idx) {
+			const $sel = $(`#mr-tee-field-panel-${idx} .mr-tee-field-type-select`);
+			if ($sel.length) {
+				return $sel.val() === 'image' ? 'image' : 'text';
+			}
+			return $(`#mr-tee-field-panel-${idx}`).attr('data-field-type') === 'image' ? 'image' : 'text';
+		}
+
+		syncDefaultImagePreviewUi(idx, url) {
+			const $panel = $(`#mr-tee-field-panel-${idx}`);
+			const $wrap = $panel.find('.mr-tee-default-img-preview-wrap');
+			const $clearBtn = $panel.find('.mr-tee-btn-clear-default-image');
+			if (url) {
+				$wrap.html(`<img src="${this.escapeXml(url)}" alt="" class="mr-tee-default-img-preview" />`);
+				$clearBtn.show();
+			} else {
+				$wrap.html('<span class="mr-tee-default-img-empty">Aucune image par défaut</span>');
+				$clearBtn.hide();
+			}
+		}
+
 		/**
-		 * Add New Field Rectangle.
+		 * Add New Field Rectangle (Text or Image).
 		 */
 		bindAddField() {
 			const self = this;
 			$(document).on('click', '#mr-tee-btn-add-field-pill, #mr-tee-btn-add-field', function() {
-				const newIdx = $('.mr-tee-field-box').length;
-				const color = FIELD_COLORS[newIdx % FIELD_COLORS.length];
-				const prevIdx = newIdx - 1;
+				self.addField('text');
+			});
+			$(document).on('click', '#mr-tee-btn-add-image-field-pill, #mr-tee-btn-add-image-field', function() {
+				self.addField('image');
+			});
+		}
 
-				let prevTop = 25.0;
-				let prevHeight = 8.5;
-				if (prevIdx >= 0) {
-					prevTop = parseFloat($(`#mr_tee_field_top_${prevIdx}`).val()) || 25.0;
-					prevHeight = parseFloat($(`#mr_tee_field_height_${prevIdx}`).val()) || 8.5;
-				}
+		addField(fieldType = 'text') {
+			const isImage = fieldType === 'image';
+			const newIdx = $('.mr-tee-field-box').length;
+			const color = FIELD_COLORS[newIdx % FIELD_COLORS.length];
+			const prevIdx = newIdx - 1;
 
-				const newLeft = 30.0;
-				const newTop = Math.min(88.0, Math.round((prevTop + prevHeight + 2.0) * 10) / 10);
-				const newWidth = 40.0;
-				const newHeight = 8.5;
-				const fieldLabel = `Texte ${newIdx + 1}`;
-				const defaultText = `Ligne ${newIdx + 1}`;
+			let prevTop = 25.0;
+			let prevHeight = 8.5;
+			if (prevIdx >= 0) {
+				prevTop = parseFloat($(`#mr_tee_field_top_${prevIdx}`).val()) || 25.0;
+				prevHeight = parseFloat($(`#mr_tee_field_height_${prevIdx}`).val()) || 8.5;
+			}
 
-				const allowedFonts = self.getAllowedFonts();
-				const defaultFontId = allowedFonts[0] || '';
-				const fontSelectOptions = self.generateFontSelectOptions(defaultFontId, allowedFonts);
+			const newWidth = isImage ? 35.0 : 40.0;
+			const newHeight = isImage ? 30.0 : 8.5;
+			const newLeft = isImage ? 32.5 : 30.0;
+			const maxTop = isImage ? Math.max(5.0, 96.0 - newHeight) : 88.0;
+			const newTop = Math.min(maxTop, Math.round((prevTop + prevHeight + 2.0) * 10) / 10);
+			const fieldLabel = isImage ? `Image ${newIdx + 1}` : `Texte ${newIdx + 1}`;
+			const defaultText = isImage ? '' : `Ligne ${newIdx + 1}`;
 
-				// 1. Add Pill
-				const pillHtml = `
-					<button
-						type="button"
-						class="mr-tee-field-pill"
-						data-field-index="${newIdx}"
-						style="--pill-color: ${color};"
-					>
-						<span class="mr-tee-pill-badge" style="background: ${color};">${newIdx + 1}</span>
-						<span class="mr-tee-pill-label">${fieldLabel}</span>
-						<span class="mr-tee-pill-dims">${newWidth}×${newHeight}%</span>
-					</button>
-				`;
-				$('#mr-tee-pills-list').append(pillHtml);
+			const allowedFonts = this.getAllowedFonts();
+			const defaultFontId = allowedFonts[0] || '';
+			const fontSelectOptions = this.generateFontSelectOptions(defaultFontId, allowedFonts);
 
-				// 2. Add Box
-				const boxHtml = `
-					<div
-						id="mr-tee-field-box-${newIdx}"
-						class="mr-tee-field-box"
-						data-field-index="${newIdx}"
-						style="left: ${newLeft}%; top: ${newTop}%; width: ${newWidth}%; height: ${newHeight}%; transform: rotate(0deg); transform-origin: center center; --field-color: ${color};"
-					>
-						<span class="mr-tee-box-badge" style="background: ${color};">
-							${newIdx + 1}. ${fieldLabel}
-						</span>
-						<div class="mr-tee-box-svg-holder" id="mr-tee-box-svg-${newIdx}"></div>
-						<div class="mr-tee-handle-rot-stem" style="background: ${color};"></div>
-						<div class="mr-tee-handle-rot" data-handle="rot" style="border-color: ${color};" title="Faire pivoter le texte"></div>
-						<div class="mr-tee-handle mr-tee-handle-nw" data-handle="nw" style="border-color: ${color};"></div>
-						<div class="mr-tee-handle mr-tee-handle-ne" data-handle="ne" style="border-color: ${color};"></div>
-						<div class="mr-tee-handle mr-tee-handle-sw" data-handle="sw" style="border-color: ${color};"></div>
-						<div class="mr-tee-handle mr-tee-handle-se" data-handle="se" style="border-color: ${color};"></div>
+			// 1. Add Pill
+			const pillHtml = `
+				<button
+					type="button"
+					class="mr-tee-field-pill ${isImage ? 'is-image-pill' : ''}"
+					data-field-index="${newIdx}"
+					data-field-type="${fieldType}"
+					style="--pill-color: ${color};"
+				>
+					<span class="mr-tee-pill-badge" style="background: ${color};">${newIdx + 1}</span>
+					${isImage ? '<span class="mr-tee-pill-type-icon" aria-hidden="true">🖼️</span>' : ''}
+					<span class="mr-tee-pill-label">${fieldLabel}</span>
+					<span class="mr-tee-pill-dims">${newWidth}×${newHeight}%</span>
+				</button>
+			`;
+			$('#mr-tee-pills-list').append(pillHtml);
+
+			// 2. Add Box
+			const boxHtml = `
+				<div
+					id="mr-tee-field-box-${newIdx}"
+					class="mr-tee-field-box ${isImage ? 'is-image-field' : ''}"
+					data-field-index="${newIdx}"
+					data-field-type="${fieldType}"
+					style="left: ${newLeft}%; top: ${newTop}%; width: ${newWidth}%; height: ${newHeight}%; transform: rotate(0deg); transform-origin: center center; --field-color: ${color};"
+				>
+					<span class="mr-tee-box-badge" style="background: ${color};">
+						${newIdx + 1}. ${isImage ? '🖼️ ' : ''}${fieldLabel}
+					</span>
+					<div class="mr-tee-box-svg-holder" id="mr-tee-box-svg-${newIdx}"></div>
+					<div class="mr-tee-handle-rot-stem" style="background: ${color};"></div>
+					<div class="mr-tee-handle-rot" data-handle="rot" style="border-color: ${color};" title="Faire pivoter la zone"></div>
+					<div class="mr-tee-handle mr-tee-handle-nw" data-handle="nw" style="border-color: ${color};"></div>
+					<div class="mr-tee-handle mr-tee-handle-ne" data-handle="ne" style="border-color: ${color};"></div>
+					<div class="mr-tee-handle mr-tee-handle-sw" data-handle="sw" style="border-color: ${color};"></div>
+					<div class="mr-tee-handle mr-tee-handle-se" data-handle="se" style="border-color: ${color};"></div>
+				</div>
+			`;
+			$('#mr-tee-boxes-container').append(boxHtml);
+
+			// 3. Add Panel
+			const panelHtml = `
+				<div
+					class="mr-tee-field-panel ${isImage ? 'is-image-panel' : ''}"
+					id="mr-tee-field-panel-${newIdx}"
+					data-field-index="${newIdx}"
+					data-field-type="${fieldType}"
+				>
+					<div class="mr-tee-panel-badge-row">
+						<span class="mr-tee-panel-indicator" style="background: ${color};"></span>
+						<strong class="mr-tee-panel-title">Champ #${newIdx + 1} : ${fieldLabel}</strong>
 					</div>
-				`;
-				$('#mr-tee-boxes-container').append(boxHtml);
-
-				// 3. Add Panel
-				const panelHtml = `
-					<div
-						class="mr-tee-field-panel"
-						id="mr-tee-field-panel-${newIdx}"
-						data-field-index="${newIdx}"
-					>
-						<div class="mr-tee-panel-badge-row">
-							<span class="mr-tee-panel-indicator" style="background: ${color};"></span>
-							<strong class="mr-tee-panel-title">Champ #${newIdx + 1} : ${fieldLabel}</strong>
-						</div>
-						<table class="form-table mr-tee-coords-table">
-							<tr>
-								<th><label>Nom du Champ</label></th>
-								<td>
-									<input type="text" name="mr_tee_config[text_lines][${newIdx}][label]" value="${fieldLabel}" class="regular-text mr-tee-field-label-input" data-field-index="${newIdx}" />
-								</td>
-							</tr>
-							<tr>
-								<th><label>Texte par Défaut</label></th>
-								<td>
-									<input type="text" name="mr_tee_config[text_lines][${newIdx}][default_text]" value="${defaultText}" class="regular-text mr-tee-field-text-input" data-field-index="${newIdx}" />
-								</td>
-							</tr>
-							<tr>
-								<th><label>Police par Défaut</label></th>
-								<td>
-									<select name="mr_tee_config[text_lines][${newIdx}][font]" class="mr-tee-field-font-select" data-field-index="${newIdx}">
-										${fontSelectOptions}
-									</select>
-									<div class="mr-tee-font-upload-quick" style="margin-top:6px;">
-										<label class="button button-small" style="cursor:pointer; display:inline-flex; align-items:center; gap:4px;">
-											<span class="dashicons dashicons-upload" style="font-size:16px; width:16px; height:16px; line-height:16px;"></span>
-											<span>Ajouter une Police OpenType-SVG (.ttf / .zip)</span>
-											<input type="file" class="mr-tee-quick-font-file" accept=".ttf,.otf,.zip" style="display:none;" data-field-index="${newIdx}" />
-										</label>
-										<span class="mr-tee-font-upload-status" style="font-size:11px; margin-left:6px; color:#64748b;"></span>
+					<table class="form-table mr-tee-coords-table">
+						<tr>
+							<th><label>Nom du Champ</label></th>
+							<td>
+								<input type="text" name="mr_tee_config[text_lines][${newIdx}][label]" value="${fieldLabel}" class="regular-text mr-tee-field-label-input" data-field-index="${newIdx}" />
+							</td>
+						</tr>
+						<tr>
+							<th><label>Type de Champ</label></th>
+							<td>
+								<select name="mr_tee_config[text_lines][${newIdx}][field_type]" class="mr-tee-field-type-select" data-field-index="${newIdx}">
+									<option value="text" ${!isImage ? 'selected' : ''}>📝 Champ Texte</option>
+									<option value="image" ${isImage ? 'selected' : ''}>🖼️ Champ Image (Strictement dans le rectangle)</option>
+								</select>
+							</td>
+						</tr>
+						<tr class="mr-tee-row-image-only" ${isImage ? '' : 'style="display:none;"'}>
+							<th><label>Image par Défaut</label></th>
+							<td>
+								<div class="mr-tee-default-img-picker" data-field-index="${newIdx}">
+									<div class="mr-tee-default-img-preview-wrap">
+										<span class="mr-tee-default-img-empty">Aucune image par défaut</span>
 									</div>
-								</td>
-							</tr>
-							<tr>
-								<th><label>Mode Couleur</label></th>
-								<td>
-									<select name="mr_tee_config[text_lines][${newIdx}][color_mode]" class="mr-tee-field-color-mode" data-field-index="${newIdx}">
-										<option value="multi">Multicolore (COLOR_SET cyclique)</option>
-										<option value="solid">Couleur Unie</option>
-									</select>
-								</td>
-							</tr>
-							<tr>
-								<th><label>Max Caractères</label></th>
-								<td>
-									<input type="number" min="1" max="100" name="mr_tee_config[text_lines][${newIdx}][max_chars]" value="25" class="small-text mr-tee-field-max-chars" data-field-index="${newIdx}" />
-								</td>
-							</tr>
-							<tr>
-								<th><label>Options</label></th>
-								<td>
+									<input type="hidden" name="mr_tee_config[text_lines][${newIdx}][default_image_id]" value="0" class="mr-tee-field-default-image-id" data-field-index="${newIdx}" />
+									<input type="url" name="mr_tee_config[text_lines][${newIdx}][default_image]" value="" placeholder="https://..." class="regular-text mr-tee-field-default-image-input" data-field-index="${newIdx}" style="margin-bottom:6px; width:100%;" />
+									<div class="mr-tee-default-img-actions">
+										<button type="button" class="button button-secondary button-small mr-tee-btn-select-default-image" data-field-index="${newIdx}">📁 Bibliothèque WP</button>
+										<label class="button button-small" style="cursor:pointer; display:inline-flex; align-items:center; gap:4px;">
+											<span>⬆️ Importer fichier</span>
+											<input type="file" accept="image/*" class="mr-tee-quick-image-file" style="display:none;" data-field-index="${newIdx}" />
+										</label>
+										<button type="button" class="button button-small mr-tee-btn-clear-default-image" data-field-index="${newIdx}" style="display:none;">✕ Retirer</button>
+									</div>
+									<span class="mr-tee-img-upload-status" style="display:block; font-size:11px; margin-top:4px; color:#64748b;"></span>
+								</div>
+							</td>
+						</tr>
+						<tr class="mr-tee-row-image-only" ${isImage ? '' : 'style="display:none;"'}>
+							<th><label>Ajustement dans le rectangle</label></th>
+							<td>
+								<select name="mr_tee_config[text_lines][${newIdx}][image_fit]" class="mr-tee-field-image-fit" data-field-index="${newIdx}">
+									<option value="contain" selected>Ajuster entier (Contain — sans rogner)</option>
+									<option value="cover">Remplir le rectangle (Cover — centré &amp; recadré)</option>
+								</select>
+							</td>
+						</tr>
+						<tr class="mr-tee-row-text-only" ${isImage ? 'style="display:none;"' : ''}>
+							<th><label>Texte par Défaut</label></th>
+							<td>
+								<input type="text" name="mr_tee_config[text_lines][${newIdx}][default_text]" value="${defaultText}" class="regular-text mr-tee-field-text-input" data-field-index="${newIdx}" />
+							</td>
+						</tr>
+						<tr class="mr-tee-row-text-only" ${isImage ? 'style="display:none;"' : ''}>
+							<th><label>Police par Défaut</label></th>
+							<td>
+								<select name="mr_tee_config[text_lines][${newIdx}][font]" class="mr-tee-field-font-select" data-field-index="${newIdx}">
+									${fontSelectOptions}
+								</select>
+								<div class="mr-tee-font-upload-quick" style="margin-top:6px;">
+									<label class="button button-small" style="cursor:pointer; display:inline-flex; align-items:center; gap:4px;">
+										<span class="dashicons dashicons-upload" style="font-size:16px; width:16px; height:16px; line-height:16px;"></span>
+										<span>Ajouter une Police OpenType-SVG (.ttf / .zip)</span>
+										<input type="file" class="mr-tee-quick-font-file" accept=".ttf,.otf,.zip" style="display:none;" data-field-index="${newIdx}" />
+									</label>
+									<span class="mr-tee-font-upload-status" style="font-size:11px; margin-left:6px; color:#64748b;"></span>
+								</div>
+							</td>
+						</tr>
+						<tr class="mr-tee-row-text-only" ${isImage ? 'style="display:none;"' : ''}>
+							<th><label>Mode Couleur</label></th>
+							<td>
+								<select name="mr_tee_config[text_lines][${newIdx}][color_mode]" class="mr-tee-field-color-mode" data-field-index="${newIdx}">
+									<option value="multi">Multicolore (COLOR_SET cyclique)</option>
+									<option value="solid">Couleur Unie</option>
+								</select>
+							</td>
+						</tr>
+						<tr class="mr-tee-row-text-only" ${isImage ? 'style="display:none;"' : ''}>
+							<th><label>Max Caractères</label></th>
+							<td>
+								<input type="number" min="1" max="100" name="mr_tee_config[text_lines][${newIdx}][max_chars]" value="25" class="small-text mr-tee-field-max-chars" data-field-index="${newIdx}" />
+							</td>
+						</tr>
+						<tr>
+							<th><label>Options</label></th>
+							<td>
+								<span class="mr-tee-opt-text-only" ${isImage ? 'style="display:none;"' : ''}>
+									<input type="hidden" name="mr_tee_config[text_lines][${newIdx}][allow_font_pick]" value="0" />
 									<label><input type="checkbox" name="mr_tee_config[text_lines][${newIdx}][allow_font_pick]" value="1" checked class="mr-tee-field-font-pick" data-field-index="${newIdx}" /> Choix de police client</label><br />
 									<label><input type="checkbox" name="mr_tee_config[text_lines][${newIdx}][multiline]" value="1" class="mr-tee-field-multiline" data-field-index="${newIdx}" /> Autoriser retours à la ligne</label><br />
-									<label><input type="checkbox" name="mr_tee_config[text_lines][${newIdx}][warning_unedited]" value="1" class="mr-tee-field-warning" data-field-index="${newIdx}" /> Alerter si non personnalisé</label>
-								</td>
-							</tr>
-							<tr>
-								<th><label>Position X (Left %)</label></th>
-								<td>
-									<input type="number" step="0.1" min="0" max="100" id="mr_tee_field_left_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_left]" value="${newLeft}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-left" data-field-index="${newIdx}" /> %
-								</td>
-							</tr>
-							<tr>
-								<th><label>Position Y (Top %)</label></th>
-								<td>
-									<input type="number" step="0.1" min="0" max="100" id="mr_tee_field_top_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_top]" value="${newTop}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-top" data-field-index="${newIdx}" /> %
-								</td>
-							</tr>
-							<tr>
-								<th><label>Largeur (Width %)</label></th>
-								<td>
-									<input type="number" step="0.1" min="5" max="100" id="mr_tee_field_width_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_width]" value="${newWidth}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-width" data-field-index="${newIdx}" /> %
-								</td>
-							</tr>
-							<tr>
-								<th><label>Hauteur (Height %)</label></th>
-								<td>
-									<input type="number" step="0.1" min="3" max="100" id="mr_tee_field_height_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_height]" value="${newHeight}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-height" data-field-index="${newIdx}" /> %
-								</td>
-							</tr>
-							<tr>
-								<th><label>Orientation / Rotation (°)</label></th>
-								<td>
-									<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-										<input type="number" step="1" min="-180" max="180" id="mr_tee_field_rotate_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_rotate]" value="0" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-rotate" data-field-index="${newIdx}" /> °
-										<span class="description" style="font-size:11px;">(-180° à 180°)</span>
-									</div>
-									<div class="mr-tee-rotate-presets" style="display:flex; flex-wrap:wrap; gap:4px;">
-										<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="${newIdx}" data-deg="0">0° (Horizontal)</button>
-										<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="${newIdx}" data-deg="90">90° (Vertical ⬇)</button>
-										<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="${newIdx}" data-deg="-90">-90° (Vertical ⬆)</button>
-										<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="${newIdx}" data-deg="40">40° (Oblique ↗)</button>
-										<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="${newIdx}" data-deg="-15">-15° (Rétro ↘)</button>
-									</div>
-								</td>
-							</tr>
-						</table>
-						<div class="mr-tee-field-actions">
-							<button type="button" class="button button-link-delete mr-tee-btn-delete-field" data-field-index="${newIdx}">
-								Supprimer ce champ
-							</button>
-						</div>
+								</span>
+								<span class="mr-tee-opt-image-only" ${isImage ? '' : 'style="display:none;"'}>
+									<input type="hidden" name="mr_tee_config[text_lines][${newIdx}][allow_image_upload]" value="0" />
+									<label><input type="checkbox" name="mr_tee_config[text_lines][${newIdx}][allow_image_upload]" value="1" checked class="mr-tee-field-allow-image-upload" data-field-index="${newIdx}" /> Autoriser le client à changer/importer une image</label><br />
+								</span>
+								<input type="hidden" name="mr_tee_config[text_lines][${newIdx}][warning_unedited]" value="0" />
+								<label><input type="checkbox" name="mr_tee_config[text_lines][${newIdx}][warning_unedited]" value="1" class="mr-tee-field-warning" data-field-index="${newIdx}" /> Alerter si non personnalisé</label>
+							</td>
+						</tr>
+						<tr>
+							<th><label>Position X (Left %)</label></th>
+							<td>
+								<input type="number" step="0.1" min="0" max="100" id="mr_tee_field_left_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_left]" value="${newLeft}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-left" data-field-index="${newIdx}" /> %
+							</td>
+						</tr>
+						<tr>
+							<th><label>Position Y (Top %)</label></th>
+							<td>
+								<input type="number" step="0.1" min="0" max="100" id="mr_tee_field_top_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_top]" value="${newTop}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-top" data-field-index="${newIdx}" /> %
+							</td>
+						</tr>
+						<tr>
+							<th><label>Largeur (Width %)</label></th>
+							<td>
+								<input type="number" step="0.1" min="5" max="100" id="mr_tee_field_width_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_width]" value="${newWidth}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-width" data-field-index="${newIdx}" /> %
+							</td>
+						</tr>
+						<tr>
+							<th><label>Hauteur (Height %)</label></th>
+							<td>
+								<input type="number" step="0.1" min="3" max="100" id="mr_tee_field_height_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_height]" value="${newHeight}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-height" data-field-index="${newIdx}" /> %
+							</td>
+						</tr>
+						<tr>
+							<th><label>Orientation / Rotation (°)</label></th>
+							<td>
+								<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+									<input type="number" step="1" min="-180" max="180" id="mr_tee_field_rotate_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_rotate]" value="0" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-rotate" data-field-index="${newIdx}" /> °
+									<span class="description" style="font-size:11px;">(-180° à 180°)</span>
+								</div>
+								<div class="mr-tee-rotate-presets" style="display:flex; flex-wrap:wrap; gap:4px;">
+									<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="${newIdx}" data-deg="0">0° (Horizontal)</button>
+									<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="${newIdx}" data-deg="90">90° (Vertical ⬇)</button>
+									<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="${newIdx}" data-deg="-90">-90° (Vertical ⬆)</button>
+									<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="${newIdx}" data-deg="40">40° (Oblique ↗)</button>
+									<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="${newIdx}" data-deg="-15">-15° (Rétro ↘)</button>
+								</div>
+							</td>
+						</tr>
+					</table>
+					<div class="mr-tee-field-actions">
+						<button type="button" class="button button-link-delete mr-tee-btn-delete-field" data-field-index="${newIdx}">
+							Supprimer ce champ
+						</button>
 					</div>
-				`;
-				$('#mr-tee-field-panels-container').append(panelHtml);
+				</div>
+			`;
+			$('#mr-tee-field-panels-container').append(panelHtml);
 
-				// Show delete buttons
-				$('.mr-tee-btn-delete-field').show();
+			// Show delete buttons
+			$('.mr-tee-btn-delete-field').show();
 
-				// Activate new field
-				self.setActiveField(newIdx);
-				self.renderBoxPreview(newIdx);
-				self.recalculateDimensions();
-			});
+			// Activate new field
+			this.setActiveField(newIdx);
+			this.renderBoxPreview(newIdx);
+			this.recalculateDimensions();
 		}
 
 		/**
@@ -776,7 +1010,7 @@
 				const count = $('.mr-tee-field-box').length;
 				if (count <= 1 || Number.isNaN(idx)) return;
 
-				if (!confirm('Voulez-vous vraiment supprimer ce rectangle et son champ de texte ?')) {
+				if (!confirm('Voulez-vous vraiment supprimer ce rectangle et son champ ?')) {
 					return;
 				}
 
@@ -807,13 +1041,23 @@
 				$(this).find('.mr-tee-panel-indicator').css('background', color);
 				$(this).find('.mr-tee-panel-title').text(`Champ #${i + 1} : ${labelVal}`);
 				$(this).find('.mr-tee-field-label-input').attr('name', `mr_tee_config[text_lines][${i}][label]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-type-select').attr('name', `mr_tee_config[text_lines][${i}][field_type]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-default-img-picker').attr('data-field-index', i);
+				$(this).find('.mr-tee-field-default-image-id').attr('name', `mr_tee_config[text_lines][${i}][default_image_id]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-default-image-input').attr('name', `mr_tee_config[text_lines][${i}][default_image]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-btn-select-default-image, .mr-tee-quick-image-file, .mr-tee-btn-clear-default-image').attr('data-field-index', i);
+				$(this).find('.mr-tee-field-image-fit').attr('name', `mr_tee_config[text_lines][${i}][image_fit]`).attr('data-field-index', i);
 				$(this).find('.mr-tee-field-text-input').attr('name', `mr_tee_config[text_lines][${i}][default_text]`).attr('data-field-index', i);
 				$(this).find('.mr-tee-field-font-select').attr('name', `mr_tee_config[text_lines][${i}][font]`).attr('data-field-index', i);
 				$(this).find('.mr-tee-quick-font-file').attr('data-field-index', i);
 				$(this).find('.mr-tee-field-color-mode').attr('name', `mr_tee_config[text_lines][${i}][color_mode]`).attr('data-field-index', i);
 				$(this).find('.mr-tee-field-max-chars').attr('name', `mr_tee_config[text_lines][${i}][max_chars]`).attr('data-field-index', i);
+				$(this).find('input[type="hidden"][name*="[allow_font_pick]"]').attr('name', `mr_tee_config[text_lines][${i}][allow_font_pick]`);
 				$(this).find('.mr-tee-field-font-pick').attr('name', `mr_tee_config[text_lines][${i}][allow_font_pick]`).attr('data-field-index', i);
 				$(this).find('.mr-tee-field-multiline').attr('name', `mr_tee_config[text_lines][${i}][multiline]`).attr('data-field-index', i);
+				$(this).find('input[type="hidden"][name*="[allow_image_upload]"]').attr('name', `mr_tee_config[text_lines][${i}][allow_image_upload]`);
+				$(this).find('.mr-tee-field-allow-image-upload').attr('name', `mr_tee_config[text_lines][${i}][allow_image_upload]`).attr('data-field-index', i);
+				$(this).find('input[type="hidden"][name*="[warning_unedited]"]').attr('name', `mr_tee_config[text_lines][${i}][warning_unedited]`);
 				$(this).find('.mr-tee-field-warning').attr('name', `mr_tee_config[text_lines][${i}][warning_unedited]`).attr('data-field-index', i);
 				$(this).find('.mr-tee-field-coord-left').attr('id', `mr_tee_field_left_${i}`).attr('name', `mr_tee_config[text_lines][${i}][box_left]`).attr('data-field-index', i);
 				$(this).find('.mr-tee-field-coord-top').attr('id', `mr_tee_field_top_${i}`).attr('name', `mr_tee_config[text_lines][${i}][box_top]`).attr('data-field-index', i);
@@ -833,11 +1077,13 @@
 
 			$boxes.each(function(i) {
 				const color = FIELD_COLORS[i % FIELD_COLORS.length];
-				const labelVal = $(`#mr-tee-field-panel-${i} .mr-tee-field-label-input`).val() || `Champ ${i + 1}`;
+				const $panel = $(`#mr-tee-field-panel-${i}`);
+				const isImg = $panel.find('.mr-tee-field-type-select').val() === 'image' || $panel.attr('data-field-type') === 'image';
+				const labelVal = $panel.find('.mr-tee-field-label-input').val() || `Champ ${i + 1}`;
 				$(this).attr('id', `mr-tee-field-box-${i}`);
 				$(this).attr('data-field-index', i);
 				$(this).css('--field-color', color);
-				$(this).find('.mr-tee-box-badge').text(`${i + 1}. ${labelVal}`).css('background', color);
+				$(this).find('.mr-tee-box-badge').text(`${i + 1}. ${isImg ? '🖼️ ' : ''}${labelVal}`).css('background', color);
 				$(this).find('.mr-tee-box-svg-holder').attr('id', `mr-tee-box-svg-${i}`);
 				$(this).find('.mr-tee-handle').css('border-color', color);
 				$(this).find('.mr-tee-handle-rot-stem').css('background', color);
@@ -882,16 +1128,7 @@
 			const $holder = $(`#mr-tee-box-svg-${idx}`);
 			if (!$holder.length) return;
 
-			const rawTextVal = $(`[name="mr_tee_config[text_lines][${idx}][default_text]"]`).val();
-			const textVal = (rawTextVal !== undefined && String(rawTextVal).trim() !== '') ? String(rawTextVal) : `Texte ${idx + 1}`;
-
-			const fonts = (window.mrTeeAdminData && window.mrTeeAdminData.fonts) || {};
-			const allowed = this.getAllowedFonts();
-			const fallbackKey = allowed[0] || Object.keys(fonts)[0] || 'super_mario';
-			const fontId = $(`select[name="mr_tee_config[text_lines][${idx}][font]"]`).val() || fallbackKey;
-			const fontDef = fonts[fontId] || fonts[fallbackKey] || null;
-
-			// Compute box visual aspect ratio so SVG glyphs and fonts render without horizontal stretching
+			// Compute box visual aspect ratio so SVG glyphs and images render without horizontal stretching
 			const el = $holder[0];
 			let boxRatio = 0;
 			if (el && el.clientWidth > 0 && el.clientHeight > 0) {
@@ -907,6 +1144,44 @@
 			boxRatio = Math.max(0.2, Math.min(20, boxRatio || 1));
 			const vbH = 100;
 			const vbW = Number((vbH * boxRatio).toFixed(2));
+
+			// Image field branch: render strictly clipped inside the box rectangle
+			if (this.getFieldType(idx) === 'image') {
+				const imgUrl = ($(`[name="mr_tee_config[text_lines][${idx}][default_image]"]`).val() || '').trim();
+				const imgFit = $(`[name="mr_tee_config[text_lines][${idx}][image_fit]"]`).val() === 'cover' ? 'cover' : 'contain';
+
+				if (!imgUrl) {
+					$holder.html('<div class="mr-tee-admin-img-placeholder"><span>🖼️ Zone Image</span><small>Choisissez une image par défaut</small></div>');
+					return;
+				}
+
+				const preserveRatio = (imgFit === 'cover') ? 'xMidYMid slice' : 'xMidYMid meet';
+				const safeUrl = this.escapeXml(imgUrl);
+				const clipId = `mr-tee-admin-clip-${idx}`;
+				const imgSvg = `
+					<svg viewBox="0 0 ${vbW} ${vbH}" width="100%" height="100%" preserveAspectRatio="none" style="overflow:hidden;width:100%;height:100%;display:block;">
+						<defs>
+							<clipPath id="${clipId}">
+								<rect x="0" y="0" width="${vbW}" height="${vbH}" />
+							</clipPath>
+						</defs>
+						<g clip-path="url(#${clipId})">
+							<image href="${safeUrl}" xlink:href="${safeUrl}" x="0" y="0" width="${vbW}" height="${vbH}" preserveAspectRatio="${preserveRatio}" />
+						</g>
+					</svg>
+				`;
+				$holder.html(imgSvg);
+				return;
+			}
+
+			const rawTextVal = $(`[name="mr_tee_config[text_lines][${idx}][default_text]"]`).val();
+			const textVal = (rawTextVal !== undefined && String(rawTextVal).trim() !== '') ? String(rawTextVal) : `Texte ${idx + 1}`;
+
+			const fonts = (window.mrTeeAdminData && window.mrTeeAdminData.fonts) || {};
+			const allowed = this.getAllowedFonts();
+			const fallbackKey = allowed[0] || Object.keys(fonts)[0] || 'super_mario';
+			const fontId = $(`select[name="mr_tee_config[text_lines][${idx}][font]"]`).val() || fallbackKey;
+			const fontDef = fonts[fontId] || fonts[fallbackKey] || null;
 
 			// Handle OpenType-SVG Vector Color Fonts
 			if (this.isSvgFont(fontDef)) {
@@ -1237,7 +1512,7 @@
 								self.allowedFonts.push(f.id);
 							}
 						});
-						if (idx === 0 && newest.id) {
+						if (idx === self.getFirstTextFieldIndex() && newest.id) {
 							self.allowedFonts = [newest.id, ...self.allowedFonts.filter(id => id !== newest.id)];
 						}
 						if (typeof self.renderAllowedFontsList === 'function') {
@@ -1485,12 +1760,13 @@
 			const self = this;
 			const allowed = self.getAllowedFonts();
 			const defaultFontId = allowed[0] || '';
+			const firstTextIdx = self.getFirstTextFieldIndex();
 
 			$('.mr-tee-field-font-select').each(function(domIdx) {
 				const attrIdx = parseInt($(this).attr('data-field-index'), 10);
 				const idx = Number.isNaN(attrIdx) ? domIdx : attrIdx;
 				const prevVal = $(this).val();
-				const targetVal = (idx === 0 || !prevVal || !allowed.includes(prevVal)) ? defaultFontId : prevVal;
+				const targetVal = (idx === firstTextIdx || !prevVal || !allowed.includes(prevVal)) ? defaultFontId : prevVal;
 
 				const html = self.generateFontSelectOptions(targetVal, allowed);
 				$(this).html(html);

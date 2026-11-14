@@ -385,64 +385,95 @@ class EngineSelectorMetabox {
 				}
 			}
 
-			// Sanitize text lines (supports adding/deleting dynamic fields and per-line rectangles)
+			// Sanitize fields (supports adding/deleting dynamic text & image fields and per-line rectangles)
 			if ( isset( $raw_config['text_lines'] ) && is_array( $raw_config['text_lines'] ) ) {
 				$sanitized_lines = array();
 				$line_index      = 0;
+				$text_line_order = 0;
 				foreach ( $raw_config['text_lines'] as $idx => $line_data ) {
-					$line_num = $line_index + 1;
-					$existing = isset( $config['text_lines'][ $idx ] ) ? $config['text_lines'][ $idx ] : array();
+					$line_num   = $line_index + 1;
+					$existing   = isset( $config['text_lines'][ $idx ] ) ? $config['text_lines'][ $idx ] : array();
+					$field_type = ( isset( $line_data['field_type'] ) && 'image' === $line_data['field_type'] ) ? 'image' : 'text';
 
-					$label        = isset( $line_data['label'] ) ? sanitize_text_field( $line_data['label'] ) : ( isset( $existing['label'] ) ? $existing['label'] : sprintf( __( 'Champ %d', 'mr-tee-editor' ), $line_num ) );
-					$default_text = isset( $line_data['default_text'] ) ? sanitize_textarea_field( $line_data['default_text'] ) : ( isset( $existing['default_text'] ) ? $existing['default_text'] : sprintf( __( 'Texte %d', 'mr-tee-editor' ), $line_num ) );
-					$font         = isset( $line_data['font'] ) ? sanitize_text_field( $line_data['font'] ) : ( isset( $existing['font'] ) ? $existing['font'] : 'super_mario' );
+					$label   = isset( $line_data['label'] ) ? sanitize_text_field( $line_data['label'] ) : ( isset( $existing['label'] ) ? $existing['label'] : sprintf( __( 'Champ %d', 'mr-tee-editor' ), $line_num ) );
+					$warning = isset( $line_data['warning_unedited'] ) ? ! empty( $line_data['warning_unedited'] ) : ( isset( $existing['warning_unedited'] ) ? ! empty( $existing['warning_unedited'] ) : false );
 
-					// If product-level allowed_fonts is defined, enforce first font as default
-					if ( ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
-						if ( 0 === $line_index || ! in_array( $font, $config['allowed_fonts'], true ) ) {
-							$font = $config['allowed_fonts'][0];
-						}
-					}
-					$font_pick    = isset( $line_data['allow_font_pick'] ) ? ! empty( $line_data['allow_font_pick'] ) : ( isset( $existing['allow_font_pick'] ) ? ! empty( $existing['allow_font_pick'] ) : true );
-					$color_mode   = isset( $line_data['color_mode'] ) ? sanitize_text_field( $line_data['color_mode'] ) : ( isset( $existing['color_mode'] ) ? $existing['color_mode'] : 'multi' );
-					$warning      = isset( $line_data['warning_unedited'] ) ? ! empty( $line_data['warning_unedited'] ) : ( isset( $existing['warning_unedited'] ) ? ! empty( $existing['warning_unedited'] ) : false );
-					$multiline    = ! empty( $line_data['multiline'] );
-					$max_chars    = isset( $line_data['max_chars'] ) ? max( 1, intval( $line_data['max_chars'] ) ) : ( isset( $existing['max_chars'] ) ? intval( $existing['max_chars'] ) : 25 );
-
-					// Per-line rectangle dimensions & orientation
+					// Per-field rectangle dimensions & orientation
 					$box_l = isset( $line_data['box_left'] ) ? floatval( $line_data['box_left'] ) : ( isset( $existing['box_left'] ) ? floatval( $existing['box_left'] ) : 30.0 );
 					$box_t = isset( $line_data['box_top'] ) ? floatval( $line_data['box_top'] ) : ( isset( $existing['box_top'] ) ? floatval( $existing['box_top'] ) : ( 25.0 + $line_index * 12.0 ) );
 					$box_w = isset( $line_data['box_width'] ) ? floatval( $line_data['box_width'] ) : ( isset( $existing['box_width'] ) ? floatval( $existing['box_width'] ) : 40.0 );
-					$box_h = isset( $line_data['box_height'] ) ? floatval( $line_data['box_height'] ) : ( isset( $existing['box_height'] ) ? floatval( $existing['box_height'] ) : 8.5 );
+					$box_h = isset( $line_data['box_height'] ) ? floatval( $line_data['box_height'] ) : ( isset( $existing['box_height'] ) ? floatval( $existing['box_height'] ) : ( 'image' === $field_type ? 30.0 : 8.5 ) );
 					$box_r = isset( $line_data['box_rotate'] ) ? floatval( $line_data['box_rotate'] ) : ( isset( $existing['box_rotate'] ) ? floatval( $existing['box_rotate'] ) : 0.0 );
 
-					$font_size = isset( $line_data['font_size'] ) ? floatval( $line_data['font_size'] ) : ( isset( $existing['font_size'] ) ? floatval( $existing['font_size'] ) : ( $box_h * 0.85 ) );
-					$y_pct     = isset( $line_data['y_pct'] ) ? floatval( $line_data['y_pct'] ) : ( $box_t + ( $box_h / 2.0 ) );
+					if ( 'image' === $field_type ) {
+						$default_img_url  = isset( $line_data['default_image'] ) ? esc_url_raw( trim( $line_data['default_image'] ) ) : ( isset( $existing['default_image'] ) ? esc_url_raw( $existing['default_image'] ) : '' );
+						$default_img_id   = isset( $line_data['default_image_id'] ) ? absint( $line_data['default_image_id'] ) : ( isset( $existing['default_image_id'] ) ? absint( $existing['default_image_id'] ) : 0 );
+						$image_fit        = ( isset( $line_data['image_fit'] ) && 'cover' === $line_data['image_fit'] ) ? 'cover' : 'contain';
+						$allow_img_upload = isset( $line_data['allow_image_upload'] ) ? ! empty( $line_data['allow_image_upload'] ) : true;
+						$ref_id           = ! empty( $existing['ref_id'] ) ? $existing['ref_id'] : 'id-ref-image-line-' . $line_num;
 
-					$sanitized_line = wp_parse_args(
-						array(
-							'id'               => ! empty( $existing['id'] ) ? $existing['id'] : 'line_' . $line_num,
-							'ref_id'           => ! empty( $existing['ref_id'] ) ? $existing['ref_id'] : 'id-ref-text-line-' . $line_num,
-							'color_ref_id'     => ! empty( $existing['color_ref_id'] ) ? $existing['color_ref_id'] : 'id-ref-color-line-' . $line_num,
-							'label'            => $label,
-							'default_text'     => $default_text,
-							'font'             => $font,
-							'allowed_fonts'    => ! empty( $config['allowed_fonts'] ) ? $config['allowed_fonts'] : ( isset( $existing['allowed_fonts'] ) ? $existing['allowed_fonts'] : array_keys( FontRegistry::get_fonts() ) ),
-							'allow_font_pick'  => $font_pick,
-							'color_mode'       => $color_mode,
-							'multiline'        => $multiline,
-							'max_chars'        => $max_chars,
-							'box_left'         => $box_l,
-							'box_top'          => $box_t,
-							'box_width'        => $box_w,
-							'box_height'       => $box_h,
-							'box_rotate'       => $box_r,
-							'y_pct'            => $y_pct,
-							'font_size'        => $font_size,
-							'warning_unedited' => $warning,
-						),
-						$existing
-					);
+						$sanitized_line = array(
+							'id'                 => ! empty( $existing['id'] ) ? $existing['id'] : 'line_' . $line_num,
+							'ref_id'             => $ref_id,
+							'color_ref_id'       => ! empty( $existing['color_ref_id'] ) ? $existing['color_ref_id'] : 'id-ref-color-line-' . $line_num,
+							'field_type'         => 'image',
+							'label'              => $label,
+							'default_text'       => '',
+							'default_image'      => $default_img_url,
+							'default_image_id'   => $default_img_id,
+							'image_fit'          => $image_fit,
+							'allow_image_upload' => $allow_img_upload,
+							'box_left'           => $box_l,
+							'box_top'            => $box_t,
+							'box_width'          => $box_w,
+							'box_height'         => $box_h,
+							'box_rotate'         => $box_r,
+							'warning_unedited'   => $warning,
+						);
+					} else {
+						$default_text = isset( $line_data['default_text'] ) ? sanitize_textarea_field( $line_data['default_text'] ) : ( isset( $existing['default_text'] ) ? $existing['default_text'] : sprintf( __( 'Texte %d', 'mr-tee-editor' ), $line_num ) );
+						$font         = isset( $line_data['font'] ) ? sanitize_text_field( $line_data['font'] ) : ( isset( $existing['font'] ) ? $existing['font'] : 'super_mario' );
+
+						// If product-level allowed_fonts is defined, enforce first font as default
+						if ( ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
+							if ( 0 === $text_line_order || ! in_array( $font, $config['allowed_fonts'], true ) ) {
+								$font = $config['allowed_fonts'][0];
+							}
+						}
+						$font_pick  = isset( $line_data['allow_font_pick'] ) ? ! empty( $line_data['allow_font_pick'] ) : ( isset( $existing['allow_font_pick'] ) ? ! empty( $existing['allow_font_pick'] ) : true );
+						$color_mode = isset( $line_data['color_mode'] ) ? sanitize_text_field( $line_data['color_mode'] ) : ( isset( $existing['color_mode'] ) ? $existing['color_mode'] : 'multi' );
+						$multiline  = ! empty( $line_data['multiline'] );
+						$max_chars  = isset( $line_data['max_chars'] ) ? max( 1, intval( $line_data['max_chars'] ) ) : ( isset( $existing['max_chars'] ) ? intval( $existing['max_chars'] ) : 25 );
+						$font_size  = isset( $line_data['font_size'] ) ? floatval( $line_data['font_size'] ) : ( isset( $existing['font_size'] ) ? floatval( $existing['font_size'] ) : ( $box_h * 0.85 ) );
+						$y_pct      = isset( $line_data['y_pct'] ) ? floatval( $line_data['y_pct'] ) : ( $box_t + ( $box_h / 2.0 ) );
+
+						$sanitized_line = wp_parse_args(
+							array(
+								'id'               => ! empty( $existing['id'] ) ? $existing['id'] : 'line_' . $line_num,
+								'ref_id'           => ! empty( $existing['ref_id'] ) ? $existing['ref_id'] : 'id-ref-text-line-' . $line_num,
+								'color_ref_id'     => ! empty( $existing['color_ref_id'] ) ? $existing['color_ref_id'] : 'id-ref-color-line-' . $line_num,
+								'field_type'       => 'text',
+								'label'            => $label,
+								'default_text'     => $default_text,
+								'font'             => $font,
+								'allowed_fonts'    => ! empty( $config['allowed_fonts'] ) ? $config['allowed_fonts'] : ( isset( $existing['allowed_fonts'] ) ? $existing['allowed_fonts'] : array_keys( FontRegistry::get_fonts() ) ),
+								'allow_font_pick'  => $font_pick,
+								'color_mode'       => $color_mode,
+								'multiline'        => $multiline,
+								'max_chars'        => $max_chars,
+								'box_left'         => $box_l,
+								'box_top'          => $box_t,
+								'box_width'        => $box_w,
+								'box_height'       => $box_h,
+								'box_rotate'       => $box_r,
+								'y_pct'            => $y_pct,
+								'font_size'        => $font_size,
+								'warning_unedited' => $warning,
+							),
+							$existing
+						);
+						$text_line_order++;
+					}
 
 					$sanitized_lines[] = $sanitized_line;
 					$line_index++;

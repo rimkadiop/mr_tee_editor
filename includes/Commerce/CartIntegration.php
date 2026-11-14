@@ -157,12 +157,31 @@ class CartIntegration {
 			);
 		}
 
-		// Text lines
+		// Text & Image fields
 		if ( ! empty( $payload['text_lines'] ) && is_array( $payload['text_lines'] ) ) {
 			foreach ( $payload['text_lines'] as $line ) {
-				$label = ! empty( $line['label'] ) ? $line['label'] : 'Texte';
-				$val   = ! empty( $line['value'] ) ? $line['value'] : '';
-				$rot   = isset( $line['rotate'] ) ? floatval( $line['rotate'] ) : ( isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0 );
+				$is_image = isset( $line['fieldType'] ) && 'image' === $line['fieldType'];
+				$label    = ! empty( $line['label'] ) ? $line['label'] : ( $is_image ? 'Image' : 'Texte' );
+				$val      = ! empty( $line['value'] ) ? $line['value'] : '';
+				$rot      = isset( $line['rotate'] ) ? floatval( $line['rotate'] ) : ( isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0 );
+
+				if ( $is_image ) {
+					$img_url     = ! empty( $line['imageUrl'] ) ? $line['imageUrl'] : '';
+					$img_summary = ! empty( $val ) ? $val : ( ! empty( $img_url ) ? __( 'Image', 'mr-tee-editor' ) : '' );
+					if ( ! empty( $img_summary ) ) {
+						$display_html = esc_html( $img_summary );
+						if ( ! empty( $img_url ) && 0 === strpos( $img_url, 'http' ) ) {
+							$display_html .= ' — <a href="' . esc_url( $img_url ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Voir', 'mr-tee-editor' ) . '</a>';
+						}
+						$item_data[] = array(
+							'key'     => $label,
+							'value'   => esc_html( $img_summary ),
+							'display' => $display_html,
+						);
+					}
+					continue;
+				}
+
 				if ( ! empty( $val ) ) {
 					$rot_label = '';
 					if ( 0.0 !== $rot ) {
@@ -234,11 +253,23 @@ class CartIntegration {
 
 		$item->add_meta_data( '_mr_tee_editor_data', $data, true );
 
-		// Text lines readable meta
+		// Text & Image fields readable meta
 		if ( ! empty( $payload['text_lines'] ) && is_array( $payload['text_lines'] ) ) {
 			foreach ( $payload['text_lines'] as $line ) {
-				$label = ! empty( $line['label'] ) ? $line['label'] : 'Texte';
-				$val   = ! empty( $line['value'] ) ? $line['value'] : '';
+				$is_image = isset( $line['fieldType'] ) && 'image' === $line['fieldType'];
+				$label    = ! empty( $line['label'] ) ? $line['label'] : ( $is_image ? 'Image' : 'Texte' );
+				$val      = ! empty( $line['value'] ) ? $line['value'] : '';
+				if ( $is_image ) {
+					$img_url = ! empty( $line['imageUrl'] ) ? $line['imageUrl'] : '';
+					$summary = ! empty( $val ) ? $val : '';
+					if ( ! empty( $img_url ) && 0 === strpos( $img_url, 'http' ) ) {
+						$summary = trim( $summary . ' — ' . esc_url_raw( $img_url ) );
+					}
+					if ( ! empty( $summary ) ) {
+						$item->add_meta_data( $label, $summary, true );
+					}
+					continue;
+				}
 				if ( ! empty( $val ) ) {
 					$item->add_meta_data( $label, $val, true );
 				}

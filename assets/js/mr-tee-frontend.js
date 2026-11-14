@@ -7,12 +7,12 @@
  * @package MrTeeEditor\Assets
  */
 
-import { StateStore } from './modules/state-store.js?v=2.3.11';
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.3.11';
-import { SvgRenderer } from './modules/svg-renderer.js?v=2.3.11';
-import { GalleryStage } from './modules/gallery-stage.js?v=2.3.11';
-import { FormController } from './modules/form-controller.js?v=2.3.11';
-import { PrintExporter } from './modules/print-exporter.js?v=2.3.11';
+import { StateStore } from './modules/state-store.js?v=2.3.12';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.3.12';
+import { SvgRenderer } from './modules/svg-renderer.js?v=2.3.12';
+import { GalleryStage } from './modules/gallery-stage.js?v=2.3.12';
+import { FormController } from './modules/form-controller.js?v=2.3.12';
+import { PrintExporter } from './modules/print-exporter.js?v=2.3.12';
 
 window.mrTeePrintExporter = PrintExporter;
 window.mrTeeSvgRenderer = SvgRenderer;
@@ -93,6 +93,7 @@ class MrTeeFrontendApp {
 		const textLines = this.config.text_lines || [];
 
 		for (const line of textLines) {
+			if (line.field_type === 'image') continue;
 			const activeFontId = line.font || (Array.isArray(line.allowed_fonts) && line.allowed_fonts[0]);
 			let defaultText = line.default_text || '';
 			if (!activeFontId || !defaultText) continue;
@@ -147,6 +148,7 @@ class MrTeeFrontendApp {
 
 		const textLines = this.config.text_lines || [];
 		for (const line of textLines) {
+			if (line.field_type === 'image') continue;
 			const activeFontId = line.font || (Array.isArray(line.allowed_fonts) && line.allowed_fonts[0]);
 			if (!activeFontId) continue;
 			const fDef = fonts[activeFontId];
@@ -232,6 +234,7 @@ class MrTeeFrontendApp {
 		const toPrefetch = new Set();
 
 		for (const line of textLines) {
+			if (line.field_type === 'image') continue;
 			const allowed = Array.isArray(line.allowed_fonts) ? line.allowed_fonts : Object.keys(fonts);
 			for (const fId of allowed) {
 				const fDef = fonts[fId];

@@ -50,8 +50,11 @@ export class SceneGraphEngine {
 						node.colorReference = ref.colorRefId;
 					}
 				} else if (ref.type === 'IMAGE') {
-					node.url = ref.url || node.url;
+					node.url = (ref.url !== undefined) ? ref.url : node.url;
 					node.iconKey = ref.iconKey || node.iconKey;
+					if (ref.imageFit) {
+						node.imageFit = ref.imageFit;
+					}
 				}
 			}
 
@@ -315,10 +318,11 @@ export class SceneGraphEngine {
 				yMax = Math.max(yMax, bottom);
 				hasVisible = true;
 			} else if (node.type === 'IMAGE') {
-				const x = parseFloat(node.x) || 30;
-				const y = parseFloat(node.y) || 50;
-				const w = parseFloat(node.width) || 21;
-				const h = parseFloat(node.height) || 19;
+				const hasBox = (node.box_width !== undefined && node.box_height !== undefined);
+				const x = (node.box_left !== undefined) ? parseFloat(node.box_left) : (parseFloat(node.x) || 30);
+				const y = (node.box_top !== undefined) ? parseFloat(node.box_top) : (parseFloat(node.y) || 50);
+				const w = hasBox ? parseFloat(node.box_width) : (parseFloat(node.width) || 21);
+				const h = hasBox ? parseFloat(node.box_height) : (parseFloat(node.height) || 19);
 
 				xMin = Math.min(xMin, x);
 				xMax = Math.max(xMax, x + w);

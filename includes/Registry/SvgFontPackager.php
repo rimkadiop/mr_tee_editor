@@ -33,11 +33,11 @@ class SvgFontPackager {
 	/** Package format version. Bump to force a rebuild of every package. */
 	const FORMAT = 'mrtee-svgfont-v2.3';
 
-	/** Longest side (px) of the on-screen preview tier (1024px preserves 100% of native artist resolution for all OpenType-SVG fonts). */
-	const PREVIEW_MAX = 1024;
+	/** Longest side (px) of the on-screen preview tier (384px provides 2x-4x Retina supersampling on screen at ~40 KB/glyph while f/ keeps 100% original resolution for 300 DPI export). */
+	const PREVIEW_MAX = 384;
 
-	/** WebP quality of the preview tier (95 = visually lossless fidelity, flawless gradients, transparent alpha preserved). */
-	const PREVIEW_QUALITY = 95;
+	/** WebP quality of the preview tier (86 = visually indistinguishable on screen with 3x smaller payload for instant alphabet pre-warming). */
+	const PREVIEW_QUALITY = 86;
 
 	/** Longest side (px) of the font picker thumbnail. */
 	const THUMB_MAX = 72;

@@ -44,6 +44,21 @@ export class FormController {
 			const charCounter = group.querySelector('.mr-tee-char-count');
 			const previewText = document.getElementById(`mr-tee-preview-text-${lineIdx}`);
 
+			input.addEventListener('focus', () => {
+				const activeFontId = lineConfig.font || (Array.isArray(lineConfig.allowed_fonts) && lineConfig.allowed_fonts[0]);
+				if (activeFontId) {
+					const sData = SvgRenderer.getSvgFontData(activeFontId);
+					if (sData) {
+						SvgRenderer.prewarmFontGlyphs(sData);
+					} else {
+						const fonts = (window.mrTeeProductData && window.mrTeeProductData.fonts) || {};
+						if (fonts[activeFontId] && (fonts[activeFontId].font_type === 'opentype_svg' || fonts[activeFontId].color_svg)) {
+							SvgRenderer.ensureSvgFontLoaded(activeFontId, fonts[activeFontId]).catch(() => {});
+						}
+					}
+				}
+			});
+
 			input.addEventListener('input', () => {
 				const val = input.value;
 				if (charCounter) {

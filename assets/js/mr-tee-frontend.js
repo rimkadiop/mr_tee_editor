@@ -75,11 +75,37 @@ class MrTeeFrontendApp {
 		// Initial Render
 		this.renderSceneGraph();
 
-		// 5. Idle-prefetch allowed OpenType-SVG font manifests so switching fonts is instant on mobile
+		// 5. Immediately pre-warm the active line font glyphs so typing any letter is 0ms instant
+		this.prewarmActiveLineFonts();
+
+		// 6. Idle-prefetch remaining allowed OpenType-SVG font manifests so switching fonts is instant on mobile
 		if (typeof window.requestIdleCallback === 'function') {
 			window.requestIdleCallback(() => this.prefetchAllowedSvgFonts());
 		} else {
-			setTimeout(() => this.prefetchAllowedSvgFonts(), 1200);
+			setTimeout(() => this.prefetchAllowedSvgFonts(), 800);
+		}
+	}
+
+	/**
+	 * Immediately pre-warm all glyph bitmaps (A-Z, 0-9) for the currently active font on each line.
+	 */
+	prewarmActiveLineFonts() {
+		const fonts = (this.data && this.data.fonts) || {};
+		const preloaded = (this.data && this.data.svgFonts) || {};
+		for (const [, sData] of Object.entries(preloaded)) {
+			if (sData) {
+				SvgRenderer.prewarmFontGlyphs(sData);
+			}
+		}
+
+		const textLines = this.config.text_lines || [];
+		for (const line of textLines) {
+			const activeFontId = line.font || (Array.isArray(line.allowed_fonts) && line.allowed_fonts[0]);
+			if (!activeFontId) continue;
+			const fDef = fonts[activeFontId];
+			if (fDef && (fDef.font_type === 'opentype_svg' || fDef.color_svg)) {
+				SvgRenderer.ensureSvgFontLoaded(activeFontId, fDef).catch(() => {});
+			}
 		}
 	}
 
@@ -104,27 +130,36 @@ class MrTeeFrontendApp {
 			? { scale: 1.0, translateX: 0.0, translateY: 0.0 }
 			: SceneGraphEngine.getAreaTransformValuesZoom(bbox, state.area && state.area.transform);
 
-		const isLocked = Boolean(this.config.lock_aspect_ratio) || this.config.product_type === 'flat_object';
-		const realW = parseFloat(this.config.print_real_width) || 0;
-		const realH = parseFloat(this.config.print_real_height) || 0;
-		let ratio = 0;
+		let ratio = this._cachedAspectRatio || 0;
+		if (!ratio || ratio <= 0) {
+			const isLocked = Boolean(this.config.lock_aspect_ratio) || this.config.product_type === 'flat_object';
+			const realW = parseFloat(this.config.print_real_width) || 0;
+			const realH = parseFloat(this.config.print_real_height) || 0;
 
-		if (isLocked && realW > 0 && realH > 0) {
-			ratio = realW / realH;
-		} else if (isLocked && parseFloat(this.config.print_aspect_ratio) > 0) {
-			ratio = parseFloat(this.config.print_aspect_ratio);
-		} else {
-			const img = document.querySelector('.woocommerce-product-gallery__image img:not(.emoji):not(.zoomImg)');
-			if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
-				ratio = img.naturalWidth / img.naturalHeight;
-			} else if (img && img.offsetWidth > 0 && img.offsetHeight > 0) {
-				ratio = img.offsetWidth / img.offsetHeight;
-			} else if (realW > 0 && realH > 0) {
+			if (isLocked && realW > 0 && realH > 0) {
 				ratio = realW / realH;
+				this._cachedAspectRatio = ratio;
+			} else if (isLocked && parseFloat(this.config.print_aspect_ratio) > 0) {
+				ratio = parseFloat(this.config.print_aspect_ratio);
+				this._cachedAspectRatio = ratio;
 			} else {
-				ratio = 1.0;
+				const img = document.querySelector('.woocommerce-product-gallery__image img:not(.emoji):not(.zoomImg)');
+				if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
+					ratio = img.naturalWidth / img.naturalHeight;
+					this._cachedAspectRatio = ratio;
+				} else if (img && img.offsetWidth > 0 && img.offsetHeight > 0) {
+					ratio = img.offsetWidth / img.offsetHeight;
+					this._cachedAspectRatio = ratio;
+				} else if (realW > 0 && realH > 0) {
+					ratio = realW / realH;
+				} else {
+					ratio = 1.0;
+				}
 			}
 		}
+
+		const realW = parseFloat(this.config.print_real_width) || 0;
+		const realH = parseFloat(this.config.print_real_height) || 0;
 
 		this.currentLayers = mergedLayers;
 		this.currentZoom = zoom;

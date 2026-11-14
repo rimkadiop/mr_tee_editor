@@ -354,7 +354,13 @@ export class GalleryStage {
 			const rect = gallery.getBoundingClientRect();
 			// If bottom of gallery is near top of viewport (user scrolled to form), show sticky preview
 			if (rect.bottom < 220) {
-				this.stickyBar.style.display = 'block';
+				if (this.stickyBar.style.display !== 'block') {
+					this.stickyBar.style.display = 'block';
+					const miniOverlay = document.querySelector('.mr-tee-mobile-overlay-mini');
+					if (miniOverlay && this.currentSvgMarkup && miniOverlay.innerHTML !== this.currentSvgMarkup) {
+						miniOverlay.innerHTML = this.currentSvgMarkup;
+					}
+				}
 			} else {
 				this.stickyBar.style.display = 'none';
 			}
@@ -411,7 +417,7 @@ export class GalleryStage {
 	}
 
 	/**
-	 * Update the live SVG preview content immediately with zero lag.
+	 * Update the live SVG preview content immediately with zero lag using keyed in-place DOM reconciliation.
 	 *
 	 * @param {string} svgMarkup Raw SVG markup string.
 	 */
@@ -423,19 +429,200 @@ export class GalleryStage {
 		}
 
 		if (this.svgHolder) {
-			this.svgHolder.innerHTML = this.currentSvgMarkup;
+			const existingSvg = this.svgHolder.querySelector('svg#mr-tee-svg-element');
+			if (!existingSvg || !this.currentSvgMarkup) {
+				this.svgHolder.innerHTML = this.currentSvgMarkup;
+				const mountedDefs = this.svgHolder.querySelector('#mr-tee-svg-defs');
+				this._lastDefsHtml = mountedDefs ? mountedDefs.innerHTML : '';
+			} else {
+				this.patchSvgInPlace(existingSvg, this.currentSvgMarkup);
+			}
 		}
 
-		// Synchronize mobile sticky preview
-		const miniOverlay = document.querySelector('.mr-tee-mobile-overlay-mini');
-		if (miniOverlay) {
-			miniOverlay.innerHTML = this.currentSvgMarkup;
+		// Synchronize mobile sticky preview ONLY when visible so hidden DOM never triggers double image decode
+		if (this.stickyBar && this.stickyBar.style.display === 'block') {
+			const miniOverlay = document.querySelector('.mr-tee-mobile-overlay-mini');
+			if (miniOverlay) {
+				const existingMiniSvg = miniOverlay.querySelector('svg#mr-tee-svg-element');
+				if (!existingMiniSvg || !this.currentSvgMarkup) {
+					miniOverlay.innerHTML = this.currentSvgMarkup;
+				} else {
+					this.patchSvgInPlace(existingMiniSvg, this.currentSvgMarkup);
+				}
+			}
 		}
 
 		// Synchronize PhotoSwipe overlay if currently open
 		const pswpHolder = document.querySelector('.pswp--open .mr-tee-live-stage-overlay-pswp .mr-tee-live-svg-container');
 		if (pswpHolder) {
-			pswpHolder.innerHTML = this.currentSvgMarkup;
+			const existingPswpSvg = pswpHolder.querySelector('svg#mr-tee-svg-element');
+			if (!existingPswpSvg || !this.currentSvgMarkup) {
+				pswpHolder.innerHTML = this.currentSvgMarkup;
+			} else {
+				this.patchSvgInPlace(existingPswpSvg, this.currentSvgMarkup);
+			}
+		}
+	}
+
+	/**
+	 * Patch an existing mounted <svg> element in-place so <defs> and already-rendered
+	 * OpenType-SVG glyph <image> nodes are never destroyed or re-decoded during typing.
+	 *
+	 * @param {SVGElement} existingSvg Currently mounted <svg> element.
+	 * @param {string} svgMarkup New SVG markup string.
+	 */
+	patchSvgInPlace(existingSvg, svgMarkup) {
+		try {
+			this._domParser = this._domParser || new DOMParser();
+			const doc = this._domParser.parseFromString(svgMarkup, 'image/svg+xml');
+			const newSvg = doc.querySelector('svg#mr-tee-svg-element') || doc.documentElement;
+			if (!newSvg || newSvg.nodeName.toLowerCase() !== 'svg') {
+				existingSvg.parentNode.innerHTML = svgMarkup;
+				return;
+			}
+
+			// 1. Sync root viewBox if changed
+			const newViewBox = newSvg.getAttribute('viewBox');
+			if (newViewBox && existingSvg.getAttribute('viewBox') !== newViewBox) {
+				existingSvg.setAttribute('viewBox', newViewBox);
+			}
+
+			// 2. Sync <defs> only when font definitions actually change
+			const existingDefs = existingSvg.querySelector('#mr-tee-svg-defs') || existingSvg.querySelector('defs');
+			const newDefs = newSvg.querySelector('#mr-tee-svg-defs') || newSvg.querySelector('defs');
+			if (existingDefs && newDefs) {
+				const newDefsHtml = newDefs.innerHTML;
+				if (this._lastDefsHtml !== newDefsHtml && existingDefs.innerHTML !== newDefsHtml) {
+					existingDefs.innerHTML = newDefsHtml;
+					this._lastDefsHtml = newDefsHtml;
+				}
+			}
+
+			// 3. Reconcile #mr-tee-scene-root in-place
+			const existingRoot = existingSvg.querySelector('#mr-tee-scene-root');
+			const newRoot = newSvg.querySelector('#mr-tee-scene-root');
+			if (!existingRoot || !newRoot) {
+				existingSvg.parentNode.innerHTML = svgMarkup;
+				return;
+			}
+
+			const newRootTransform = newRoot.getAttribute('transform');
+			if (newRootTransform) {
+				if (existingRoot.getAttribute('transform') !== newRootTransform) {
+					existingRoot.setAttribute('transform', newRootTransform);
+				}
+			} else if (existingRoot.hasAttribute('transform')) {
+				existingRoot.removeAttribute('transform');
+			}
+
+			const exChildren = existingRoot.children;
+			const nwChildren = newRoot.children;
+
+			if (exChildren.length === nwChildren.length) {
+				for (let i = 0; i < nwChildren.length; i++) {
+					const exChild = exChildren[i];
+					const nwChild = nwChildren[i];
+					if (
+						exChild.classList.contains('mrtee-opentype-svg-text') &&
+						nwChild.classList.contains('mrtee-opentype-svg-text')
+					) {
+						this.reconcileOpenTypeTextGroup(exChild, nwChild);
+					} else if (exChild.outerHTML !== nwChild.outerHTML) {
+						existingRoot.replaceChild(document.importNode(nwChild, true), exChild);
+					}
+				}
+			} else {
+				// Preserve existing OpenType-SVG text groups by data-node-id across line additions/removals
+				const existingOtMap = new Map();
+				for (let i = 0; i < exChildren.length; i++) {
+					const c = exChildren[i];
+					if (c.classList.contains('mrtee-opentype-svg-text')) {
+						const nid = c.getAttribute('data-node-id') || `__idx_${i}`;
+						existingOtMap.set(nid, c);
+					}
+				}
+
+				const nextNodes = [];
+				for (let i = 0; i < nwChildren.length; i++) {
+					const nwChild = nwChildren[i];
+					if (nwChild.classList.contains('mrtee-opentype-svg-text')) {
+						const nid = nwChild.getAttribute('data-node-id') || `__idx_${i}`;
+						const matchedEx = existingOtMap.get(nid);
+						if (matchedEx) {
+							existingOtMap.delete(nid);
+							this.reconcileOpenTypeTextGroup(matchedEx, nwChild);
+							nextNodes.push(matchedEx);
+							continue;
+						}
+					}
+					nextNodes.push(document.importNode(nwChild, true));
+				}
+
+				existingRoot.replaceChildren(...nextNodes);
+			}
+		} catch (err) {
+			if (existingSvg && existingSvg.parentNode) {
+				existingSvg.parentNode.innerHTML = svgMarkup;
+			}
+		}
+	}
+
+	/**
+	 * Reconcile an OpenType-SVG text group (.mrtee-opentype-svg-text) in-place by
+	 * preserving existing <g class="mrtee-ot-glyph"> nodes and only updating their transform.
+	 *
+	 * @param {Element} existingGroup Mounted .mrtee-opentype-svg-text element.
+	 * @param {Element} newGroup Newly rendered .mrtee-opentype-svg-text element.
+	 */
+	reconcileOpenTypeTextGroup(existingGroup, newGroup) {
+		const newTransform = newGroup.getAttribute('transform');
+		if (newTransform) {
+			if (existingGroup.getAttribute('transform') !== newTransform) {
+				existingGroup.setAttribute('transform', newTransform);
+			}
+		} else if (existingGroup.hasAttribute('transform')) {
+			existingGroup.removeAttribute('transform');
+		}
+
+		const newNodeId = newGroup.getAttribute('data-node-id');
+		if (newNodeId && existingGroup.getAttribute('data-node-id') !== newNodeId) {
+			existingGroup.setAttribute('data-node-id', newNodeId);
+		}
+
+		const newGlyphs = newGroup.children;
+		const targetLen = newGlyphs.length;
+
+		for (let i = 0; i < targetLen; i++) {
+			const nwGlyph = newGlyphs[i];
+			const nwKey = nwGlyph.getAttribute('data-glyph-key');
+			const nwTransform = nwGlyph.getAttribute('transform') || '';
+			const exGlyph = existingGroup.children[i];
+
+			if (exGlyph && nwKey && exGlyph.getAttribute('data-glyph-key') === nwKey) {
+				// Same glyph at same index: keep <image> untouched, only update transform!
+				if (exGlyph.getAttribute('transform') !== nwTransform) {
+					exGlyph.setAttribute('transform', nwTransform);
+				}
+			} else if (exGlyph) {
+				// Different glyph at this position: check if the next sibling matches (e.g. single-char deletion)
+				const nextEx = existingGroup.children[i + 1];
+				if (nextEx && nwKey && nextEx.getAttribute('data-glyph-key') === nwKey) {
+					existingGroup.removeChild(exGlyph);
+					if (nextEx.getAttribute('transform') !== nwTransform) {
+						nextEx.setAttribute('transform', nwTransform);
+					}
+				} else {
+					existingGroup.replaceChild(document.importNode(nwGlyph, true), exGlyph);
+				}
+			} else {
+				// Appended glyph at end of text
+				existingGroup.appendChild(document.importNode(nwGlyph, true));
+			}
+		}
+
+		// Remove any extra trailing glyphs (e.g. backspace at end of text)
+		while (existingGroup.children.length > targetLen) {
+			existingGroup.removeChild(existingGroup.lastChild);
 		}
 	}
 }

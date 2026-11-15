@@ -11,8 +11,8 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.3.18';
-import { PrintExporter } from './print-exporter.js?v=2.3.18';
+import { SvgRenderer } from './svg-renderer.js?v=2.3.19.1';
+import { PrintExporter } from './print-exporter.js?v=2.3.19.1';
 
 export class FormController {
 	constructor(store, config, onExportRequested) {
@@ -31,9 +31,19 @@ export class FormController {
 		this.container = document.getElementById('mr-tee-editor-container');
 		this.countModal = document.getElementById('mr-tee-count-modal');
 		this.warningModal = document.getElementById('mr-tee-warning-modal');
+
+		// Portal modals directly to document.body so ancestor overflow:hidden / transforms / stacking contexts never clip dialogs
+		[this.countModal, this.warningModal].forEach((modal) => {
+			if (modal && document.body && modal.parentElement !== document.body) {
+				document.body.appendChild(modal);
+			}
+		});
+
 		this.activeCountDisplay = document.getElementById('mr-tee-active-count-display');
 		this.stepVal = document.getElementById('mr-tee-step-val');
-		this.addToCartBtn = document.querySelector('form.cart button[type="submit"]') || document.querySelector('.single_add_to_cart_button');
+		const parentCartForm = this.container ? this.container.closest('form.cart') : null;
+		this.addToCartBtn = (parentCartForm && parentCartForm.querySelector('button[type="submit"], input[type="submit"], .single_add_to_cart_button'))
+			|| document.querySelector('form.cart button[type="submit"], form.cart input[type="submit"], .single_add_to_cart_button');
 	}
 
 	bindEvents() {
@@ -199,6 +209,12 @@ export class FormController {
 					this.updateModalCountDisplay(tempCount);
 				});
 			});
+
+			this.countModal.addEventListener('click', (e) => {
+				if (e.target === this.countModal) {
+					this.countModal.style.display = 'none';
+				}
+			});
 		}
 
 		// 4. Individual Mushroom Accordions
@@ -336,6 +352,26 @@ export class FormController {
 			btnProceed.addEventListener('click', () => {
 				this.warningModal.style.display = 'none';
 				this.runExportAndSubmit();
+			});
+		}
+
+		if (this.warningModal) {
+			this.warningModal.addEventListener('click', (e) => {
+				if (e.target === this.warningModal) {
+					this.warningModal.style.display = 'none';
+				}
+			});
+		}
+
+		if (this.countModal || this.warningModal) {
+			document.addEventListener('keydown', (e) => {
+				if (e.key !== 'Escape') return;
+				if (this.countModal && this.countModal.style.display !== 'none') {
+					this.countModal.style.display = 'none';
+				}
+				if (this.warningModal && this.warningModal.style.display !== 'none') {
+					this.warningModal.style.display = 'none';
+				}
 			});
 		}
 	}

@@ -20,7 +20,7 @@ export class SvgRenderer {
 	 *
 	 * @param {Array} layers Merged scene-graph layers.
 	 * @param {Object} zoomTransform { scale, translateX, translateY }
-	 * @param {Object} options Rendering options (e.g. isExport, fontFaceCss).
+	 * @param {Object} options Rendering options (e.g. isExport, fontFaceCss, idPrefix).
 	 * @return {string} Valid SVG XML markup string.
 	 */
 	static renderToString(layers, zoomTransform = { scale: 1, translateX: 0, translateY: 0 }, options = {}) {
@@ -28,6 +28,7 @@ export class SvgRenderer {
 		const scale = z.scale !== undefined ? z.scale : 1;
 		const tx = z.translateX !== undefined ? z.translateX : 0;
 		const ty = z.translateY !== undefined ? z.translateY : 0;
+		const idPrefix = options.idPrefix ? String(options.idPrefix).replace(/[^a-zA-Z0-9_-]/g, '') : '';
 
 		const fontFaceCss = options.fontFaceCss
 			|| (typeof window !== 'undefined' && window.mrTeeOrderExportData && window.mrTeeOrderExportData.fontFaceCss)
@@ -40,10 +41,10 @@ export class SvgRenderer {
 
 		// 3D Drop shadow filter
 		defs += `
-			<filter id="mrtee-3d-shadow" x="-20%" y="-20%" width="140%" height="140%">
+			<filter id="${idPrefix}mrtee-3d-shadow" x="-20%" y="-20%" width="140%" height="140%">
 				<feDropShadow dx="0" dy="0.9" stdDeviation="0.4" flood-color="#000000" flood-opacity="0.32" />
 			</filter>
-			<filter id="mrtee-embroidery-relief" x="-10%" y="-10%" width="120%" height="120%">
+			<filter id="${idPrefix}mrtee-embroidery-relief" x="-10%" y="-10%" width="120%" height="120%">
 				<feDropShadow dx="0" dy="0.6" stdDeviation="0.3" flood-color="#000000" flood-opacity="0.35" />
 			</filter>
 		`;
@@ -56,8 +57,11 @@ export class SvgRenderer {
 					const fKey = n.fontId || n.fontFamily;
 					if (fKey) {
 						const sData = this.getSvgFontData(fKey, options);
-						if (sData && sData.defs && !defs.includes(sData.defs)) {
-							defs += `\n<!-- Font Defs for ${sData.id} -->\n${sData.defs}\n`;
+						if (sData && sData.defs) {
+							const fontDefs = idPrefix ? this.scopeMarkupIds(sData.defs, idPrefix) : sData.defs;
+							if (!defs.includes(fontDefs)) {
+								defs += `\n<!-- Font Defs for ${sData.id} -->\n${fontDefs}\n`;
+							}
 						}
 					}
 					if (Array.isArray(n.items)) appendFontDefs(n.items);
@@ -76,7 +80,7 @@ export class SvgRenderer {
 		const viewBoxAttr = `viewBox="0 0 ${vbWidth} ${vbHeight}"`;
 
 		const extraDefs = [];
-		const layersMarkup = this.renderLayersMarkup(layers, { ...options, ratio, hasPerLineBoxes, vbHeight, _extraDefs: extraDefs });
+		const layersMarkup = this.renderLayersMarkup(layers, { ...options, idPrefix, ratio, hasPerLineBoxes, vbHeight, _extraDefs: extraDefs });
 		if (extraDefs.length > 0) {
 			defs += '\n' + extraDefs.join('\n');
 		}
@@ -85,12 +89,12 @@ export class SvgRenderer {
 		const realDimAttrs = (options.realWidth && options.realHeight) ? `data-real-width="${options.realWidth}" data-real-height="${options.realHeight}" data-unit="${options.unit || 'cm'}" data-dpi="${options.dpi || 300}"` : '';
 
 		const innerContent = hasPerLineBoxes
-			? `<g id="mr-tee-scene-root">${layersMarkup}</g>`
-			: `<g id="mr-tee-scene-root" transform="translate(${tx.toFixed(3)}, ${ty.toFixed(3)}) translate(50, 50) scale(${scale.toFixed(4)}) translate(-50, -50)">${layersMarkup}</g>`;
+			? `<g id="${idPrefix}mr-tee-scene-root" class="mr-tee-scene-root">${layersMarkup}</g>`
+			: `<g id="${idPrefix}mr-tee-scene-root" class="mr-tee-scene-root" transform="translate(${tx.toFixed(3)}, ${ty.toFixed(3)}) translate(50, 50) scale(${scale.toFixed(4)}) translate(-50, -50)">${layersMarkup}</g>`;
 
 		return `
 <svg
-	id="mr-tee-svg-element"
+	id="${idPrefix}mr-tee-svg-element"
 	class="mr-tee-live-svg"
 	xmlns="http://www.w3.org/2000/svg"
 	xmlns:xlink="http://www.w3.org/1999/xlink"
@@ -101,7 +105,7 @@ export class SvgRenderer {
 	preserveAspectRatio="xMidYMid meet"
 	style="overflow:visible;"
 >
-	<defs id="mr-tee-svg-defs">
+	<defs id="${idPrefix}mr-tee-svg-defs" class="mr-tee-svg-defs">
 		${defs}
 	</defs>
 	<!-- Scene-Graph Render Container -->
@@ -117,22 +121,27 @@ export class SvgRenderer {
 	 * @return {string}
 	 */
 	static renderLayersMarkup(layers, options = {}) {
+		const idPrefix = options.idPrefix ? String(options.idPrefix).replace(/[^a-zA-Z0-9_-]/g, '') : '';
+		const layerOptions = (options.idPrefix && options.idPrefix !== idPrefix)
+			? { ...options, idPrefix }
+			: options;
+
 		let html = '';
 		for (const node of layers) {
 			if (!node || node.hide) continue;
 
 			if (node.type === 'GROUP') {
 				const groupClass = node.name ? `class="mrtee-group mrtee-group-${node.name.toLowerCase().replace(/\s+/g, '-')}"` : '';
-				const childrenHtml = this.renderLayersMarkup(node.items || [], options);
+				const childrenHtml = this.renderLayersMarkup(node.items || [], layerOptions);
 				html += `<g ${groupClass}>${childrenHtml}</g>\n`;
 			} else if (node.type === 'TEXT') {
-				html += this.renderTextNode(node, options) + '\n';
+				html += this.renderTextNode(node, layerOptions) + '\n';
 			} else if (node.type === 'IMAGE') {
-				html += this.renderImageNode(node, options) + '\n';
+				html += this.renderImageNode(node, layerOptions) + '\n';
 			} else if (node.type === 'PATH') {
-				html += this.renderPathNode(node, options) + '\n';
+				html += this.renderPathNode(node, layerOptions) + '\n';
 			} else if (node.type === 'MASK') {
-				html += this.renderMaskNode(node, options) + '\n';
+				html += this.renderMaskNode(node, layerOptions) + '\n';
 			}
 		}
 		return html;
@@ -189,6 +198,7 @@ export class SvgRenderer {
 		const val = String(node.value || node.text || '');
 		if (!val.trim()) return '';
 
+		const idPrefix = options.idPrefix ? String(options.idPrefix).replace(/[^a-zA-Z0-9_-]/g, '') : '';
 		const ratio = (options.ratio && options.ratio > 0) ? options.ratio : 1.0;
 		const hasPerLine = Boolean(options.hasPerLineBoxes);
 
@@ -318,7 +328,7 @@ export class SvgRenderer {
 
 		// Filter choice: embroidery relief vs 3d shadow (suppressed inside <mask> for sharp cutout edges)
 		const isEmbroidery = node.fontStyle === 'embroidery' || (colorSet.id && colorSet.id.includes('embroidery')) || strokeColor === 'transparent';
-		const filterAttr = node._inMask ? '' : (isEmbroidery ? 'filter="url(#mrtee-embroidery-relief)"' : 'filter="url(#mrtee-3d-shadow)"');
+		const filterAttr = node._inMask ? '' : (isEmbroidery ? `filter="url(#${idPrefix}mrtee-embroidery-relief)"` : `filter="url(#${idPrefix}mrtee-3d-shadow)"`);
 
 		let tspans = '';
 		let charIndex = 0;
@@ -404,6 +414,7 @@ export class SvgRenderer {
 			}
 		}
 
+		const idPrefix = options.idPrefix ? String(options.idPrefix).replace(/[^a-zA-Z0-9_-]/g, '') : '';
 		const ratio = (options.ratio && options.ratio > 0) ? options.ratio : 1.0;
 		const hasPerLine = Boolean(options.hasPerLineBoxes);
 		const isFieldImage = Boolean(node.isFieldImage || (node.box_width !== undefined && node.box_height !== undefined));
@@ -434,7 +445,7 @@ export class SvgRenderer {
 
 			const rawId = String(node.id || node.reference || node.name || `img_${Math.round(x * 100)}_${Math.round(y * 100)}`);
 			const safeId = rawId.replace(/[^a-zA-Z0-9_-]/g, '_');
-			const clipId = `mrtee-img-clip-${safeId}`;
+			const clipId = `${idPrefix}mrtee-img-clip-${safeId}`;
 			const clipMarkup = `<clipPath id="${clipId}" clipPathUnits="userSpaceOnUse"><rect x="${x.toFixed(4)}" y="${y.toFixed(4)}" width="${w.toFixed(4)}" height="${h.toFixed(4)}" /></clipPath>`;
 
 			let inlineDefs = '';
@@ -487,7 +498,7 @@ export class SvgRenderer {
 			width="${w}"
 			height="${h}"
 			preserveAspectRatio="xMidYMid meet"
-			filter="url(#mrtee-3d-shadow)"
+			filter="url(#${idPrefix}mrtee-3d-shadow)"
 		/>`;
 	}
 
@@ -502,6 +513,7 @@ export class SvgRenderer {
 		const d = node.path || node.d || '';
 		if (!d) return '';
 
+		const idPrefix = options.idPrefix ? String(options.idPrefix).replace(/[^a-zA-Z0-9_-]/g, '') : '';
 		const fill = node.fill?.color?.hex || node.fill || '#000000';
 		const stroke = node.stroke?.color || node.stroke || 'transparent';
 		const strokeWidth = node.strokeWidth || 0;
@@ -514,7 +526,7 @@ export class SvgRenderer {
 			stroke="${stroke}"
 			stroke-width="${strokeWidth}"
 			${transform}
-			filter="url(#mrtee-3d-shadow)"
+			filter="url(#${idPrefix}mrtee-3d-shadow)"
 		/>`;
 	}
 
@@ -526,9 +538,10 @@ export class SvgRenderer {
 	 * @return {string}
 	 */
 	static renderMaskNode(node, options = {}) {
-		const maskId = `mrtee-mask-${Math.random().toString(36).substr(2, 9)}`;
+		const idPrefix = options.idPrefix ? String(options.idPrefix).replace(/[^a-zA-Z0-9_-]/g, '') : '';
+		const maskId = `${idPrefix}mrtee-mask-${Math.random().toString(36).substr(2, 9)}`;
 		const childItems = node.items || [];
-		const textureUrl = node.textureUrl || (node.image && node.image.url) || 'https://cdn.monsieurtshirt.com/textures/leopard.png';
+		const textureUrl = node.textureUrl || (node.image && node.image.url) || this.getLocalAssetUrl('assets/images/leopard-pattern.png');
 
 		const ratio = (options.ratio && options.ratio > 0) ? options.ratio : 1.0;
 		const hasPerLine = Boolean(options.hasPerLineBoxes);
@@ -598,7 +611,7 @@ export class SvgRenderer {
 		<mask id="${maskId}" maskUnits="userSpaceOnUse">
 			${maskContent}
 		</mask>
-		<g mask="url(#${maskId})" filter="url(#mrtee-3d-shadow)">
+		<g mask="url(#${maskId})" filter="url(#${idPrefix}mrtee-3d-shadow)">
 			<image
 				href="${this.escapeXml(textureHref)}"
 				x="${x.toFixed(4)}"
@@ -608,6 +621,81 @@ export class SvgRenderer {
 				preserveAspectRatio="xMidYMid slice"${transformAttr}
 			/>
 		</g>`;
+	}
+
+	/**
+	 * Safely scope DOM IDs and internal fragment references (`id="X"`, `url(#X)`, `href="#X"`, `xlink:href="#X"`)
+	 * inside an SVG markup string without touching data URLs, external URLs, or `data-*-id` attributes.
+	 *
+	 * @param {string} markup SVG markup string.
+	 * @param {string} prefix Prefix to prepend to element IDs and local fragment references.
+	 * @return {string}
+	 */
+	static scopeMarkupIds(markup, prefix) {
+		if (!markup || !prefix) return markup;
+		const cleanPrefix = String(prefix).replace(/[^a-zA-Z0-9_-]/g, '');
+		if (!cleanPrefix) return markup;
+
+		const str = String(markup);
+		const preservedDataUrls = [];
+		const work = str.includes('data:')
+			? str.replace(/((?:xlink:href|href|src)\s*=\s*(?:"data:[^"]*"|'data:[^']*')|url\(\s*(?:"data:[^"]*"|'data:[^']*'|data:[^)\s]*)\s*\))/gi, (m) => {
+				const token = `___MRTEE_PRESERVED_DATA_${preservedDataUrls.length}___`;
+				preservedDataUrls.push(m);
+				return token;
+			})
+			: str;
+
+		const prefixId = (id) => (id && !id.startsWith(cleanPrefix) ? `${cleanPrefix}${id}` : id);
+
+		let scoped = work
+			.replace(/(^|[\s"'<])id=(["'])([^"']+)\2/g, (m, lead, quote, id) => {
+				return `${lead}id=${quote}${prefixId(id)}${quote}`;
+			})
+			.replace(/url\(\s*(['"]?)#([^)'"\s]+)\1\s*\)/g, (m, quote, id) => {
+				return `url(${quote}#${prefixId(id)}${quote})`;
+			})
+			.replace(/(^|[\s"'<])(xlink:href|href)=(["'])#([^"']+)\3/g, (m, lead, attr, quote, id) => {
+				return `${lead}${attr}=${quote}#${prefixId(id)}${quote}`;
+			});
+
+		if (preservedDataUrls.length > 0) {
+			scoped = scoped.replace(/___MRTEE_PRESERVED_DATA_(\d+)___/g, (_, idx) => preservedDataUrls[Number(idx)]);
+		}
+		return scoped;
+	}
+
+	/**
+	 * Resolve a plugin-relative local asset path using localized `pluginUrl`,
+	 * normalizing same-origin URLs to relative paths matching `hydrateManifest()`.
+	 *
+	 * @param {string} relativePath Asset path relative to plugin root.
+	 * @return {string}
+	 */
+	static getLocalAssetUrl(relativePath = '') {
+		const cleanRel = String(relativePath || '').replace(/^\/+/, '');
+		const rawPluginUrl = (typeof window !== 'undefined' && window.mrTeeProductData && window.mrTeeProductData.pluginUrl)
+			|| (typeof window !== 'undefined' && window.mrTeeAdminData && window.mrTeeAdminData.pluginUrl)
+			|| (typeof window !== 'undefined' && window.mrTeeOrderExportData && window.mrTeeOrderExportData.pluginUrl)
+			|| '/wp-content/plugins/mr_tee_editor/';
+
+		let baseUrl = rawPluginUrl;
+		try {
+			const hasWin = typeof window !== 'undefined' && window.location;
+			const origin = (hasWin && window.location.origin && window.location.origin !== 'null')
+				? window.location.origin
+				: 'http://localhost';
+			const parsed = new URL(rawPluginUrl, origin);
+			if (!hasWin || parsed.hostname === window.location.hostname) {
+				baseUrl = parsed.pathname;
+			} else {
+				baseUrl = parsed.href;
+			}
+		} catch (e) {
+			baseUrl = rawPluginUrl;
+		}
+		if (!baseUrl.endsWith('/')) baseUrl += '/';
+		return `${baseUrl}${cleanRel}`;
 	}
 
 	/**
@@ -1130,6 +1218,7 @@ export class SvgRenderer {
 	 * @return {string} SVG group markup.
 	 */
 	static renderOpenTypeSvgTextNode(node, fontData, layout, options = {}) {
+		const idPrefix = options.idPrefix ? String(options.idPrefix).replace(/[^a-zA-Z0-9_-]/g, '') : '';
 		const { boxL, boxT, boxW, boxH, x, y, hasBox, hasPerLine, ratio, val } = layout;
 		const fId = String(node.fontId || fontData.id || 'ot').toLowerCase().replace(/[\s\-]+/g, '_');
 
@@ -1216,14 +1305,15 @@ export class SvgRenderer {
 				const eff = this.getEffectiveOpenTypeGlyph(fontData, ch, unitsPerEm);
 				const g = eff.g;
 				if (eff.hasSvg) {
-					const glyphSvg = options.isExport ? (g.exportSvg || g.svg) : (g.liveSvg || g.svg);
+					const rawGlyphSvg = options.isExport ? (g.exportSvg || g.svg) : (g.liveSvg || g.svg);
+					const glyphSvg = idPrefix ? this.scopeMarkupIds(rawGlyphSvg, idPrefix) : rawGlyphSvg;
 					const glyphKeyAttr = g.glyphKey ? ` data-glyph-key="${g.glyphKey}"` : '';
 					glyphsMarkup += `<g class="mrtee-ot-glyph"${glyphKeyAttr} transform="translate(${cursorX.toFixed(3)}, ${baselineY.toFixed(3)}) scale(${scale.toFixed(5)})">${glyphSvg}</g>\n`;
 				} else if (!eff.isSpace) {
 					const escapedCh = this.escapeXml(ch);
 					const fbCenterX = (eff.adv / 2).toFixed(1);
 					glyphsMarkup += `<g class="mrtee-ot-glyph mrtee-ot-glyph-fallback" data-glyph-key="${this.escapeXml(fId)}:fb:${escapedCh}" transform="translate(${cursorX.toFixed(3)}, ${baselineY.toFixed(3)}) scale(${scale.toFixed(5)})">` +
-						`<text x="${fbCenterX}" y="0" text-anchor="middle" font-family="${fbFontStack}" font-weight="900" font-size="${fbFontSize}" fill="#FFFFFF" stroke="#1E293B" stroke-width="${fbStrokeWidth}" stroke-linejoin="round" stroke-linecap="round" style="paint-order: stroke fill;" filter="url(#mrtee-3d-shadow)">${escapedCh}</text>` +
+						`<text x="${fbCenterX}" y="0" text-anchor="middle" font-family="${fbFontStack}" font-weight="900" font-size="${fbFontSize}" fill="#FFFFFF" stroke="#1E293B" stroke-width="${fbStrokeWidth}" stroke-linejoin="round" stroke-linecap="round" style="paint-order: stroke fill;" filter="url(#${idPrefix}mrtee-3d-shadow)">${escapedCh}</text>` +
 						`</g>\n`;
 				}
 				cursorX += (eff.adv + letterSpacingUnits) * scale;

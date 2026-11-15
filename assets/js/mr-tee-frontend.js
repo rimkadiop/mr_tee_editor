@@ -7,12 +7,12 @@
  * @package MrTeeEditor\Assets
  */
 
-import { StateStore } from './modules/state-store.js?v=2.3.18';
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.3.18';
-import { SvgRenderer } from './modules/svg-renderer.js?v=2.3.18';
-import { GalleryStage } from './modules/gallery-stage.js?v=2.3.18';
-import { FormController } from './modules/form-controller.js?v=2.3.18';
-import { PrintExporter } from './modules/print-exporter.js?v=2.3.18';
+import { StateStore } from './modules/state-store.js?v=2.3.19.1';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.3.19.1';
+import { SvgRenderer } from './modules/svg-renderer.js?v=2.3.19.1';
+import { GalleryStage } from './modules/gallery-stage.js?v=2.3.19.1';
+import { FormController } from './modules/form-controller.js?v=2.3.19.1';
+import { PrintExporter } from './modules/print-exporter.js?v=2.3.19.1';
 
 window.mrTeePrintExporter = PrintExporter;
 window.mrTeeSvgRenderer = SvgRenderer;
@@ -32,6 +32,7 @@ class MrTeeFrontendApp {
 		this.formController = null;
 		this.currentLayers = [];
 		this.currentZoom = { scale: 1, translateX: 0, translateY: 0 };
+		this.currentRenderOptions = null;
 
 		this.init();
 	}
@@ -39,6 +40,13 @@ class MrTeeFrontendApp {
 	init() {
 		if (!document.getElementById('mr-tee-editor-container')) {
 			return;
+		}
+
+		if (document.body) {
+			document.body.classList.add('has-mr-tee-editor');
+			if (Boolean(this.config.lock_aspect_ratio) || this.config.product_type === 'flat_object') {
+				document.body.classList.add('mr-tee-locked-aspect-ratio');
+			}
 		}
 
 		// Ensure form action protocol matches current protocol to prevent 503 SSL redirection errors
@@ -51,7 +59,13 @@ class MrTeeFrontendApp {
 		this.store = new StateStore(this.config);
 
 		// 2. Initialize Gallery Stage Overlay
-		this.stage = new GalleryStage(this.config);
+		this.stage = new GalleryStage(this.config, {
+			renderSvgWithPrefix: (idPrefix) => SvgRenderer.renderToString(
+				this.currentLayers,
+				this.currentZoom,
+				{ ...(this.currentRenderOptions || {}), idPrefix }
+			),
+		});
 
 		// 3. Initialize Form Controller
 		this.formController = new FormController(
@@ -76,7 +90,7 @@ class MrTeeFrontendApp {
 		this.renderSceneGraph();
 
 		// Re-sync SVG aspect ratio once gallery image finishes loading if not already complete
-		const galleryImg = document.querySelector('.woocommerce-product-gallery__image img:not(.emoji):not(.zoomImg)');
+		const galleryImg = PrintExporter.findProductGalleryImageElement();
 		if (galleryImg && (!galleryImg.complete || !galleryImg.naturalWidth)) {
 			galleryImg.addEventListener('load', () => {
 				this._cachedAspectRatio = 0;
@@ -201,7 +215,7 @@ class MrTeeFrontendApp {
 				ratio = parseFloat(this.config.print_aspect_ratio);
 				this._cachedAspectRatio = ratio;
 			} else {
-				const img = document.querySelector('.woocommerce-product-gallery__image img:not(.emoji):not(.zoomImg)');
+				const img = PrintExporter.findProductGalleryImageElement();
 				if (img && img.naturalWidth > 0 && img.naturalHeight > 0) {
 					ratio = img.naturalWidth / img.naturalHeight;
 					this._cachedAspectRatio = ratio;
@@ -220,16 +234,17 @@ class MrTeeFrontendApp {
 
 		this.currentLayers = mergedLayers;
 		this.currentZoom = zoom;
-
-		// 5. Render SVG and mount into gallery stage
-		const svgMarkup = SvgRenderer.renderToString(mergedLayers, zoom, {
+		this.currentRenderOptions = {
 			aspectRatio: ratio,
 			realWidth: realW,
 			realHeight: realH,
 			unit: this.config.print_unit || 'cm',
 			dpi: this.config.dpi || 300,
 			hasPerLineBoxes: hasPerLineBoxes,
-		});
+		};
+
+		// 5. Render SVG and mount into gallery stage
+		const svgMarkup = SvgRenderer.renderToString(mergedLayers, zoom, this.currentRenderOptions);
 		this.stage.updateSvg(svgMarkup);
 	}
 

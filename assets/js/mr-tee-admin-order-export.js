@@ -9,9 +9,9 @@
  * @package MrTeeEditor\Assets
  */
 
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.3.18';
-import { SvgRenderer } from './modules/svg-renderer.js?v=2.3.18';
-import { PrintExporter } from './modules/print-exporter.js?v=2.3.18';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.3.19.1';
+import { SvgRenderer } from './modules/svg-renderer.js?v=2.3.19.1';
+import { PrintExporter } from './modules/print-exporter.js?v=2.3.19.1';
 
 class MrTeeAdminOrderExporter {
 	constructor() {

@@ -650,6 +650,18 @@ final class Plugin {
 	}
 
 	/**
+	 * Build a file-modification-aware asset version string so admin caches bust on deploys.
+	 *
+	 * @param string $relative_path Path relative to MR_TEE_EDITOR_DIR.
+	 * @return string
+	 */
+	private function get_asset_version( $relative_path ) {
+		$full_path = MR_TEE_EDITOR_DIR . ltrim( $relative_path, '/' );
+		$mtime     = file_exists( $full_path ) ? @filemtime( $full_path ) : false;
+		return $mtime ? ( MR_TEE_EDITOR_VERSION . '.' . $mtime ) : MR_TEE_EDITOR_VERSION;
+	}
+
+	/**
 	 * Enqueue admin scripts & styles on product edit and WooCommerce order edit screens (HPOS + CPT).
 	 *
 	 * @param string $hook Current admin screen hook.
@@ -697,7 +709,7 @@ final class Plugin {
 						'mr-tee-admin-order-export-js',
 						MR_TEE_EDITOR_URL . 'assets/js/mr-tee-admin-order-export.js',
 						array(),
-						MR_TEE_EDITOR_VERSION,
+						$this->get_asset_version( 'assets/js/mr-tee-admin-order-export.js' ),
 						true
 					);
 
@@ -763,7 +775,7 @@ final class Plugin {
 			'mr-tee-admin-style',
 			MR_TEE_EDITOR_URL . 'assets/css/mr-tee-admin.css',
 			array(),
-			MR_TEE_EDITOR_VERSION
+			$this->get_asset_version( 'assets/css/mr-tee-admin.css' )
 		);
 
 		// Dynamic @font-face CSS for ONLY selected standard vector fonts (OpenType-SVG .otf files are skipped;
@@ -777,7 +789,7 @@ final class Plugin {
 			'mr-tee-admin-js',
 			MR_TEE_EDITOR_URL . 'assets/js/mr-tee-admin.js',
 			array( 'jquery', 'jquery-ui-draggable', 'jquery-ui-resizable' ),
-			MR_TEE_EDITOR_VERSION,
+			$this->get_asset_version( 'assets/js/mr-tee-admin.js' ),
 			true
 		);
 

@@ -84,39 +84,37 @@ During multi-theme testing on `http://1.tawfekh-digital.com`:
 
 ---
 
-## 4. Pending Work For The Next Agent
+## 4. Completed Frontend CSS/JS Updates & Live Verification
 
-The next agent should complete these specific steps:
+All frontend CSS/JS updates, staging deployment, multi-theme audits, and End-to-End HPOS order verification are 100% complete:
 
-### A. Frontend CSS & JS Updates (In Repo)
+### A. Frontend CSS & JS Universal Compatibility (`v2.3.19`)
 1. **`assets/css/mr-tee-frontend.css`**:
-   - Line 120: Add `.mr-tee-floating-label-wrap.mr-tee-floating-label-wrap--textarea` alongside `:has(.mr-tee-textarea)` for cross-browser fallback.
-   - Line 545+: Add `.mr-tee-warn-icon` and `.mr-tee-chevron-icon` SVG styles (`display: inline-flex; vertical-align: middle;`).
-   - Line 557+: Expand zoom suppression to include `.drift-zoom-pane, .easyzoom-flyout`.
-   - Line 567+: Support Flatsome Flickity (`.product-gallery-slider .slide`) and WooCommerce Block Gallery (`.wc-block-product-gallery-large-image`) selectors alongside Flexslider.
-   - Line 644: Replace `.wp-theme-shoptimizer.has-mr-tee-editor` with `body.has-mr-tee-editor`.
-   - Add iOS 16px font-size zoom prevention on `.mr-tee-text-input` at `@media (max-width: 767px)`.
-   - Add scoped CSS button/stepper resets so aggressive theme stylesheets (Flatsome, Tailwind, GeneratePress) do not collapse buttons or pills.
+   - Added `.mr-tee-floating-label-wrap.mr-tee-floating-label-wrap--textarea` alongside `:has(.mr-tee-textarea)` for cross-browser fallback.
+   - Added `.mr-tee-warn-icon` and `.mr-tee-chevron-icon` inline SVG styles (`display: inline-flex; vertical-align: middle;`).
+   - Expanded zoom flyout suppression to include `.drift-zoom-pane, .easyzoom-flyout`.
+   - Added support for Flatsome Flickity (`.product-gallery-slider .slide`) and WooCommerce Block Gallery (`.wc-block-product-gallery-large-image`, `.wp-block-woocommerce-product-gallery-large-image`) selectors alongside Flexslider.
+   - Replaced `.wp-theme-shoptimizer.has-mr-tee-editor` with universal `body.has-mr-tee-editor`.
+   - Added `contain: inline-size` containment on `.mr-tee-editor-container` (including `.has-mr-tee-editor form.cart > .mr-tee-editor-container`) and `.mr-tee-font-selector-row` to prevent WooCommerce Block `form.cart` CSS Grid `auto` track expansion (`0px` mobile horizontal overflow across TwentyTwentyFive, TwentyTwentyFour, and TwentyTwentyThree).
+   - Added iOS `16px` font-size zoom prevention on `.mr-tee-text-input` at `@media (max-width: 767px)` and scoped button/stepper/font-pill resets against aggressive theme stylesheets.
 2. **`assets/js/modules/svg-renderer.js`**:
-   - Add `options.idPrefix` support so cloned SVGs in PhotoSwipe or Magnific Popup do not cause duplicate DOM ID collisions.
-   - Replace any remaining hardcoded remote URLs with local asset path (`assets/images/leopard-pattern.png`).
+   - Added `options.idPrefix` support (`pswp-` / `mfp-`) so cloned lightbox SVGs in PhotoSwipe or Magnific Popup never cause duplicate DOM ID collisions (`#mr-tee-svg-element`, `#mr-tee-scene-root`, `#mr-tee-defs`, `#mr-tee-zoom-group`).
+   - Replaced remaining hardcoded remote URL fallbacks with local `assets/images/leopard-pattern.png`.
 3. **`assets/js/modules/gallery-stage.js`**:
-   - Broaden `findMainSlideContainer()` and `findMainGalleryImage()` to handle Flickity (`.product-gallery-slider .slide.is-selected`) and Block Gallery (`.wc-block-product-gallery-large-image`).
-   - Add support for Flatsome Magnific Popup (`.mfp-wrap`) alongside PhotoSwipe.
+   - Broadened `findMainSlideContainer()` and `findMainGalleryImage()` across Flickity (`.product-gallery-slider .slide.is-selected`), WooCommerce Block Gallery (`.wc-block-product-gallery-large-image`), and Flexslider.
+   - Added Flatsome Magnific Popup (`.mfp-wrap`) lightbox overlay sync alongside PhotoSwipe (`.pswp`) and computed pixel-exact overlay bounding boxes inside lightboxes.
 4. **`assets/js/modules/form-controller.js`**:
-   - Portal `#mr-tee-count-modal` and `#mr-tee-warning-modal` to `document.body` so theme `overflow: hidden` containers never clip dialogs.
-   - Support `Escape` key and backdrop click to close modals.
-   - Update `?v=2.3.19` on module imports.
-5. **`assets/js/modules/print-exporter.js`**, **`assets/js/mr-tee-frontend.js`**, **`assets/js/mr-tee-admin-order-export.js`**:
-   - Update import query strings to `?v=2.3.19`.
+   - Portaled `#mr-tee-count-modal` and `#mr-tee-warning-modal` directly to `document.body` so theme `overflow: hidden` / `transform` containers never clip dialogs.
+   - Added `Escape` key and backdrop click handlers for modals.
+5. **`includes/Frontend/ProductPageRenderer.php`**, **`includes/Core/Plugin.php`**, **`assets/js/modules/print-exporter.js`**, **`assets/js/mr-tee-frontend.js`**, **`assets/js/mr-tee-admin-order-export.js`**:
+   - Broadened gallery image discovery in `PrintExporter.captureCompositeThumbnail()` for universal cart preview compositing.
+   - Added `filemtime`-based asset versioning (`MR_TEE_EDITOR_VERSION . '.' . @filemtime(...)`) and `?v=2.3.19.1` ES module import cache-busting to prevent stale Nginx reverse-proxy cache hits.
 
-### B. Deployment & Verification
-1. Update `scratch/deploy_live.py` `FILES` list to include newly edited files.
-2. Run `python3 scratch/deploy_live.py` to sync all files to staging.
-3. Run the Playwright test suite:
-   ```bash
-   uv run --with playwright --with pillow python3 scratch/test_themes.py v2319
-   uv run --with playwright --with pillow python3 scratch/e2e_v2318.py
-   ```
-4. Confirm cleanup: Ensure `shoptimizer` snapshot is restored on staging, and temporary test orders/designs are deleted.
-5. Commit and push final changes to `origin main`.
+### B. Deployment & Verification Summary
+1. **8-Theme Playwright Audit (`scratch/test_themes.py`)**:
+   - Verified Desktop (repeater + photo upload + modals + lightboxes) and Mobile (`390×844`, `16px` input font size, font pill switching, zero horizontal overflow) across all 8 staging themes: `shoptimizer`, `storefront`, `generatepress`, `flatsome`, `edubin`, `twentytwentyfive`, `twentytwentyfour`, `twentytwentythree` (`ALL 8 THEMES PASSED CLEANLY!`).
+2. **Full End-to-End HPOS Order Flow (`scratch/e2e_v2318.py`)**:
+   - Verified product customization -> warning modal -> cart composite thumbnail (`360px`) -> checkout -> WP Admin HPOS (`page=wc-orders`) deferred 300 DPI PNG (`2126×756`, `174,214` bytes) + Vector SVG (`1,306,511` bytes) + NBDesigner `frame_0.png` & `svg/frame_0.svg` sync (`E2E TEST PASSED 100%!`).
+3. **Staging Baseline Restored**:
+   - Active theme: `shoptimizer`, active `mr_tee_editor` (`2.3.19`) and `product_layout_extension`, temporary test orders/designs/COD settings cleaned up.
+

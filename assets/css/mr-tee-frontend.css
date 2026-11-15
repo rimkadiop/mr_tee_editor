@@ -6,10 +6,56 @@
  */
 
 /* Container */
-.mr-tee-editor-container {
+.mr-tee-editor-container,
+.mr-tee-editor-container *,
+.mr-tee-modal-backdrop,
+.mr-tee-modal-backdrop * {
+	box-sizing: border-box;
+}
+
+.mr-tee-editor-container,
+.has-mr-tee-editor form.cart > .mr-tee-editor-container {
+	width: 100%;
+	min-width: 0;
+	max-width: 100%;
+	contain: inline-size;
 	margin: 14px 0;
 	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 	color: #111827;
+	color-scheme: light;
+}
+
+/* Prevent flex/grid min-content explosion across Block (FSE) and Classic theme wrappers */
+.has-mr-tee-editor .wp-block-column,
+.has-mr-tee-editor .wp-block-woocommerce-product-details,
+.has-mr-tee-editor .wp-block-woocommerce-add-to-cart-form,
+.has-mr-tee-editor .wp-block-add-to-cart-form,
+.has-mr-tee-editor form.cart,
+.has-mr-tee-editor .entry-summary,
+.has-mr-tee-editor .summary,
+.mr-tee-card,
+.mr-tee-text-inputs-wrap,
+.mr-tee-field-group,
+.mr-tee-input-row,
+.mr-tee-floating-label-wrap,
+.mr-tee-font-selector-row,
+.mr-tee-color-swatches-wrap,
+.mr-tee-color-swatches-list,
+.mr-tee-repeater-items-list,
+.mr-tee-image-fields-wrap {
+	min-width: 0;
+	max-width: 100%;
+}
+
+/* Scoped Button Reset (before component button rules) */
+.mr-tee-editor-container button,
+.mr-tee-modal-backdrop button {
+	font-family: inherit;
+	text-transform: none;
+	letter-spacing: normal;
+	min-height: 0;
+	box-shadow: none;
+	margin: 0;
 }
 
 /* 1. Main Card: PERSONNALISER */
@@ -78,23 +124,43 @@
 
 .mr-tee-text-input {
 	width: 100% !important;
+	max-width: 100% !important;
+	height: auto !important;
+	min-height: 0 !important;
+	margin: 0 !important;
 	border: none !important;
+	border-radius: 0 !important;
 	outline: none !important;
 	background: transparent !important;
 	padding: 15px 46px 3px 0 !important;
+	font-family: inherit !important;
 	font-size: 15px !important;
 	font-weight: 600 !important;
+	line-height: 1.35 !important;
 	color: #0f172a !important;
 	box-shadow: none !important;
+}
+
+@media (max-width: 767px) {
+	.mr-tee-text-input {
+		font-size: 16px !important;
+	}
 }
 
 .mr-tee-floating-label {
 	position: absolute;
 	left: 12px;
 	top: 14px;
+	margin: 0 !important;
+	padding: 0 !important;
+	width: auto !important;
+	background: transparent !important;
 	color: #64748b;
 	font-size: 13.5px;
 	font-weight: 500;
+	line-height: 1.2 !important;
+	text-transform: none !important;
+	letter-spacing: normal !important;
 	pointer-events: none;
 	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 	transform-origin: left top;
@@ -117,6 +183,14 @@
 	color: #94a3b8;
 }
 
+.mr-tee-floating-label-wrap.mr-tee-floating-label-wrap--textarea {
+	height: auto;
+	min-height: 68px;
+	padding-top: 12px;
+	padding-bottom: 8px;
+	align-items: flex-start;
+}
+
 .mr-tee-floating-label-wrap:has(.mr-tee-textarea) {
 	height: auto;
 	min-height: 68px;
@@ -127,7 +201,7 @@
 
 .mr-tee-textarea {
 	resize: vertical;
-	min-height: 46px;
+	min-height: 46px !important;
 	line-height: 1.35 !important;
 	padding-top: 10px !important;
 }
@@ -145,22 +219,34 @@
 	margin-top: 4px;
 }
 
-.mr-tee-color-swatch-pill {
+.mr-tee-color-swatch-pill,
+.mr-tee-editor-container .mr-tee-color-swatch-pill {
 	width: 26px;
 	height: 26px;
+	min-width: 0;
 	border-radius: 50%;
 	cursor: pointer;
 	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 	position: relative;
 	padding: 0;
+	display: inline-block;
+	flex-shrink: 0;
 }
 
-.mr-tee-color-swatch-pill:hover {
+.mr-tee-color-swatch-pill:hover,
+.mr-tee-editor-container .mr-tee-color-swatch-pill:hover {
 	transform: scale(1.15);
 }
 
-.mr-tee-color-swatch-pill.is-active {
+.mr-tee-color-swatch-pill:focus-visible,
+.mr-tee-editor-container .mr-tee-color-swatch-pill:focus-visible {
+	outline: 2px solid #154694;
+	outline-offset: 2px;
+}
+
+.mr-tee-color-swatch-pill.is-active,
+.mr-tee-editor-container .mr-tee-color-swatch-pill.is-active {
 	transform: scale(1.2);
 	outline: 2.5px solid #154694;
 	outline-offset: 2px;
@@ -169,11 +255,18 @@
 
 /* Font Pills */
 .mr-tee-font-selector-row {
+	width: 100%;
+	min-width: 0;
+	max-width: 100%;
+	contain: inline-size;
 	margin-top: 6px;
 }
 
 .mr-tee-font-pills {
 	display: flex;
+	width: 100%;
+	min-width: 0;
+	max-width: 100%;
 	gap: 6px;
 	overflow-x: auto;
 	padding-bottom: 2px;
@@ -185,12 +278,18 @@
 	display: none;
 }
 
-.mr-tee-font-pill {
+.mr-tee-font-pill,
+.mr-tee-editor-container .mr-tee-font-pill {
+	width: auto;
+	height: auto;
+	display: inline-flex;
+	align-items: center;
 	border: 1.5px solid #cbd5e1;
 	background: #ffffff;
 	border-radius: 99px;
 	padding: 5px 11px;
 	font-size: 12px;
+	font-weight: 500;
 	line-height: 1.25;
 	color: #334155;
 	cursor: pointer;
@@ -199,11 +298,24 @@
 	transition: all 0.15s ease;
 }
 
-.mr-tee-font-pill:hover {
+.mr-tee-font-pill:hover,
+.mr-tee-editor-container .mr-tee-font-pill:hover {
 	border-color: #94a3b8;
+	background: #f8fafc;
+	color: #0f172a;
+	box-shadow: none;
 }
 
-.mr-tee-font-pill.is-active {
+.mr-tee-font-pill:focus-visible,
+.mr-tee-editor-container .mr-tee-font-pill:focus-visible {
+	outline: 2px solid #154694;
+	outline-offset: 2px;
+}
+
+.mr-tee-font-pill.is-active,
+.mr-tee-editor-container .mr-tee-font-pill.is-active,
+.mr-tee-font-pill.is-active:hover,
+.mr-tee-editor-container .mr-tee-font-pill.is-active:hover {
 	border-color: #154694;
 	background: #154694;
 	color: #ffffff;
@@ -217,23 +329,36 @@
 	margin-bottom: 14px;
 }
 
-.mr-tee-repeater-trigger-btn {
+.mr-tee-repeater-trigger-btn,
+.mr-tee-editor-container .mr-tee-repeater-trigger-btn {
 	width: 100%;
+	height: auto;
 	background: #ffffff;
+	color: #0f172a;
 	border: 1.5px solid #cbd5e1;
 	border-radius: 14px;
 	padding: 14px 18px;
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
+	gap: 12px;
 	cursor: pointer;
 	transition: all 0.2s ease;
 	text-align: left;
 }
 
-.mr-tee-repeater-trigger-btn:hover {
+.mr-tee-repeater-trigger-btn:hover,
+.mr-tee-editor-container .mr-tee-repeater-trigger-btn:hover {
 	border-color: #154694;
+	background: #ffffff;
+	color: #0f172a;
 	box-shadow: 0 3px 10px rgba(0, 0, 0, 0.05);
+}
+
+.mr-tee-repeater-trigger-btn:focus-visible,
+.mr-tee-editor-container .mr-tee-repeater-trigger-btn:focus-visible {
+	outline: 2px solid #154694;
+	outline-offset: 2px;
 }
 
 .mr-tee-trigger-left {
@@ -259,6 +384,8 @@
 	display: flex;
 	align-items: center;
 	gap: 10px;
+	color: #64748b;
+	flex-shrink: 0;
 }
 
 .mr-tee-active-count-badge {
@@ -272,6 +399,18 @@
 	color: #ffffff;
 	font-size: 14px;
 	font-weight: 800;
+	flex-shrink: 0;
+}
+
+.mr-tee-chevron-icon,
+.mr-tee-editor-container .mr-tee-chevron-icon {
+	display: inline-flex;
+	vertical-align: middle;
+	flex-shrink: 0;
+	width: 18px;
+	height: 18px;
+	max-width: none;
+	max-height: none;
 }
 
 /* 3. Individual Mushroom Accordions */
@@ -297,11 +436,23 @@
 	user-select: none;
 }
 
-.mr-tee-rep-thumb img {
+.mr-tee-rep-thumb {
+	flex-shrink: 0;
+}
+
+.mr-tee-rep-thumb img,
+.mr-tee-editor-container .mr-tee-rep-thumb img {
 	width: 34px;
 	height: 34px;
+	max-width: none;
+	max-height: none;
 	object-fit: contain;
 	display: block;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
 }
 
 .mr-tee-rep-name-summary {
@@ -310,15 +461,34 @@
 	color: #1e293b;
 }
 
-.mr-tee-rep-toggle-btn {
-	background: none;
+.mr-tee-rep-toggle-btn,
+.mr-tee-editor-container .mr-tee-rep-toggle-btn {
+	width: auto;
+	height: auto;
+	background: transparent;
 	border: none;
+	border-radius: 6px;
 	color: #64748b;
 	cursor: pointer;
 	padding: 4px;
-	display: flex;
+	display: inline-flex;
 	align-items: center;
-	transition: transform 0.2s ease;
+	justify-content: center;
+	flex-shrink: 0;
+	transition: transform 0.2s ease, color 0.15s ease;
+}
+
+.mr-tee-rep-toggle-btn:hover,
+.mr-tee-editor-container .mr-tee-rep-toggle-btn:hover {
+	background: transparent;
+	color: #0f172a;
+	box-shadow: none;
+}
+
+.mr-tee-rep-toggle-btn:focus-visible,
+.mr-tee-editor-container .mr-tee-rep-toggle-btn:focus-visible {
+	outline: 2px solid #154694;
+	outline-offset: 2px;
 }
 
 .mr-tee-repeater-item-card.is-open .mr-tee-rep-toggle-btn {
@@ -357,6 +527,7 @@
 .mr-tee-icon-option {
 	width: 44px;
 	height: 44px;
+	background: #ffffff;
 	border: 2px solid #e2e8f0;
 	border-radius: 10px;
 	display: flex;
@@ -364,6 +535,8 @@
 	justify-content: center;
 	cursor: pointer;
 	position: relative;
+	margin: 0;
+	flex-shrink: 0;
 	transition: all 0.15s ease;
 }
 
@@ -383,10 +556,20 @@
 	pointer-events: none;
 }
 
-.mr-tee-icon-option img {
+.mr-tee-icon-option img,
+.mr-tee-editor-container .mr-tee-icon-option img {
 	width: 28px;
 	height: 28px;
+	max-width: none;
+	max-height: none;
 	object-fit: contain;
+	display: block;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
+	flex-shrink: 0;
 }
 
 /* 4. Modals (Count Drawer & Warning Modal) */
@@ -403,10 +586,14 @@
 	align-items: center;
 	justify-content: center;
 	padding: 20px;
+	color-scheme: light;
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
 .mr-tee-modal-dialog {
 	background: #ffffff;
+	color: #334155;
+	color-scheme: light;
 	border-radius: 20px;
 	max-width: 440px;
 	width: 100%;
@@ -431,22 +618,47 @@
 	margin: 0;
 	font-size: 17px;
 	font-weight: 800;
+	line-height: 1.3;
 	color: #0f172a;
 }
 
-.mr-tee-modal-close-btn {
-	background: none;
+.mr-tee-modal-close-btn,
+.mr-tee-modal-backdrop .mr-tee-modal-close-btn {
+	width: auto;
+	height: auto;
+	background: transparent;
 	border: none;
+	border-radius: 6px;
+	padding: 4px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
 	font-size: 24px;
 	line-height: 1;
 	color: #94a3b8;
 	cursor: pointer;
+	transition: color 0.15s ease;
+}
+
+.mr-tee-modal-close-btn:hover,
+.mr-tee-modal-backdrop .mr-tee-modal-close-btn:hover {
+	background: transparent;
+	color: #334155;
+	box-shadow: none;
+}
+
+.mr-tee-modal-close-btn:focus-visible,
+.mr-tee-modal-backdrop .mr-tee-modal-close-btn:focus-visible {
+	outline: 2px solid #154694;
+	outline-offset: 2px;
 }
 
 .mr-tee-modal-desc {
 	font-size: 14px;
+	line-height: 1.5;
 	color: #475569;
-	margin-bottom: 20px;
+	margin: 0 0 20px;
 }
 
 .mr-tee-count-stepper {
@@ -457,9 +669,12 @@
 	margin-bottom: 20px;
 }
 
-.mr-tee-step-btn {
+.mr-tee-step-btn,
+.mr-tee-modal-backdrop .mr-tee-step-btn {
 	width: 50px;
 	height: 50px;
+	padding: 0;
+	line-height: 1;
 	border-radius: 50%;
 	border: 2px solid #cbd5e1;
 	background: #ffffff;
@@ -470,12 +685,22 @@
 	display: flex;
 	align-items: center;
 	justify-content: center;
+	flex-shrink: 0;
 	transition: all 0.15s ease;
 }
 
-.mr-tee-step-btn:hover {
+.mr-tee-step-btn:hover,
+.mr-tee-modal-backdrop .mr-tee-step-btn:hover {
 	border-color: #154694;
+	background: #ffffff;
 	color: #154694;
+	box-shadow: none;
+}
+
+.mr-tee-step-btn:focus-visible,
+.mr-tee-modal-backdrop .mr-tee-step-btn:focus-visible {
+	outline: 2px solid #154694;
+	outline-offset: 2px;
 }
 
 .mr-tee-step-val-display {
@@ -489,13 +714,17 @@
 .mr-tee-count-dots {
 	display: flex;
 	justify-content: center;
+	flex-wrap: wrap;
 	gap: 8px;
 	margin-bottom: 24px;
 }
 
-.mr-tee-count-dot-btn {
+.mr-tee-count-dot-btn,
+.mr-tee-modal-backdrop .mr-tee-count-dot-btn {
 	width: 40px;
 	height: 40px;
+	padding: 0;
+	line-height: 1;
 	border-radius: 50%;
 	border: 1.5px solid #cbd5e1;
 	background: #ffffff;
@@ -503,10 +732,31 @@
 	font-weight: 700;
 	color: #334155;
 	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
 	transition: all 0.15s ease;
 }
 
-.mr-tee-count-dot-btn.is-active {
+.mr-tee-count-dot-btn:hover,
+.mr-tee-modal-backdrop .mr-tee-count-dot-btn:hover {
+	border-color: #154694;
+	background: #f8fafc;
+	color: #154694;
+	box-shadow: none;
+}
+
+.mr-tee-count-dot-btn:focus-visible,
+.mr-tee-modal-backdrop .mr-tee-count-dot-btn:focus-visible {
+	outline: 2px solid #154694;
+	outline-offset: 2px;
+}
+
+.mr-tee-count-dot-btn.is-active,
+.mr-tee-modal-backdrop .mr-tee-count-dot-btn.is-active,
+.mr-tee-count-dot-btn.is-active:hover,
+.mr-tee-modal-backdrop .mr-tee-count-dot-btn.is-active:hover {
 	border-color: #154694;
 	background: #154694;
 	color: #ffffff;
@@ -514,26 +764,81 @@
 
 .mr-tee-modal-footer {
 	display: flex;
+	flex-wrap: wrap;
 	gap: 12px;
 	justify-content: flex-end;
 }
 
 .mr-tee-btn-confirm-count,
-.mr-tee-btn-ignore-warning {
+.mr-tee-btn-ignore-warning,
+.mr-tee-modal-backdrop .mr-tee-btn-confirm-count,
+.mr-tee-modal-backdrop .mr-tee-btn-ignore-warning {
+	width: auto !important;
+	height: auto !important;
+	display: inline-flex !important;
+	align-items: center;
+	justify-content: center;
 	background: #154694 !important;
-	border-color: #154694 !important;
+	border: 1.5px solid #154694 !important;
 	color: #ffffff !important;
 	border-radius: 99px !important;
 	padding: 10px 24px !important;
 	font-size: 14px !important;
 	font-weight: 700 !important;
+	line-height: 1.25 !important;
+	text-decoration: none !important;
+	cursor: pointer;
+	transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
-.mr-tee-btn-cancel-warning {
+.mr-tee-btn-confirm-count:hover,
+.mr-tee-btn-ignore-warning:hover,
+.mr-tee-modal-backdrop .mr-tee-btn-confirm-count:hover,
+.mr-tee-modal-backdrop .mr-tee-btn-ignore-warning:hover {
+	background: #0f3675 !important;
+	border-color: #0f3675 !important;
+	color: #ffffff !important;
+}
+
+.mr-tee-btn-confirm-count:focus-visible,
+.mr-tee-btn-ignore-warning:focus-visible,
+.mr-tee-modal-backdrop .mr-tee-btn-confirm-count:focus-visible,
+.mr-tee-modal-backdrop .mr-tee-btn-ignore-warning:focus-visible {
+	outline: 2px solid #154694 !important;
+	outline-offset: 2px;
+}
+
+.mr-tee-btn-cancel-warning,
+.mr-tee-modal-backdrop .mr-tee-btn-cancel-warning {
+	width: auto !important;
+	height: auto !important;
+	display: inline-flex !important;
+	align-items: center;
+	justify-content: center;
+	background: #f1f5f9 !important;
+	color: #334155 !important;
+	border: 1.5px solid #cbd5e1 !important;
 	border-radius: 99px !important;
 	padding: 10px 20px !important;
 	font-size: 14px !important;
 	font-weight: 600 !important;
+	line-height: 1.25 !important;
+	text-decoration: none !important;
+	cursor: pointer;
+	transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.mr-tee-btn-cancel-warning:hover,
+.mr-tee-modal-backdrop .mr-tee-btn-cancel-warning:hover {
+	background: #e2e8f0 !important;
+	border-color: #94a3b8 !important;
+	color: #0f172a !important;
+}
+
+.mr-tee-btn-cancel-warning:focus-visible,
+.mr-tee-modal-backdrop .mr-tee-btn-cancel-warning:focus-visible {
+	outline: 2px solid #154694 !important;
+	outline-offset: 2px;
 }
 
 /* Warning Header */
@@ -543,10 +848,33 @@
 }
 
 .mr-tee-warn-icon {
-	color: #eab308;
-	font-size: 24px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex-shrink: 0;
 	width: 24px;
 	height: 24px;
+	color: #eab308;
+}
+
+.mr-tee-warn-icon svg {
+	width: 24px;
+	height: 24px;
+	max-width: none;
+	max-height: none;
+	display: block;
+	flex-shrink: 0;
+}
+
+.mr-tee-warning-modal .mr-tee-modal-body {
+	margin-bottom: 20px;
+}
+
+#mr-tee-warning-text {
+	margin: 0;
+	line-height: 1.5;
+	font-size: 14px;
+	color: #334155;
 }
 
 /* ==========================================================================
@@ -556,7 +884,13 @@
 /* 1. Complete suppression of WooCommerce raw zoom on customizer products */
 .has-mr-tee-editor .zoomImg,
 .woocommerce-product-gallery__image .zoomImg,
-.mr-tee-live-stage-overlay ~ .zoomImg {
+.mr-tee-live-stage-overlay ~ .zoomImg,
+.has-mr-tee-editor .drift-zoom-pane,
+.woocommerce-product-gallery .drift-zoom-pane,
+.has-mr-tee-editor .easyzoom-flyout,
+.woocommerce-product-gallery .easyzoom-flyout,
+.product-gallery-slider .easyzoom-flyout,
+.mr-tee-live-stage-overlay ~ .easyzoom-flyout {
 	display: none !important;
 	pointer-events: none !important;
 	opacity: 0 !important;
@@ -564,7 +898,16 @@
 }
 
 /* 2. Live Stage Overlay Positioning & Responsive Aspect Ratio Locking */
-.has-mr-tee-editor .woocommerce-product-gallery__image {
+.has-mr-tee-editor .woocommerce-product-gallery__image,
+.has-mr-tee-editor .woocommerce-product-gallery__wrapper > div,
+.has-mr-tee-editor .flex-viewport,
+.has-mr-tee-editor .woocommerce-product-gallery,
+.has-mr-tee-editor .product-gallery-slider .slide,
+.has-mr-tee-editor .product-gallery-slider .flickity-viewport,
+.has-mr-tee-editor .product-images.woocommerce-product-gallery,
+.has-mr-tee-editor .wp-block-woocommerce-product-image-gallery,
+.has-mr-tee-editor .wc-block-product-gallery-large-image,
+.has-mr-tee-editor .wc-block-components-product-image {
 	position: relative !important;
 }
 
@@ -572,15 +915,40 @@
 .mr-tee-locked-aspect-ratio .woocommerce-product-gallery__image,
 .mr-tee-locked-aspect-ratio .woocommerce-product-gallery__wrapper > div,
 .mr-tee-locked-aspect-ratio .woocommerce-product-gallery .flex-viewport,
-.mr-tee-locked-aspect-ratio .woocommerce-product-gallery {
+.mr-tee-locked-aspect-ratio .woocommerce-product-gallery,
+.mr-tee-locked-aspect-ratio .product-gallery-slider .slide,
+.mr-tee-locked-aspect-ratio .product-gallery-slider .flickity-viewport,
+.mr-tee-locked-aspect-ratio .product-images.woocommerce-product-gallery,
+.mr-tee-locked-aspect-ratio .wp-block-woocommerce-product-image-gallery,
+.mr-tee-locked-aspect-ratio .wc-block-product-gallery-large-image,
+.mr-tee-locked-aspect-ratio .wc-block-components-product-image {
 	aspect-ratio: var(--mr-tee-aspect-ratio, 1 / 1) !important;
 	max-width: 100% !important;
 	width: 100% !important;
 	position: relative !important;
 }
 
+.mr-tee-locked-aspect-ratio .product-gallery-slider .flickity-viewport {
+	height: auto !important;
+}
+
+/* Preserve Flickity's horizontal slide positioning when Flickity is active */
+.has-mr-tee-editor .flickity-enabled .flickity-slider > .slide,
+.has-mr-tee-editor .flickity-enabled .flickity-slider > .woocommerce-product-gallery__image,
+.mr-tee-locked-aspect-ratio .flickity-enabled .flickity-slider > .slide,
+.mr-tee-locked-aspect-ratio .flickity-enabled .flickity-slider > .woocommerce-product-gallery__image,
+.has-mr-tee-editor.mr-tee-locked-aspect-ratio .flickity-enabled .flickity-slider > .slide,
+.has-mr-tee-editor.mr-tee-locked-aspect-ratio .flickity-enabled .flickity-slider > .woocommerce-product-gallery__image {
+	position: absolute !important;
+}
+
 .mr-tee-locked-aspect-ratio .woocommerce-product-gallery__image img,
-.mr-tee-locked-aspect-ratio .woocommerce-product-gallery img:not(.zoomImg):not(.emoji) {
+.mr-tee-locked-aspect-ratio .woocommerce-product-gallery img:not(.zoomImg):not(.emoji),
+.mr-tee-locked-aspect-ratio .product-gallery-slider .slide img:not(.zoomImg):not(.emoji),
+.mr-tee-locked-aspect-ratio .product-images.woocommerce-product-gallery img:not(.zoomImg):not(.emoji),
+.mr-tee-locked-aspect-ratio .wp-block-woocommerce-product-image-gallery img:not(.zoomImg):not(.emoji),
+.mr-tee-locked-aspect-ratio .wc-block-product-gallery-large-image img:not(.zoomImg):not(.emoji),
+.mr-tee-locked-aspect-ratio .wc-block-components-product-image img:not(.zoomImg):not(.emoji) {
 	aspect-ratio: var(--mr-tee-aspect-ratio, 1 / 1) !important;
 	width: 100% !important;
 	height: 100% !important;
@@ -588,7 +956,7 @@
 	display: block !important;
 }
 
-.mr-tee-locked-aspect-ratio .mr-tee-live-stage-overlay {
+.mr-tee-locked-aspect-ratio .mr-tee-live-stage-overlay:not(.mr-tee-live-stage-overlay-pswp) {
 	aspect-ratio: var(--mr-tee-aspect-ratio, 1 / 1) !important;
 	width: 100% !important;
 	height: 100% !important;
@@ -619,17 +987,27 @@
 .mr-tee-live-svg {
 	width: 100% !important;
 	height: 100% !important;
+	max-width: none !important;
+	max-height: none !important;
+	display: block !important;
 	overflow: visible !important;
 }
 
 /* PhotoSwipe Fullscreen Zoom Integration */
-.mr-tee-live-stage-overlay-pswp {
+.has-mr-tee-editor .pswp__zoom-wrap,
+.has-mr-tee-editor .mfp-figure {
+	position: relative;
+}
+
+.mr-tee-live-stage-overlay-pswp,
+.mfp-figure .mr-tee-live-stage-overlay-pswp {
 	position: absolute !important;
 	pointer-events: none !important;
 	z-index: 100 !important;
 	display: flex !important;
 	align-items: center !important;
 	justify-content: center !important;
+	overflow: hidden !important;
 }
 
 /* 3. Desktop Sticky Gallery & Stage Overlay Protection */
@@ -640,8 +1018,7 @@
 
 @media (min-width: 992px) {
 	html:has(body.has-mr-tee-editor),
-	body.has-mr-tee-editor,
-	.wp-theme-shoptimizer.has-mr-tee-editor {
+	body.has-mr-tee-editor {
 		overflow-x: clip !important;
 		overflow-y: visible !important;
 	}
@@ -650,8 +1027,11 @@
 		padding: 18px 18px;
 	}
 
-	.woocommerce div.product div.images,
-	.woocommerce-product-gallery {
+	.has-mr-tee-editor.woocommerce div.product div.images,
+	.has-mr-tee-editor .woocommerce div.product div.images,
+	.has-mr-tee-editor .woocommerce-product-gallery,
+	.has-mr-tee-editor .product-images.woocommerce-product-gallery,
+	.has-mr-tee-editor .wp-block-woocommerce-product-image-gallery {
 		position: sticky !important;
 		top: 90px !important;
 		z-index: 5 !important;
@@ -659,13 +1039,21 @@
 	}
 }
 
-.mr-tee-pill-thumb {
+.mr-tee-pill-thumb,
+.mr-tee-editor-container .mr-tee-pill-thumb {
 	width: 18px;
 	height: 18px;
+	max-width: none;
+	max-height: none;
 	object-fit: contain;
 	vertical-align: middle;
-	margin-right: 6px;
+	margin: 0 6px 0 0;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
 	display: inline-block;
+	flex-shrink: 0;
 }
 
 .mrtee-ot-glyph image {
@@ -705,11 +1093,19 @@
 	flex-shrink: 0;
 }
 
-.mr-tee-img-field-thumb img {
+.mr-tee-img-field-thumb img,
+.mr-tee-editor-container .mr-tee-img-field-thumb img {
 	width: 100%;
 	height: 100%;
+	max-width: 100%;
+	max-height: 100%;
 	object-fit: cover;
 	display: block;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	box-shadow: none;
 }
 
 .mr-tee-img-field-placeholder-icon {
@@ -748,7 +1144,13 @@
 	flex-shrink: 0;
 }
 
-.mr-tee-image-upload-btn {
+.mr-tee-image-upload-btn,
+.mr-tee-editor-container .mr-tee-image-upload-btn {
+	width: auto;
+	height: auto;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
 	background: #154694;
 	color: #ffffff;
 	border: 1.5px solid #154694;
@@ -762,12 +1164,22 @@
 	white-space: nowrap;
 }
 
-.mr-tee-image-upload-btn:hover {
+.mr-tee-image-upload-btn:hover,
+.mr-tee-editor-container .mr-tee-image-upload-btn:hover {
 	background: #0f3675;
 	border-color: #0f3675;
+	color: #ffffff;
+	box-shadow: none;
 }
 
-.mr-tee-image-reset-btn {
+.mr-tee-image-upload-btn:focus-visible,
+.mr-tee-editor-container .mr-tee-image-upload-btn:focus-visible {
+	outline: 2px solid #154694;
+	outline-offset: 2px;
+}
+
+.mr-tee-image-reset-btn,
+.mr-tee-editor-container .mr-tee-image-reset-btn {
 	background: #f8fafc;
 	color: #334155;
 	border: 1.5px solid #cbd5e1;
@@ -777,6 +1189,7 @@
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
+	flex-shrink: 0;
 	font-size: 14px;
 	font-weight: 700;
 	cursor: pointer;
@@ -785,10 +1198,16 @@
 	transition: all 0.15s ease;
 }
 
-.mr-tee-image-reset-btn:hover {
+.mr-tee-image-reset-btn:hover,
+.mr-tee-editor-container .mr-tee-image-reset-btn:hover {
 	background: #f1f5f9;
 	border-color: #94a3b8;
 	color: #0f172a;
+	box-shadow: none;
 }
 
-
+.mr-tee-image-reset-btn:focus-visible,
+.mr-tee-editor-container .mr-tee-image-reset-btn:focus-visible {
+	outline: 2px solid #154694;
+	outline-offset: 2px;
+}

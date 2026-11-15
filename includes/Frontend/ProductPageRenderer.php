@@ -250,6 +250,18 @@ class ProductPageRenderer {
 	}
 
 	/**
+	 * Build a file-modification-aware asset version string so CDN/proxy caches bust on deploys.
+	 *
+	 * @param string $relative_path Path relative to MR_TEE_EDITOR_DIR.
+	 * @return string
+	 */
+	private static function get_asset_version( $relative_path ) {
+		$full_path = MR_TEE_EDITOR_DIR . ltrim( $relative_path, '/' );
+		$mtime     = file_exists( $full_path ) ? @filemtime( $full_path ) : false;
+		return $mtime ? ( MR_TEE_EDITOR_VERSION . '.' . $mtime ) : MR_TEE_EDITOR_VERSION;
+	}
+
+	/**
 	 * Output high-priority performance hints in wp_head:
 	 * - Emits <link rel="modulepreload"> for mr-tee-frontend.js and its 6 ES modules to eliminate the footer waterfall.
 	 * - Preloads glyph images used by default text with fetchpriority="high" so 3D fonts render instantly without flicker.
@@ -267,11 +279,12 @@ class ProductPageRenderer {
 		$http_host   = isset( $_SERVER['HTTP_HOST'] ) ? preg_replace( '/:\d+$/', '', sanitize_text_field( wp_unslash( $_SERVER['HTTP_HOST'] ) ) ) : '';
 		$same_orig   = ! $url_host || $url_host === $site_host || ( $http_host && $url_host === $http_host );
 		$base_path   = ( $same_orig && ! empty( $base_parsed['path'] ) ) ? trailingslashit( $base_parsed['path'] ) : trailingslashit( MR_TEE_EDITOR_URL );
-		$ver         = MR_TEE_EDITOR_VERSION;
+		$entry_ver   = self::get_asset_version( 'assets/js/mr-tee-frontend.js' );
+		$mod_ver     = MR_TEE_EDITOR_VERSION . '.1';
 
 		printf(
 			"<link rel=\"modulepreload\" href=\"%s\" />\n",
-			esc_url( $base_path . 'assets/js/mr-tee-frontend.js?ver=' . $ver )
+			esc_url( $base_path . 'assets/js/mr-tee-frontend.js?ver=' . $entry_ver )
 		);
 
 		$es_modules = array(
@@ -285,7 +298,7 @@ class ProductPageRenderer {
 		foreach ( $es_modules as $mod_file ) {
 			printf(
 				"<link rel=\"modulepreload\" href=\"%s\" />\n",
-				esc_url( $base_path . 'assets/js/modules/' . $mod_file . '?v=' . $ver )
+				esc_url( $base_path . 'assets/js/modules/' . $mod_file . '?v=' . $mod_ver )
 			);
 		}
 
@@ -407,7 +420,7 @@ class ProductPageRenderer {
 			'mr-tee-frontend-style',
 			MR_TEE_EDITOR_URL . 'assets/css/mr-tee-frontend.css',
 			array(),
-			MR_TEE_EDITOR_VERSION
+			self::get_asset_version( 'assets/css/mr-tee-frontend.css' )
 		);
 
 		// Dynamic @font-face CSS for ONLY allowed standard vector fonts (skips OpenType-SVG .otf binaries)
@@ -429,7 +442,7 @@ class ProductPageRenderer {
 			'mr-tee-frontend-js',
 			MR_TEE_EDITOR_URL . 'assets/js/mr-tee-frontend.js',
 			array( 'jquery' ),
-			MR_TEE_EDITOR_VERSION,
+			self::get_asset_version( 'assets/js/mr-tee-frontend.js' ),
 			true
 		);
 

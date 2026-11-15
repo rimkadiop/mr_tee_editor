@@ -7,7 +7,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.3.18';
+import { SvgRenderer } from './svg-renderer.js?v=2.3.19.1';
 
 export class PrintExporter {
 	static CHUNK_SIZE_BYTES = 600 * 1024; // 600 KB binary chunks fit cleanly under 1 MB proxy/WAF limits while minimizing round-trips
@@ -130,13 +130,24 @@ export class PrintExporter {
 		const selectors = [
 			'.woocommerce-product-gallery .flex-active-slide img:not(.emoji):not(.zoomImg)',
 			'.woocommerce-product-gallery__image.flex-active-slide img:not(.emoji):not(.zoomImg)',
+			'.product-gallery-slider .slide.is-selected img:not(.emoji):not(.zoomImg)',
+			'.flickity-slider > .slide.is-selected img:not(.emoji):not(.zoomImg)',
+			'.product-gallery-slider .woocommerce-product-gallery__image.is-selected img:not(.emoji):not(.zoomImg)',
+			'.wc-block-product-gallery-large-image img:not(.emoji):not(.zoomImg)',
+			'.wc-block-components-product-image img:not(.emoji):not(.zoomImg)',
 			'.woocommerce-product-gallery__image:first-child img:not(.emoji):not(.zoomImg)',
+			'.product-gallery-slider .slide:first-child img:not(.emoji):not(.zoomImg)',
 			'.mr-tee-stage-garment-img',
+			'.woocommerce-product-gallery img:not(.emoji):not(.zoomImg)',
 			'.product .images img:not(.emoji):not(.zoomImg)',
 		];
 		for (const sel of selectors) {
-			const el = document.querySelector(sel);
-			if (el) return el;
+			const candidates = document.querySelectorAll(sel);
+			for (const el of candidates) {
+				if (el && !el.closest('.easyzoom-flyout')) {
+					return el;
+				}
+			}
 		}
 		return null;
 	}

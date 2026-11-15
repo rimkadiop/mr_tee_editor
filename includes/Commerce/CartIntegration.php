@@ -41,6 +41,9 @@ class CartIntegration {
 		add_action( 'woocommerce_checkout_create_order_line_item', array( __CLASS__, 'save_order_line_item_data' ), 10, 4 );
 		add_action( 'woocommerce_checkout_order_created', array( __CLASS__, 'sync_nbd_order_meta' ), 20, 1 );
 		add_action( 'woocommerce_store_api_checkout_order_processed', array( __CLASS__, 'sync_nbd_order_meta' ), 20, 1 );
+		add_filter( 'woocommerce_add_cart_item', array( __CLASS__, 'attach_preview_to_cart_product' ), 20, 1 );
+		add_filter( 'woocommerce_get_cart_item_from_session', array( __CLASS__, 'filter_cart_item_from_session' ), 20, 2 );
+		add_filter( 'woocommerce_product_get_image', array( __CLASS__, 'filter_product_get_image_in_cart' ), 999, 5 );
 		add_filter( 'woocommerce_cart_item_thumbnail', array( __CLASS__, 'filter_cart_item_thumbnail' ), 999, 3 );
 		add_filter( 'woocommerce_store_api_cart_item_images', array( __CLASS__, 'filter_store_api_cart_item_images' ), 999, 3 );
 		add_filter( 'woocommerce_cart_item_name', array( __CLASS__, 'filter_checkout_item_name' ), 25, 3 );
@@ -564,6 +567,84 @@ class CartIntegration {
 	}
 
 	/**
+	 * Attach in-memory preview URL metadata onto the cart item's WC_Product instance
+	 * so themes/side-carts that call $_product->get_image() directly without
+	 * woocommerce_cart_item_thumbnail still render the personalized preview.
+	 *
+	 * @param array<string, mixed> $cart_item Cart item array.
+	 * @return array<string, mixed>
+	 */
+	public static function attach_preview_to_cart_product( $cart_item ) {
+		if ( ! empty( $cart_item['mr_tee_editor']['preview_url'] ) && ! empty( $cart_item['data'] ) && is_object( $cart_item['data'] ) && method_exists( $cart_item['data'], 'update_meta_data' ) ) {
+			$cart_item['data']->update_meta_data( '_mr_tee_cart_preview_url', $cart_item['mr_tee_editor']['preview_url'] );
+		}
+		return $cart_item;
+	}
+
+	/**
+	 * Restore in-memory preview URL metadata onto the WC_Product instance when cart loads from session.
+	 *
+	 * @param array<string, mixed> $cart_item Cart item array.
+	 * @param array<string, mixed> $values    Session values.
+	 * @return array<string, mixed>
+	 */
+	public static function filter_cart_item_from_session( $cart_item, $values ) {
+		if ( ! empty( $values['mr_tee_editor'] ) && empty( $cart_item['mr_tee_editor'] ) ) {
+			$cart_item['mr_tee_editor'] = $values['mr_tee_editor'];
+		}
+		return self::attach_preview_to_cart_product( $cart_item );
+	}
+
+	/**
+	 * Build the standard zoomable cart thumbnail HTML markup.
+	 *
+	 * @param string $raw_preview_url Raw preview URL.
+	 * @param string $product_name    Optional product name for alt text.
+	 * @return string
+	 */
+	private static function build_cart_thumb_html( $raw_preview_url, $product_name = '' ) {
+		$preview_url = self::normalize_url( $raw_preview_url );
+		if ( empty( $preview_url ) ) {
+			return '';
+		}
+		$alt = ! empty( $product_name )
+			? sprintf( __( 'Aperçu personnalisé — %s', 'mr-tee-editor' ), $product_name )
+			: __( 'Aperçu du produit personnalisé', 'mr-tee-editor' );
+
+		return sprintf(
+			'<span class="mr-tee-cart-thumb-wrap" data-mr-tee-preview-wrap="1" title="%s"><img src="%s" data-mr-tee-preview="1" data-mr-tee-full-src="%s" class="attachment-woocommerce_thumbnail size-woocommerce_thumbnail mr-tee-cart-thumb skip-lazy" alt="%s" style="width:80px;max-width:100%%;height:auto;max-height:110px;object-fit:contain;border-radius:6px;border:1px solid #e2e8f0;background:#ffffff;display:block;cursor:zoom-in;" /><span class="mr-tee-cart-zoom-hint" aria-hidden="true">+</span></span>',
+			esc_attr__( 'Cliquer pour agrandir votre aperçu personnalisé', 'mr-tee-editor' ),
+			esc_url( $preview_url ),
+			esc_url( $preview_url ),
+			esc_attr( $alt )
+		);
+	}
+
+	/**
+	 * Fallback filter on WC_Product::get_image() for ThemeForest / Astra / third-party AJAX side-cart
+	 * templates that call $_product->get_image() directly without applying woocommerce_cart_item_thumbnail.
+	 *
+	 * @param string      $image       Existing HTML image tag.
+	 * @param \WC_Product $product     Product instance.
+	 * @param string      $size        Image size.
+	 * @param array       $attr        Attributes.
+	 * @param bool        $placeholder Whether placeholder is enabled.
+	 * @return string
+	 */
+	public static function filter_product_get_image_in_cart( $image, $product, $size = 'woocommerce_thumbnail', $attr = array(), $placeholder = true ) {
+		if ( ! is_object( $product ) || ! method_exists( $product, 'get_meta' ) ) {
+			return $image;
+		}
+		$preview_url = $product->get_meta( '_mr_tee_cart_preview_url', true );
+		if ( empty( $preview_url ) ) {
+			return $image;
+		}
+		$name = method_exists( $product, 'get_name' ) ? $product->get_name() : '';
+		$html = self::build_cart_thumb_html( $preview_url, $name );
+		return ! empty( $html ) ? $html : $image;
+	}
+
+	/**
 	 * Filter cart item thumbnail to show the composite personalized product preview.
 	 *
 	 * @param string               $thumbnail     Existing thumbnail HTML.
@@ -573,17 +654,13 @@ class CartIntegration {
 	 */
 	public static function filter_cart_item_thumbnail( $thumbnail, $cart_item, $cart_item_key ) {
 		if ( ! empty( $cart_item['mr_tee_editor']['preview_url'] ) ) {
-			$preview_url = self::normalize_url( $cart_item['mr_tee_editor']['preview_url'] );
-			$alt         = ( ! empty( $cart_item['data'] ) && method_exists( $cart_item['data'], 'get_name' ) )
-				? sprintf( __( 'Aperçu personnalisé — %s', 'mr-tee-editor' ), $cart_item['data']->get_name() )
-				: __( 'Aperçu du produit personnalisé', 'mr-tee-editor' );
-			return sprintf(
-				'<span class="mr-tee-cart-thumb-wrap" data-mr-tee-preview-wrap="1" title="%s"><img src="%s" data-mr-tee-preview="1" data-mr-tee-full-src="%s" class="attachment-woocommerce_thumbnail size-woocommerce_thumbnail mr-tee-cart-thumb skip-lazy" alt="%s" style="width:80px;max-width:100%%;height:auto;max-height:110px;object-fit:contain;border-radius:6px;border:1px solid #e2e8f0;background:#ffffff;display:block;cursor:zoom-in;" /><span class="mr-tee-cart-zoom-hint" aria-hidden="true">+</span></span>',
-				esc_attr__( 'Cliquer pour agrandir votre aperçu personnalisé', 'mr-tee-editor' ),
-				esc_url( $preview_url ),
-				esc_url( $preview_url ),
-				esc_attr( $alt )
-			);
+			$name = ( ! empty( $cart_item['data'] ) && method_exists( $cart_item['data'], 'get_name' ) )
+				? $cart_item['data']->get_name()
+				: '';
+			$html = self::build_cart_thumb_html( $cart_item['mr_tee_editor']['preview_url'], $name );
+			if ( ! empty( $html ) ) {
+				return $html;
+			}
 		}
 		return $thumbnail;
 	}
@@ -704,7 +781,8 @@ class CartIntegration {
 			.mr-tee-order-preview-attachment img,
 			.woocommerce-cart-form img[src*="mr_tee_editor/designs/"],
 			.wc-block-cart-item__image img[src*="mr_tee_editor/designs/"],
-			.wc-block-components-order-summary-item__image img[src*="mr_tee_editor/designs/"] {
+			.wc-block-components-order-summary-item__image img[src*="mr_tee_editor/designs/"],
+			img[src*="mr_tee_editor/designs/"] {
 				cursor: zoom-in !important;
 				transition: transform 0.16s ease, box-shadow 0.16s ease !important;
 			}
@@ -870,6 +948,7 @@ class CartIntegration {
 		<script id="mr-tee-cart-preview-lightbox-js">
 		(function() {
 			var PREVIEW_SEL = 'img.mr-tee-cart-thumb, img.mr-tee-checkout-thumb, .mr-tee-order-preview-attachment img, img[data-mr-tee-preview="1"], img[src*="mr_tee_editor/designs/"]';
+			var THUMB_CELL_SEL = 'td.product-thumbnail, .product-thumbnail, .wc-block-cart-item__image, .wc-block-components-order-summary-item__image, .cart-item-thumbnail, .cart-item-image, .ast-cart-item-thumbnail, .wd-cart-item-img';
 
 			function getModalElements() {
 				var modal = document.getElementById('mr-tee-cart-preview-modal');
@@ -929,6 +1008,18 @@ class CartIntegration {
 				);
 			}
 
+			function isDedicatedThumbnailAnchor(anchor) {
+				if (!anchor) return false;
+				if (anchor.classList.contains('mr-tee-cart-preview-link')) return true;
+				if (anchor.closest && anchor.closest(THUMB_CELL_SEL)) return true;
+				var clone = anchor.cloneNode(true);
+				var removable = clone.querySelectorAll('.mr-tee-cart-thumb-wrap, .mr-tee-cart-zoom-hint, .screen-reader-text, img, svg');
+				for (var i = 0; i < removable.length; i++) {
+					if (removable[i].parentNode) removable[i].parentNode.removeChild(removable[i]);
+				}
+				return (clone.textContent || '').trim() === '';
+			}
+
 			function findPreviewImageFromEventTarget(target) {
 				if (!target || typeof target.closest !== 'function') return null;
 				if (isInsideProductStage(target)) return null;
@@ -944,11 +1035,9 @@ class CartIntegration {
 					if (wrapImg) return wrapImg;
 				}
 
-				var thumbCellLink = target.closest(
-					'td.product-thumbnail a, .product-thumbnail a, .wc-block-cart-item__image a, .wc-block-components-order-summary-item__image a, a.mr-tee-cart-preview-link'
-				);
-				if (thumbCellLink) {
-					var linkImg = thumbCellLink.querySelector(PREVIEW_SEL);
+				var anyLink = target.closest('a');
+				if (anyLink && isDedicatedThumbnailAnchor(anyLink)) {
+					var linkImg = anyLink.querySelector(PREVIEW_SEL);
 					if (linkImg) return linkImg;
 				}
 
@@ -963,11 +1052,7 @@ class CartIntegration {
 					img.setAttribute('data-mr-tee-preview', '1');
 					var parentLink = img.closest('a');
 					if (!parentLink) continue;
-					var isDedicatedThumbLink = Boolean(
-						parentLink.closest('td.product-thumbnail, .product-thumbnail, .wc-block-cart-item__image, .wc-block-components-order-summary-item__image') ||
-						(parentLink.textContent || '').replace(/\+/g, '').trim() === ''
-					);
-					if (isDedicatedThumbLink) {
+					if (isDedicatedThumbnailAnchor(parentLink)) {
 						if (parentLink.getAttribute('href') && parentLink.getAttribute('href') !== '#mr-tee-preview') {
 							parentLink.setAttribute('data-mr-tee-orig-href', parentLink.getAttribute('href'));
 							parentLink.setAttribute('href', '#mr-tee-preview');

@@ -42,21 +42,38 @@ class NBDesignerBridge {
 	}
 
 	/**
+	 * Resolve target NBDesigner design directory and URL, honoring NBDesigner constants when defined.
+	 *
+	 * @param string $nbd_item_key NBDesigner item key.
+	 * @return array{dir: string, url: string}
+	 */
+	private static function resolve_nbd_location( $nbd_item_key ) {
+		$clean_key = sanitize_file_name( (string) $nbd_item_key );
+		$wp_upload = wp_upload_dir();
+		$base_dir  = defined( 'NBDESIGNER_CUSTOMER_DIR' ) ? trailingslashit( NBDESIGNER_CUSTOMER_DIR ) : trailingslashit( $wp_upload['basedir'] ) . 'nbdesigner/designs/';
+		$base_url  = defined( 'NBDESIGNER_CUSTOMER_URL' ) ? trailingslashit( NBDESIGNER_CUSTOMER_URL ) : trailingslashit( $wp_upload['baseurl'] ) . 'nbdesigner/designs/';
+		return array(
+			'dir' => rtrim( $base_dir, '/\\' ) . '/' . $clean_key,
+			'url' => rtrim( $base_url, '/' ) . '/' . $clean_key,
+		);
+	}
+
+	/**
 	 * Create the full 10-artifact NBDesigner handshake for an ordered item.
 	 *
-	 * @param string               $nbd_item_key Unique item key or token.
-	 * @param array<string, mixed> $custom_data  Sanitized customization payload.
-	 * @param string               $preview_b64  Base64 garment preview image.
-	 * @param string               $svg_markup   Vector SVG string.
-	 * @param string               $print_b64    Base64 300 DPI transparent raster.
-	 * @param int                  $product_id   Product ID.
+	 * @param string                $nbd_item_key Unique item key or token.
+	 * @param array<string, mixed>  $custom_data  Sanitized customization payload.
+	 * @param string                $preview_b64  Base64 garment preview image.
+	 * @param string                $svg_markup   Vector SVG string.
+	 * @param string                $print_b64    Base64 300 DPI transparent raster.
+	 * @param int                   $product_id   Product ID.
 	 * @param array<string, string> $source_files Optional pre-uploaded disk file paths (preview_file, svg_file, print_file).
 	 * @return array<string, mixed> Metadata for order line item.
 	 */
 	public static function inject_nbd_artifacts( $nbd_item_key, array $custom_data, $preview_b64, $svg_markup, $print_b64, $product_id, array $source_files = array() ) {
-		$wp_upload = wp_upload_dir();
-		$nbd_dir   = trailingslashit( $wp_upload['basedir'] ) . 'nbdesigner/designs/' . sanitize_file_name( $nbd_item_key );
-		$nbd_url   = trailingslashit( $wp_upload['baseurl'] ) . 'nbdesigner/designs/' . sanitize_file_name( $nbd_item_key );
+		$loc     = self::resolve_nbd_location( $nbd_item_key );
+		$nbd_dir = $loc['dir'];
+		$nbd_url = $loc['url'];
 
 		if ( ! file_exists( $nbd_dir ) ) {
 			wp_mkdir_p( $nbd_dir );
@@ -174,7 +191,7 @@ class NBDesignerBridge {
 
 		// 6. Artifact: config.json
 		$config_data = array(
-			'version'     => '2.3.18',
+			'version'     => defined( 'MR_TEE_EDITOR_VERSION' ) ? MR_TEE_EDITOR_VERSION : '2.3.19',
 			'engine'      => 'mr_tee_editor',
 			'product_id'  => $product_id,
 			'created_at'  => current_time( 'mysql' ),
@@ -318,9 +335,9 @@ class NBDesignerBridge {
 			return $out;
 		}
 
-		$wp_upload = wp_upload_dir();
-		$nbd_dir   = trailingslashit( $wp_upload['basedir'] ) . 'nbdesigner/designs/' . $clean_key;
-		$nbd_url   = trailingslashit( $wp_upload['baseurl'] ) . 'nbdesigner/designs/' . $clean_key;
+		$loc     = self::resolve_nbd_location( $clean_key );
+		$nbd_dir = $loc['dir'];
+		$nbd_url = $loc['url'];
 
 		if ( ! file_exists( $nbd_dir ) ) {
 			wp_mkdir_p( $nbd_dir );

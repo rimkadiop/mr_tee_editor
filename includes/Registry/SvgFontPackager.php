@@ -81,13 +81,129 @@ class SvgFontPackager {
 	}
 
 	/**
+	 * Check whether a directory exists (or can be created) and is writable.
+	 *
+	 * @param string $dir Directory path.
+	 * @return bool
+	 */
+	private static function is_dir_writable( $dir ) {
+		if ( empty( $dir ) || ! is_string( $dir ) ) {
+			return false;
+		}
+		if ( ! is_dir( $dir ) ) {
+			if ( function_exists( 'wp_mkdir_p' ) ) {
+				wp_mkdir_p( $dir );
+			} else {
+				@mkdir( $dir, 0755, true ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+			}
+		}
+		if ( ! is_dir( $dir ) ) {
+			return false;
+		}
+		return function_exists( 'wp_is_writable' ) ? wp_is_writable( $dir ) : is_writable( $dir ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_writable
+	}
+
+	/**
+	 * Convert same-origin full URL to root-relative URL path while preserving CDN/external URLs.
+	 *
+	 * @param string $url Raw URL.
+	 * @return string
+	 */
+	private static function to_url_path( $url ) {
+		$parsed = function_exists( 'wp_parse_url' ) ? wp_parse_url( $url ) : parse_url( $url ); // phpcs:ignore WordPress.WP.AlternativeFunctions.parse_url_parse_url
+		return ! empty( $parsed['path'] ) ? $parsed['path'] : $url;
+	}
+
+	/**
+	 * Base uploads cache directory fallback when plugin directory is read-only.
+	 *
+	 * @return string
+	 */
+	public static function uploads_cache_base_dir() {
+		$up = function_exists( 'wp_upload_dir' ) ? wp_upload_dir() : array();
+		if ( ! empty( $up['basedir'] ) ) {
+			return trailingslashit( $up['basedir'] ) . 'mr_tee_editor/font-cache/';
+		}
+		return sys_get_temp_dir() . '/mr_tee_editor/font-cache/';
+	}
+
+	/**
+	 * Base uploads cache URL fallback when plugin directory is read-only.
+	 *
+	 * @return string
+	 */
+	public static function uploads_cache_base_url() {
+		$up = function_exists( 'wp_upload_dir' ) ? wp_upload_dir() : array();
+		if ( ! empty( $up['baseurl'] ) ) {
+			return trailingslashit( $up['baseurl'] ) . 'mr_tee_editor/font-cache/';
+		}
+		return '/wp-content/uploads/mr_tee_editor/font-cache/';
+	}
+
+	/**
+	 * Resolve cache location (`base_dir`, `base_url`, `dir`, `url_path`) for a font package,
+	 * preferring the plugin directory for prebuilt packages and falling back to wp_upload_dir
+	 * whenever the plugin directory is read-only.
+	 *
+	 * @param string $font_id   Font identifier.
+	 * @param bool   $for_write Whether resolving for writing/building packages.
+	 * @return array{base_dir: string, base_url: string, dir: string, url_path: string}
+	 */
+	private static function resolve_cache_location( $font_id, $for_write = false ) {
+		$clean_id    = sanitize_key( $font_id );
+		$plugin_base = self::get_plugin_dir() . 'assets/fonts/cache/';
+		$plugin_url  = self::get_plugin_url() . 'assets/fonts/cache/';
+		$plugin_dir  = $plugin_base . $clean_id . '/';
+
+		$upload_base = self::uploads_cache_base_dir();
+		$upload_url  = self::uploads_cache_base_url();
+		$upload_dir  = $upload_base . $clean_id . '/';
+
+		if ( ! $for_write ) {
+			if ( file_exists( $plugin_dir . 'manifest.json' ) || file_exists( $plugin_dir . 'thumb.webp' ) || file_exists( $plugin_dir . 'thumb.png' ) ) {
+				return array(
+					'base_dir' => $plugin_base,
+					'base_url' => $plugin_url,
+					'dir'      => $plugin_dir,
+					'url_path' => self::to_url_path( $plugin_url . $clean_id . '/' ),
+				);
+			}
+			if ( file_exists( $upload_dir . 'manifest.json' ) || file_exists( $upload_dir . 'thumb.webp' ) || file_exists( $upload_dir . 'thumb.png' ) ) {
+				return array(
+					'base_dir' => $upload_base,
+					'base_url' => $upload_url,
+					'dir'      => $upload_dir,
+					'url_path' => self::to_url_path( $upload_url . $clean_id . '/' ),
+				);
+			}
+		}
+
+		if ( self::is_dir_writable( $plugin_base ) ) {
+			return array(
+				'base_dir' => $plugin_base,
+				'base_url' => $plugin_url,
+				'dir'      => $plugin_dir,
+				'url_path' => self::to_url_path( $plugin_url . $clean_id . '/' ),
+			);
+		}
+
+		return array(
+			'base_dir' => $upload_base,
+			'base_url' => $upload_url,
+			'dir'      => $upload_dir,
+			'url_path' => self::to_url_path( $upload_url . $clean_id . '/' ),
+		);
+	}
+
+	/**
 	 * Absolute directory of a font package.
 	 *
 	 * @param string $font_id Font identifier.
 	 * @return string
 	 */
 	public static function package_dir( $font_id ) {
-		return self::get_plugin_dir() . 'assets/fonts/cache/' . sanitize_key( $font_id ) . '/';
+		$loc = self::resolve_cache_location( $font_id, false );
+		return $loc['dir'];
 	}
 
 	/**
@@ -98,9 +214,8 @@ class SvgFontPackager {
 	 * @return string
 	 */
 	public static function package_url_path( $font_id ) {
-		$base   = self::get_plugin_url() . 'assets/fonts/cache/' . sanitize_key( $font_id ) . '/';
-		$parsed = function_exists( 'wp_parse_url' ) ? wp_parse_url( $base ) : parse_url( $base ); // phpcs:ignore WordPress.WP.AlternativeFunctions.parse_url_parse_url
-		return ! empty( $parsed['path'] ) ? $parsed['path'] : $base;
+		$loc = self::resolve_cache_location( $font_id, false );
+		return $loc['url_path'];
 	}
 
 	/**
@@ -124,12 +239,13 @@ class SvgFontPackager {
 		if ( isset( self::$url_cache[ $cache_key ] ) ) {
 			return self::$url_cache[ $cache_key ];
 		}
-		$file = self::manifest_path( $font_id );
+		$loc  = self::resolve_cache_location( $font_id, false );
+		$file = $loc['dir'] . 'manifest.json';
 		if ( ! file_exists( $file ) ) {
 			self::$url_cache[ $cache_key ] = '';
 			return '';
 		}
-		$url = self::package_url_path( $font_id ) . 'manifest.json?v=' . filemtime( $file );
+		$url = $loc['url_path'] . 'manifest.json?v=' . filemtime( $file );
 		self::$url_cache[ $cache_key ] = $url;
 		return $url;
 	}
@@ -145,10 +261,11 @@ class SvgFontPackager {
 		if ( isset( self::$url_cache[ $cache_key ] ) ) {
 			return self::$url_cache[ $cache_key ];
 		}
-		$dir = self::package_dir( $font_id );
+		$loc = self::resolve_cache_location( $font_id, false );
+		$dir = $loc['dir'];
 		foreach ( array( 'thumb.webp', 'thumb.png' ) as $name ) {
 			if ( file_exists( $dir . $name ) ) {
-				$url = self::package_url_path( $font_id ) . $name . '?v=' . filemtime( $dir . $name );
+				$url = $loc['url_path'] . $name . '?v=' . filemtime( $dir . $name );
 				self::$url_cache[ $cache_key ] = $url;
 				return $url;
 			}
@@ -272,7 +389,12 @@ class SvgFontPackager {
 			return null;
 		}
 
-		$dir = self::package_dir( $font_id );
+		$loc      = self::resolve_cache_location( $font_id, true );
+		$dir      = $loc['dir'];
+		$base_dir = $loc['base_dir'];
+		if ( ! self::is_dir_writable( $dir ) ) {
+			return null;
+		}
 		if ( ! is_dir( $dir . 'p' ) ) {
 			wp_mkdir_p( $dir . 'p' );
 		}
@@ -281,7 +403,7 @@ class SvgFontPackager {
 		}
 
 		// Serialize concurrent builds (two first visitors at the same time).
-		$lock_handle = fopen( $dir . '.build.lock', 'c' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen
+		$lock_handle = @fopen( $dir . '.build.lock', 'c' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen, WordPress.PHP.NoSilencedErrors.Discouraged
 		if ( $lock_handle ) {
 			flock( $lock_handle, LOCK_EX );
 			if ( self::is_fresh( $font_path, $font_id ) ) {
@@ -427,9 +549,9 @@ class SvgFontPackager {
 		$json = function_exists( 'wp_json_encode' ) ? wp_json_encode( $manifest, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ) : json_encode( $manifest, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE );
 		$tmp  = $dir . 'manifest.json.tmp';
 		file_put_contents( $tmp, $json ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
-		rename( $tmp, self::manifest_path( $font_id ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
+		rename( $tmp, $dir . 'manifest.json' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
 
-		self::write_htaccess();
+		self::write_htaccess( $base_dir );
 
 		if ( $lock_handle ) {
 			flock( $lock_handle, LOCK_UN );
@@ -520,9 +642,15 @@ class SvgFontPackager {
 	/**
 	 * Drop an .htaccess into the cache folder enabling long-lived immutable caching
 	 * (URLs are versioned) and gzip for manifests on Apache/LiteSpeed.
+	 *
+	 * @param string $base_dir Optional base cache directory path.
 	 */
-	public static function write_htaccess() {
-		$file = self::get_plugin_dir() . 'assets/fonts/cache/.htaccess';
+	public static function write_htaccess( $base_dir = '' ) {
+		$dir = ! empty( $base_dir ) ? trailingslashit( $base_dir ) : ( self::get_plugin_dir() . 'assets/fonts/cache/' );
+		if ( ! self::is_dir_writable( $dir ) ) {
+			return;
+		}
+		$file = $dir . '.htaccess';
 		if ( file_exists( $file ) ) {
 			return;
 		}
@@ -531,7 +659,7 @@ class SvgFontPackager {
 			. "<IfModule mod_deflate.c>\n  AddOutputFilterByType DEFLATE application/json\n</IfModule>\n"
 			. "<IfModule mod_expires.c>\n  ExpiresActive On\n  ExpiresByType image/webp \"access plus 1 year\"\n  ExpiresByType image/png \"access plus 1 year\"\n  ExpiresByType image/jpeg \"access plus 1 year\"\n  ExpiresByType application/json \"access plus 1 year\"\n</IfModule>\n"
 			. "<IfModule mod_headers.c>\n  <FilesMatch \"\\.(webp|png|jpe?g|gif|json)$\">\n    Header set Cache-Control \"public, max-age=31536000, immutable\"\n  </FilesMatch>\n  <FilesMatch \"\\.lock$\">\n    Require all denied\n  </FilesMatch>\n</IfModule>\n";
-		file_put_contents( $file, $rules ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+		@file_put_contents( $file, $rules ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents, WordPress.PHP.NoSilencedErrors.Discouraged
 	}
 
 	/**

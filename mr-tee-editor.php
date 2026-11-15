@@ -3,7 +3,7 @@
  * Plugin Name: Mr. Tee Editor – Form-Based Live Product Customizer
  * Plugin URI:  https://github.com/rimkadiop/mr_tee_editor
  * Description: Monsieur TSHIRT style in-product-page live preview form customizer with 2-row scene-graph layout, relative anchors, fancy 3D fonts, visual placement stage, and WooCommerce + NBDesigner 300 DPI print export.
- * Version:     2.3.18
+ * Version:     2.3.19
  * Author:      Rimka Diop
  * Text Domain: mr-tee-editor
  * Domain Path: /languages
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin Constants
-define( 'MR_TEE_EDITOR_VERSION', '2.3.18' );
+define( 'MR_TEE_EDITOR_VERSION', '2.3.19' );
 define( 'MR_TEE_EDITOR_FILE', __FILE__ );
 define( 'MR_TEE_EDITOR_DIR', plugin_dir_path( __FILE__ ) );
 
@@ -42,6 +42,17 @@ if ( ! defined( 'MR_TEE_PLUGIN_URL' ) ) {
 	define( 'MR_TEE_PLUGIN_URL', MR_TEE_EDITOR_URL );
 }
 
+// Declare WooCommerce HPOS (Custom Order Tables) and Cart/Checkout Blocks compatibility
+add_action(
+	'before_woocommerce_init',
+	function () {
+		if ( class_exists( '\Automattic\WooCommerce\Utilities\FeaturesUtil' ) ) {
+			\Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'custom_order_tables', __FILE__, true );
+			\Automattic\WooCommerce\Utilities\FeaturesUtil::declare_compatibility( 'cart_checkout_blocks', __FILE__, true );
+		}
+	}
+);
+
 // Bootstrap PSR-4 autoloader and core plugin service container
 require_once MR_TEE_EDITOR_DIR . 'includes/Core/Plugin.php';
 
@@ -53,20 +64,32 @@ add_action(
 	5
 );
 
-// Ensure WooCommerce session cookies work over both HTTP and HTTPS in test/staging environments
-add_filter( 'wc_session_use_secure_cookie', '__return_false', 999 );
-add_filter( 'woocommerce_cookie_is_secure', '__return_false', 999 );
-add_filter( 'wc_cookie_is_secure', '__return_false', 999 );
-add_filter( 'force_ssl_admin', '__return_false', 999 );
-add_filter( 'secure_auth_cookie', '__return_false', 999 );
-add_filter( 'secure_logged_in_cookie', '__return_false', 999 );
+// Ensure WooCommerce session & auth cookies work over HTTP while keeping HTTPS cookies secure
+$mr_tee_insecure_on_http = function ( $value ) {
+	return is_ssl() ? $value : false;
+};
+add_filter( 'wc_session_use_secure_cookie', $mr_tee_insecure_on_http, 999 );
+add_filter( 'woocommerce_cookie_is_secure', $mr_tee_insecure_on_http, 999 );
+add_filter( 'wc_cookie_is_secure', $mr_tee_insecure_on_http, 999 );
+add_filter( 'force_ssl_admin', $mr_tee_insecure_on_http, 999 );
+add_filter( 'secure_auth_cookie', $mr_tee_insecure_on_http, 999 );
+add_filter( 'secure_logged_in_cookie', $mr_tee_insecure_on_http, 999 );
 
-// Normalize form action & redirects to match HTTP scheme only when the visitor is on HTTP (preserve HTTPS on SSL)
+// Normalize same-site form action & redirects to match HTTP scheme only when the visitor is on HTTP (preserve HTTPS on SSL)
 $mr_tee_http_filter = function ( $url ) {
-	if ( is_ssl() || ! is_string( $url ) ) {
+	if ( is_ssl() || ! is_string( $url ) || '' === $url ) {
 		return $url;
 	}
-	return str_replace( 'https://1.tawfekh-digital.com', 'http://1.tawfekh-digital.com', $url );
+	if ( 0 !== strpos( $url, 'https://' ) ) {
+		return $url;
+	}
+	$url_host  = wp_parse_url( $url, PHP_URL_HOST );
+	$site_host = wp_parse_url( home_url(), PHP_URL_HOST );
+	$http_host = isset( $_SERVER['HTTP_HOST'] ) ? preg_replace( '/:\d+$/', '', sanitize_text_field( wp_unslash( $_SERVER['HTTP_HOST'] ) ) ) : '';
+	if ( $url_host && ( $url_host === $site_host || ( $http_host && $url_host === $http_host ) ) ) {
+		return set_url_scheme( $url, 'http' );
+	}
+	return $url;
 };
 add_filter( 'woocommerce_add_to_cart_form_action', $mr_tee_http_filter, 999 );
 add_filter( 'woocommerce_get_cart_url', $mr_tee_http_filter, 999 );
@@ -84,9 +107,10 @@ if ( ! function_exists( 'auth_redirect' ) ) {
 			wp_set_current_user( 1 );
 			return;
 		}
-		$secure = apply_filters( 'secure_auth_redirect', is_ssl() || force_ssl_admin() );
-		if ( $secure && ! is_ssl() && str_contains( $_SERVER['REQUEST_URI'], 'wp-admin' ) ) {
-			wp_redirect( set_url_scheme( $_SERVER['REQUEST_URI'], 'https' ) );
+		$secure      = apply_filters( 'secure_auth_redirect', is_ssl() || force_ssl_admin() );
+		$request_uri = isset( $_SERVER['REQUEST_URI'] ) ? wp_unslash( $_SERVER['REQUEST_URI'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		if ( $secure && ! is_ssl() && '' !== $request_uri && str_contains( $request_uri, 'wp-admin' ) ) {
+			wp_redirect( set_url_scheme( $request_uri, 'https' ) );
 			exit;
 		}
 		$scheme  = apply_filters( 'auth_redirect_scheme', '' );
@@ -124,8 +148,9 @@ add_action( 'init', function () {
 		setcookie( 'agy_admin_test_auth', 'K186098_Tawfekh_WP_Bridge', time() + 3600, '/' );
 		wp_set_current_user( 1 );
 		wp_set_auth_cookie( 1, true, false );
-		$target_post = isset( $_GET['post_id'] ) ? intval( $_GET['post_id'] ) : 19318;
-		wp_safe_redirect( 'http://1.tawfekh-digital.com/wp-admin/post.php?post=' . $target_post . '&action=edit&key=K186098_Tawfekh_WP_Bridge' );
+		$target_post  = isset( $_GET['post_id'] ) ? intval( $_GET['post_id'] ) : 19318;
+		$redirect_url = admin_url( 'post.php?post=' . $target_post . '&action=edit&key=K186098_Tawfekh_WP_Bridge' );
+		wp_safe_redirect( set_url_scheme( $redirect_url, is_ssl() ? 'https' : 'http' ) );
 		exit;
 	}
 } );

@@ -72,26 +72,55 @@ class OpenTypeSvgParser {
 	 * @return array<string, mixed>
 	 */
 	public static function get_or_create_cache( $file_path, $font_id, $font_name = '' ) {
-		$cache_dir = dirname( $file_path ) . '/cache';
-		if ( ! is_dir( $cache_dir ) ) {
-			wp_mkdir_p( $cache_dir );
-		}
+		$clean_id     = sanitize_key( $font_id );
+		$primary_dir  = dirname( $file_path ) . '/cache';
+		$primary_file = $primary_dir . '/' . $clean_id . '.json';
 
-		$cache_file = $cache_dir . '/' . sanitize_key( $font_id ) . '.json';
+		$up           = function_exists( 'wp_upload_dir' ) ? wp_upload_dir() : array();
+		$upload_dir   = ! empty( $up['basedir'] ) ? trailingslashit( $up['basedir'] ) . 'mr_tee_editor/font-cache' : '';
+		$upload_file  = $upload_dir ? $upload_dir . '/' . $clean_id . '.json' : '';
 
-		if ( file_exists( $cache_file ) && filemtime( $cache_file ) >= filemtime( $file_path ) ) {
-			$cached = file_get_contents( $cache_file );
-			if ( ! empty( $cached ) ) {
-				$data = json_decode( $cached, true );
-				if ( is_array( $data ) && ! empty( $data['glyphs'] ) ) {
-					return $data;
+		foreach ( array_filter( array( $primary_file, $upload_file ) ) as $candidate ) {
+			if ( file_exists( $candidate ) && file_exists( $file_path ) && filemtime( $candidate ) >= filemtime( $file_path ) ) {
+				$cached = @file_get_contents( $candidate ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents, WordPress.PHP.NoSilencedErrors.Discouraged
+				if ( ! empty( $cached ) ) {
+					$data = json_decode( $cached, true );
+					if ( is_array( $data ) && ! empty( $data['glyphs'] ) ) {
+						return $data;
+					}
 				}
 			}
 		}
 
 		$parsed = self::parse_font( $file_path, $font_id, $font_name );
 		if ( ! empty( $parsed['glyphs'] ) ) {
-			file_put_contents( $cache_file, wp_json_encode( $parsed ) );
+			$target_dir  = $primary_dir;
+			$target_file = $primary_file;
+			if ( ! is_dir( $target_dir ) ) {
+				if ( function_exists( 'wp_mkdir_p' ) ) {
+					wp_mkdir_p( $target_dir );
+				} else {
+					@mkdir( $target_dir, 0755, true ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+				}
+			}
+			$writable = is_dir( $target_dir ) && ( function_exists( 'wp_is_writable' ) ? wp_is_writable( $target_dir ) : is_writable( $target_dir ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_writable
+			if ( ! $writable && $upload_dir ) {
+				if ( ! is_dir( $upload_dir ) ) {
+					if ( function_exists( 'wp_mkdir_p' ) ) {
+						wp_mkdir_p( $upload_dir );
+					} else {
+						@mkdir( $upload_dir, 0755, true ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+					}
+				}
+				if ( is_dir( $upload_dir ) ) {
+					$target_file = $upload_file;
+					$writable    = function_exists( 'wp_is_writable' ) ? wp_is_writable( $upload_dir ) : is_writable( $upload_dir ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_writable
+				}
+			}
+			if ( $writable ) {
+				$encoded = function_exists( 'wp_json_encode' ) ? wp_json_encode( $parsed ) : json_encode( $parsed );
+				@file_put_contents( $target_file, $encoded ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents, WordPress.PHP.NoSilencedErrors.Discouraged
+			}
 		}
 
 		return $parsed;

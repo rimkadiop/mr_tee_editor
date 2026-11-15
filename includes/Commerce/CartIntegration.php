@@ -39,6 +39,8 @@ class CartIntegration {
 		add_action( 'woocommerce_order_item_meta_start', array( __CLASS__, 'render_order_item_preview_attachment' ), 10, 4 );
 		add_action( 'woocommerce_order_item_meta_end', array( __CLASS__, 'restore_nbd_order_item_meta_end' ), 999, 4 );
 		add_action( 'woocommerce_checkout_create_order_line_item', array( __CLASS__, 'save_order_line_item_data' ), 10, 4 );
+		add_action( 'woocommerce_checkout_order_created', array( __CLASS__, 'sync_nbd_order_meta' ), 20, 1 );
+		add_action( 'woocommerce_store_api_checkout_order_processed', array( __CLASS__, 'sync_nbd_order_meta' ), 20, 1 );
 		add_filter( 'woocommerce_cart_item_thumbnail', array( __CLASS__, 'filter_cart_item_thumbnail' ), 999, 3 );
 		add_filter( 'woocommerce_store_api_cart_item_images', array( __CLASS__, 'filter_store_api_cart_item_images' ), 999, 3 );
 		add_filter( 'woocommerce_cart_item_name', array( __CLASS__, 'filter_checkout_item_name' ), 25, 3 );
@@ -417,8 +419,8 @@ class CartIntegration {
 			if ( $repeater_enabled || $count > 0 ) {
 				$item_data[] = array(
 					'key'     => __( 'Nombre de champignons', 'mr-tee-editor' ),
-					'value'   => $count,
-					'display' => $count,
+					'value'   => (string) $count,
+					'display' => 0 === $count ? '0&nbsp;' : (string) $count,
 				);
 
 				if ( ! empty( $payload['repeater_items'] ) && is_array( $payload['repeater_items'] ) ) {
@@ -527,16 +529,36 @@ class CartIntegration {
 			$item->add_meta_data( '_nbd', $data['nbd']['key'], true );
 			$item->add_meta_data( '_nbd_cart_item_key', $data['nbd']['key'], true );
 			$item->add_meta_data( '_nbdesigner_data', $data['nbd']['nbd_data'], true );
-			if ( method_exists( $item, 'save' ) && $item->get_id() ) {
-				$item->save();
-			}
 
-			// Ensure order-level postmeta and WC Order meta _nbd = 1 is set so NBDesigner metabox displays
 			if ( $order && is_a( $order, '\WC_Order' ) ) {
 				$order->update_meta_data( '_nbd', '1' );
-				update_post_meta( $order->get_id(), '_nbd', '1' );
-				$order->save();
 			}
+		}
+	}
+
+	/**
+	 * Persist order-level `_nbd = 1` flag once the WooCommerce order has been saved
+	 * (compatible with Classic Checkout, Store API / Block Checkout, HPOS, and CPT storage).
+	 *
+	 * @param \WC_Order $order Order object.
+	 */
+	public static function sync_nbd_order_meta( $order ) {
+		if ( ! $order || ! is_a( $order, '\WC_Order' ) || ! $order->get_id() ) {
+			return;
+		}
+		$has_nbd = false;
+		foreach ( $order->get_items() as $item ) {
+			if ( is_object( $item ) && method_exists( $item, 'get_meta' ) && ! empty( $item->get_meta( '_nbd', true ) ) ) {
+				$has_nbd = true;
+				break;
+			}
+		}
+		if ( ! $has_nbd ) {
+			return;
+		}
+		if ( '1' !== (string) $order->get_meta( '_nbd', true ) ) {
+			$order->update_meta_data( '_nbd', '1' );
+			$order->save();
 		}
 	}
 
@@ -577,14 +599,14 @@ class CartIntegration {
 			return $product_images;
 		}
 		$preview_url = self::normalize_url( $cart_item['mr_tee_editor']['preview_url'] );
+		if ( 0 === strpos( $preview_url, '/' ) && 0 !== strpos( $preview_url, '//' ) ) {
+			$preview_url = set_url_scheme( rtrim( home_url(), '/' ) . $preview_url, is_ssl() ? 'https' : 'http' );
+		}
 		if ( empty( $preview_url ) || ! filter_var( $preview_url, FILTER_VALIDATE_URL ) ) {
 			return $product_images;
 		}
 
 		$attachment_id = ! empty( $cart_item['product_id'] ) ? (int) get_post_thumbnail_id( $cart_item['product_id'] ) : 0;
-		if ( $attachment_id <= 0 ) {
-			$attachment_id = 1;
-		}
 
 		$item_name = ( ! empty( $cart_item['data'] ) && method_exists( $cart_item['data'], 'get_name' ) )
 			? $cart_item['data']->get_name()
@@ -604,7 +626,7 @@ class CartIntegration {
 	}
 
 	/**
-	 * Replace Shoptimizer's checkout review thumbnail with the composite preview image.
+	 * Render or replace checkout review item thumbnail with the composite preview image across all themes.
 	 *
 	 * @param string               $product_name  Checkout item name HTML.
 	 * @param array<string, mixed> $cart_item     Cart item array.
@@ -631,13 +653,20 @@ class CartIntegration {
 
 		if ( false !== strpos( $product_name, 'product-item-thumbnail' ) ) {
 			$replaced = preg_replace(
-				'#(<div class="product-item-thumbnail">).*?(</div>)#s',
+				'#(<div\b[^>]*class="[^"]*\bproduct-item-thumbnail\b[^"]*"[^>]*>).*?(</div>)#s',
 				'$1' . $thumb_html . '$2',
 				$product_name,
 				1
 			);
 			if ( is_string( $replaced ) && '' !== $replaced ) {
 				return $replaced;
+			}
+		}
+
+		if ( false === strpos( $product_name, 'mr-tee-checkout-thumb' ) && preg_match( '#<img\b[^>]*>#i', $product_name ) ) {
+			$replaced_img = preg_replace( '#<img\b[^>]*>#i', $thumb_html, $product_name, 1 );
+			if ( is_string( $replaced_img ) && '' !== $replaced_img ) {
+				return $replaced_img;
 			}
 		}
 

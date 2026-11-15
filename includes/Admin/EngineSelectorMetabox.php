@@ -59,7 +59,7 @@ class EngineSelectorMetabox {
 		$color_sets = ColorPaletteRegistry::get_color_sets();
 		$icons      = IconSetRegistry::get_mushroom_icons();
 		$thumb_id   = get_post_thumbnail_id( $post->ID );
-		$thumb_url  = $thumb_id ? wp_get_attachment_image_url( $thumb_id, 'large' ) : wc_placeholder_img_src();
+		$thumb_url  = $thumb_id ? wp_get_attachment_image_url( $thumb_id, 'large' ) : ( function_exists( 'wc_placeholder_img_src' ) ? wc_placeholder_img_src() : '' );
 
 		?>
 		<div class="mr-tee-admin-wrap" data-product-id="<?php echo esc_attr( $post->ID ); ?>" data-thumb-url="<?php echo esc_url( $thumb_url ); ?>">
@@ -322,6 +322,11 @@ class EngineSelectorMetabox {
 
 		$engine = isset( $_POST['mr_tee_engine_mode'] ) ? sanitize_text_field( wp_unslash( $_POST['mr_tee_engine_mode'] ) ) : 'none';
 		update_post_meta( $post_id, '_mr_tee_engine_mode', $engine );
+		if ( 'nbdesigner' === $engine ) {
+			update_post_meta( $post_id, '_nbdesigner_enable', '1' );
+		} else {
+			delete_post_meta( $post_id, '_nbdesigner_enable' );
+		}
 
 		if ( isset( $_POST['mr_tee_config'] ) && is_array( $_POST['mr_tee_config'] ) ) {
 			$raw_config  = wp_unslash( $_POST['mr_tee_config'] ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized

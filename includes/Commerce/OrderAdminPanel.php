@@ -28,10 +28,17 @@ class OrderAdminPanel {
 	 * Register order export metabox.
 	 */
 	public static function register_order_metabox() {
-		$screen = class_exists( '\Automattic\WooCommerce\Internal\DataStores\Orders\CustomOrdersTableController' ) &&
-			wc_get_container()->get( \Automattic\WooCommerce\Internal\DataStores\Orders\CustomOrdersTableController::class )->custom_orders_table_usage_is_enabled()
-			? wc_get_page_screen_id( 'shop-order' )
-			: 'shop_order';
+		$screen = 'shop_order';
+		if (
+			class_exists( '\Automattic\WooCommerce\Internal\DataStores\Orders\CustomOrdersTableController' ) &&
+			function_exists( 'wc_get_container' ) &&
+			function_exists( 'wc_get_page_screen_id' )
+		) {
+			$controller = wc_get_container()->get( \Automattic\WooCommerce\Internal\DataStores\Orders\CustomOrdersTableController::class );
+			if ( $controller && $controller->custom_orders_table_usage_is_enabled() ) {
+				$screen = wc_get_page_screen_id( 'shop-order' );
+			}
+		}
 
 		add_meta_box(
 			'mr_tee_order_exports',
@@ -91,6 +98,12 @@ class OrderAdminPanel {
 	 * @param \WC_Product            $product Product object.
 	 */
 	public static function render_order_item_actions( $item_id, $item, $product ) {
+		if ( ! is_admin() ) {
+			return;
+		}
+		if ( ! is_object( $item ) || ! method_exists( $item, 'get_meta' ) ) {
+			return;
+		}
 		$data = $item->get_meta( '_mr_tee_editor_data' );
 		if ( empty( $data ) || ! is_array( $data ) ) {
 			return;

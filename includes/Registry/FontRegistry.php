@@ -456,8 +456,18 @@ class FontRegistry {
 		}
 
 		$fonts_dir = MR_TEE_EDITOR_DIR . 'assets/fonts/';
+		$fonts_url = MR_TEE_EDITOR_URL . 'assets/fonts/';
 		if ( ! is_dir( $fonts_dir ) ) {
 			wp_mkdir_p( $fonts_dir );
+		}
+		$is_plugin_writable = is_dir( $fonts_dir ) && ( function_exists( 'wp_is_writable' ) ? wp_is_writable( $fonts_dir ) : is_writable( $fonts_dir ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_writable
+		if ( ! $is_plugin_writable ) {
+			$wp_up     = wp_upload_dir();
+			$fonts_dir = trailingslashit( $wp_up['basedir'] ) . 'mr_tee_editor/fonts/';
+			$fonts_url = trailingslashit( $wp_up['baseurl'] ) . 'mr_tee_editor/fonts/';
+			if ( ! is_dir( $fonts_dir ) ) {
+				wp_mkdir_p( $fonts_dir );
+			}
 		}
 
 		$uploaded_fonts = array();
@@ -474,8 +484,9 @@ class FontRegistry {
 					if ( in_array( $f_ext, array( 'ttf', 'otf' ), true ) && ! str_contains( $filename, '__MACOSX' ) ) {
 						$target_name = sanitize_file_name( basename( $filename ) );
 						$target_path = $fonts_dir . $target_name;
-						copy( 'zip://' . $file['tmp_name'] . '#' . $filename, $target_path );
-						$uploaded_fonts[] = $target_path;
+						if ( @copy( 'zip://' . $file['tmp_name'] . '#' . $filename, $target_path ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+							$uploaded_fonts[] = $target_path;
+						}
 					}
 				}
 				$zip->close();
@@ -508,7 +519,7 @@ class FontRegistry {
 				'aliases'        => array( $font_id, $font_name ),
 				'file'           => basename( $font_path ),
 				'format'         => 'truetype',
-				'url'            => MR_TEE_EDITOR_URL . 'assets/fonts/' . basename( $font_path ),
+				'url'            => $fonts_url . basename( $font_path ),
 				'path'           => $font_path,
 				'font_type'      => $is_ot_svg ? 'opentype_svg' : 'truetype',
 				'color_svg'      => $is_ot_svg,
@@ -525,7 +536,8 @@ class FontRegistry {
 					$font_def['glyph_count']  = ! empty( $manifest['glyphs'] ) ? count( (array) $manifest['glyphs'] ) : 0;
 				} else {
 					$cache_data = OpenTypeSvgParser::get_or_create_cache( $font_path, $font_id, $font_name );
-					$font_def['data_url'] = MR_TEE_EDITOR_URL . 'assets/fonts/cache/' . $font_id . '.json';
+					$fallback_base = $is_plugin_writable ? ( MR_TEE_EDITOR_URL . 'assets/fonts/cache/' ) : SvgFontPackager::uploads_cache_base_url();
+					$font_def['data_url']    = $fallback_base . $font_id . '.json';
 					$font_def['glyph_count'] = ! empty( $cache_data['glyphs'] ) ? count( $cache_data['glyphs'] ) : 0;
 				}
 			}

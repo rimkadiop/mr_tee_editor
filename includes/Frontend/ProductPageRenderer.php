@@ -23,14 +23,38 @@ if ( ! defined( 'ABSPATH' ) ) {
 class ProductPageRenderer {
 
 	/**
+	 * Per-request in-memory cache of compiled product configurations.
+	 *
+	 * @var array<int, array<string, mixed>>
+	 */
+	private static $config_cache = array();
+
+	/**
+	 * Track product IDs whose personalization form has already been rendered in this request
+	 * so themes with sticky add-to-cart bars never emit duplicate `#mr-tee-editor-container` IDs.
+	 *
+	 * @var array<int, bool>
+	 */
+	private static $rendered_products = array();
+
+	/**
+	 * Track whether frontend scripts & styles have been enqueued for the request.
+	 *
+	 * @var bool
+	 */
+	private static $assets_enqueued = false;
+
+	/**
 	 * Register hooks.
 	 */
 	public static function init() {
+		add_action( 'wp', array( __CLASS__, 'suppress_nbd_frontend_hooks' ), 120 );
 		add_action( 'wp_head', array( __CLASS__, 'render_performance_hints' ), 2 );
 		add_action( 'wp_enqueue_scripts', array( __CLASS__, 'enqueue_assets' ) );
 		add_action( 'woocommerce_before_add_to_cart_button', array( __CLASS__, 'render_personalization_form' ), 15 );
 		add_filter( 'body_class', array( __CLASS__, 'filter_body_class' ) );
 		add_filter( 'script_loader_tag', array( __CLASS__, 'filter_script_loader_tag' ), 10, 3 );
+		add_filter( 'nbd_conditional_show_design_btn', array( __CLASS__, 'filter_nbd_show_design_btn' ), 999 );
 	}
 
 	/**
@@ -43,36 +67,39 @@ class ProductPageRenderer {
 	 */
 	public static function filter_script_loader_tag( $tag, $handle, $src ) {
 		if ( 'mr-tee-frontend-js' === $handle ) {
-			// Convert to root-relative path to completely eliminate CORS scheme mismatches
-			$parsed = wp_parse_url( $src );
-			$path   = ! empty( $parsed['path'] ) ? $parsed['path'] : $src;
-			if ( ! empty( $parsed['query'] ) ) {
-				$path .= '?' . $parsed['query'];
+			// Convert same-origin URLs to root-relative paths to prevent scheme mismatches while preserving external CDN URLs.
+			$parsed    = wp_parse_url( $src );
+			$url_host  = ! empty( $parsed['host'] ) ? $parsed['host'] : '';
+			$site_host = wp_parse_url( home_url(), PHP_URL_HOST );
+			$http_host = isset( $_SERVER['HTTP_HOST'] ) ? preg_replace( '/:\d+$/', '', sanitize_text_field( wp_unslash( $_SERVER['HTTP_HOST'] ) ) ) : '';
+			$same_orig = ! $url_host || $url_host === $site_host || ( $http_host && $url_host === $http_host );
+
+			$resolved_src = $src;
+			if ( $same_orig && ! empty( $parsed['path'] ) ) {
+				$resolved_src = $parsed['path'] . ( ! empty( $parsed['query'] ) ? '?' . $parsed['query'] : '' );
 			}
-			return sprintf( '<script type="module" src="%s" id="mr-tee-frontend-js-js"></script>', esc_url( $path ) );
+			return sprintf( '<script type="module" src="%s" id="mr-tee-frontend-js-js"></script>', esc_url( $resolved_src ) );
 		}
 		return $tag;
 	}
 
 	/**
-	 * Check if Mr. Tee Editor is active on the current product.
+	 * Check if a specific product ID is configured to use Mr. Tee Editor.
 	 *
+	 * @param int $product_id Product ID.
 	 * @return bool
 	 */
-	public static function is_active() {
-		if ( ! is_product() ) {
+	public static function is_mr_tee_product( $product_id ) {
+		$pid = (int) $product_id;
+		if ( $pid <= 0 ) {
 			return false;
 		}
-		global $post;
-		if ( ! $post ) {
-			return false;
-		}
-		$engine = get_post_meta( $post->ID, '_mr_tee_engine_mode', true );
+		$engine = get_post_meta( $pid, '_mr_tee_engine_mode', true );
 		if ( empty( $engine ) ) {
-			$engine = get_post_meta( $post->ID, '_mr_tee_editor_mode', true );
+			$engine = get_post_meta( $pid, '_mr_tee_editor_mode', true );
 		}
 		if ( empty( $engine ) ) {
-			$saved = get_post_meta( $post->ID, '_mr_tee_config', true );
+			$saved = get_post_meta( $pid, '_mr_tee_config', true );
 			if ( is_array( $saved ) && ! empty( $saved['editor_mode'] ) ) {
 				$engine = $saved['editor_mode'];
 			}
@@ -81,11 +108,114 @@ class ProductPageRenderer {
 	}
 
 	/**
-	 * Per-request in-memory cache of compiled product configurations.
+	 * Resolve the active Mr. Tee Editor product ID across standard single-product templates,
+	 * `[product_page]` shortcodes, and page-builder product contexts.
 	 *
-	 * @var array<int, array<string, mixed>>
+	 * @return int
 	 */
-	private static $config_cache = array();
+	public static function get_active_product_id() {
+		if ( function_exists( 'is_product' ) && is_product() ) {
+			$qid = get_queried_object_id();
+			if ( $qid > 0 && self::is_mr_tee_product( $qid ) ) {
+				return (int) $qid;
+			}
+			global $post;
+			if ( $post && 'product' === $post->post_type && self::is_mr_tee_product( $post->ID ) ) {
+				return (int) $post->ID;
+			}
+		}
+
+		global $product;
+		if ( is_object( $product ) && method_exists( $product, 'get_id' ) ) {
+			$pid = (int) $product->get_id();
+			if ( $pid > 0 && self::is_mr_tee_product( $pid ) ) {
+				return $pid;
+			}
+		}
+
+		global $post;
+		if ( $post && 'product' === $post->post_type && self::is_mr_tee_product( $post->ID ) ) {
+			return (int) $post->ID;
+		}
+
+		if ( $post && is_string( $post->post_content ) && has_shortcode( $post->post_content, 'product_page' ) ) {
+			if ( preg_match( '/\[product_page[^\]]*id=["\']?(\d+)["\']?/', $post->post_content, $m ) ) {
+				$sc_pid = absint( $m[1] );
+				if ( $sc_pid > 0 && self::is_mr_tee_product( $sc_pid ) ) {
+					return $sc_pid;
+				}
+			}
+		}
+
+		return 0;
+	}
+
+	/**
+	 * Check if Mr. Tee Editor is active on the current product context.
+	 *
+	 * @return bool
+	 */
+	public static function is_active() {
+		return self::get_active_product_id() > 0;
+	}
+
+	/**
+	 * Prevent NBDesigner frontend design button from rendering alongside Mr. Tee Editor.
+	 *
+	 * @param bool $show Existing NBDesigner flag.
+	 * @return bool
+	 */
+	public static function filter_nbd_show_design_btn( $show ) {
+		if ( self::is_active() ) {
+			return false;
+		}
+		global $product;
+		if ( is_object( $product ) && method_exists( $product, 'get_id' ) && self::is_mr_tee_product( $product->get_id() ) ) {
+			return false;
+		}
+		return $show;
+	}
+
+	/**
+	 * Remove NBDesigner single-product design button callbacks (including third-party mobile relocations)
+	 * whenever Mr. Tee Editor owns the current product page.
+	 */
+	public static function suppress_nbd_frontend_hooks() {
+		if ( ! self::is_active() ) {
+			return;
+		}
+		global $nb_designer;
+		if ( is_object( $nb_designer ) ) {
+			foreach ( array( 'woocommerce_before_add_to_cart_button', 'woocommerce_before_add_to_cart_form', 'woocommerce_after_add_to_cart_button', 'woocommerce_single_product_summary' ) as $hook ) {
+				remove_action( $hook, array( $nb_designer, 'nbdesigner_button' ), 30 );
+				remove_action( $hook, array( $nb_designer, 'nbdesigner_button' ), 1 );
+				remove_action( $hook, array( $nb_designer, 'nbdesigner_button2' ), 30 );
+				remove_action( $hook, array( $nb_designer, 'nbd_before_add_to_cart_button' ), 10 );
+			}
+		}
+	}
+
+	/**
+	 * Multibyte-safe uppercase helper.
+	 *
+	 * @param string $text Input text.
+	 * @return string
+	 */
+	private static function upper_utf8( $text ) {
+		$str = (string) $text;
+		return function_exists( 'mb_strtoupper' ) ? mb_strtoupper( $str, 'UTF-8' ) : strtoupper( $str );
+	}
+
+	/**
+	 * Multibyte-safe string length helper.
+	 *
+	 * @param string $text Input text.
+	 * @return int
+	 */
+	private static function strlen_utf8( $text ) {
+		$str = (string) $text;
+		return function_exists( 'mb_strlen' ) ? mb_strlen( $str, 'UTF-8' ) : strlen( $str );
+	}
 
 	/**
 	 * Retrieve compiled product configuration once per request.
@@ -108,14 +238,12 @@ class ProductPageRenderer {
 	 * @return array<int, string>
 	 */
 	public static function filter_body_class( $classes ) {
-		if ( self::is_active() ) {
+		$product_id = self::get_active_product_id();
+		if ( $product_id > 0 ) {
 			$classes[] = 'has-mr-tee-editor';
-			global $post;
-			if ( $post ) {
-				$config = self::get_cached_config( $post->ID );
-				if ( ! empty( $config['lock_aspect_ratio'] ) || ( isset( $config['product_type'] ) && 'flat_object' === $config['product_type'] ) ) {
-					$classes[] = 'mr-tee-locked-aspect-ratio';
-				}
+			$config    = self::get_cached_config( $product_id );
+			if ( ! empty( $config['lock_aspect_ratio'] ) || ( isset( $config['product_type'] ) && 'flat_object' === $config['product_type'] ) ) {
+				$classes[] = 'mr-tee-locked-aspect-ratio';
 			}
 		}
 		return $classes;
@@ -127,18 +255,18 @@ class ProductPageRenderer {
 	 * - Preloads glyph images used by default text with fetchpriority="high" so 3D fonts render instantly without flicker.
 	 */
 	public static function render_performance_hints() {
-		if ( ! self::is_active() ) {
-			return;
-		}
-
-		global $post;
-		if ( ! $post ) {
+		$product_id = self::get_active_product_id();
+		if ( $product_id <= 0 ) {
 			return;
 		}
 
 		// 1. Preload ES6 module graph in <head> to eliminate the 6-file discovery waterfall at bottom of <body>
 		$base_parsed = wp_parse_url( MR_TEE_EDITOR_URL );
-		$base_path   = ! empty( $base_parsed['path'] ) ? trailingslashit( $base_parsed['path'] ) : MR_TEE_EDITOR_URL;
+		$url_host    = ! empty( $base_parsed['host'] ) ? $base_parsed['host'] : '';
+		$site_host   = wp_parse_url( home_url(), PHP_URL_HOST );
+		$http_host   = isset( $_SERVER['HTTP_HOST'] ) ? preg_replace( '/:\d+$/', '', sanitize_text_field( wp_unslash( $_SERVER['HTTP_HOST'] ) ) ) : '';
+		$same_orig   = ! $url_host || $url_host === $site_host || ( $http_host && $url_host === $http_host );
+		$base_path   = ( $same_orig && ! empty( $base_parsed['path'] ) ) ? trailingslashit( $base_parsed['path'] ) : trailingslashit( MR_TEE_EDITOR_URL );
 		$ver         = MR_TEE_EDITOR_VERSION;
 
 		printf(
@@ -161,7 +289,7 @@ class ProductPageRenderer {
 			);
 		}
 
-		$config = self::get_cached_config( $post->ID );
+		$config = self::get_cached_config( $product_id );
 		if ( empty( $config['text_lines'] ) || ! is_array( $config['text_lines'] ) ) {
 			return;
 		}
@@ -192,7 +320,7 @@ class ProductPageRenderer {
 			if ( '' !== $default_text ) {
 				$is_upper = ( isset( $line['casing'] ) && 'UPPER' === $line['casing'] ) || ! empty( $font['uppercase'] );
 				if ( $is_upper ) {
-					$default_text = mb_strtoupper( $default_text, 'UTF-8' );
+					$default_text = self::upper_utf8( $default_text );
 				}
 				$svg_data = FontRegistry::get_svg_font_data( $font_id );
 				if ( ! empty( $svg_data['glyphs'] ) ) {
@@ -203,15 +331,19 @@ class ProductPageRenderer {
 							continue;
 						}
 						$seen[ $ch ] = true;
-						$g = isset( $svg_data['glyphs'][ $ch ] ) ? $svg_data['glyphs'][ $ch ] : ( isset( $svg_data['glyphs'][ mb_strtoupper( $ch, 'UTF-8' ) ] ) ? $svg_data['glyphs'][ mb_strtoupper( $ch, 'UTF-8' ) ] : null );
+						$ch_upper    = self::upper_utf8( $ch );
+						$g           = isset( $svg_data['glyphs'][ $ch ] ) ? $svg_data['glyphs'][ $ch ] : ( isset( $svg_data['glyphs'][ $ch_upper ] ) ? $svg_data['glyphs'][ $ch_upper ] : null );
 						if ( $g && ! empty( $g['svg'] ) ) {
 							if ( preg_match( '/(xlink:href|href)="([^"]+)"/', $g['svg'], $im ) ) {
 								$img_url = $im[2];
 								if ( ! isset( $preloaded_images[ $img_url ] ) && count( $preloaded_images ) < 24 ) {
 									$preloaded_images[ $img_url ] = true;
+									$img_path  = wp_parse_url( $img_url, PHP_URL_PATH );
+									$type_attr = ( is_string( $img_path ) && '.webp' === strtolower( substr( $img_path, -5 ) ) ) ? ' type="image/webp"' : '';
 									printf(
-										"<link rel=\"preload\" href=\"%s\" as=\"image\" type=\"image/webp\" fetchpriority=\"high\" />\n",
-										esc_url( $img_url )
+										"<link rel=\"preload\" href=\"%s\" as=\"image\"%s fetchpriority=\"high\" />\n",
+										esc_url( $img_url ),
+										$type_attr
 									);
 								}
 							}
@@ -224,14 +356,20 @@ class ProductPageRenderer {
 
 	/**
 	 * Enqueue frontend CSS and JavaScript modules.
+	 *
+	 * @param int $forced_product_id Optional product ID when invoked lazily from a shortcode/builder.
 	 */
-	public static function enqueue_assets() {
-		if ( ! self::is_active() ) {
+	public static function enqueue_assets( $forced_product_id = 0 ) {
+		if ( self::$assets_enqueued ) {
 			return;
 		}
+		$product_id = (int) $forced_product_id > 0 ? (int) $forced_product_id : self::get_active_product_id();
+		if ( $product_id <= 0 ) {
+			return;
+		}
+		self::$assets_enqueued = true;
 
-		global $post;
-		$config = self::get_cached_config( $post->ID );
+		$config = self::get_cached_config( $product_id );
 
 		// Determine allowed fonts strictly for this product
 		$all_fonts        = FontRegistry::get_fonts();
@@ -321,7 +459,7 @@ class ProductPageRenderer {
 			}
 		}
 
-		$thumb_id          = get_post_thumbnail_id( $post->ID );
+		$thumb_id          = get_post_thumbnail_id( $product_id );
 		$product_image_url = $thumb_id ? ( wp_get_attachment_image_url( $thumb_id, 'large' ) ?: wp_get_attachment_image_url( $thumb_id, 'full' ) ) : '';
 		if ( ! empty( $product_image_url ) && ! is_ssl() ) {
 			$product_image_url = set_url_scheme( $product_image_url, 'http' );
@@ -332,7 +470,7 @@ class ProductPageRenderer {
 			'mr-tee-frontend-js',
 			'mrTeeProductData',
 			array(
-				'productId'       => $post->ID,
+				'productId'       => $product_id,
 				'config'          => $config,
 				'fonts'           => $filtered_fonts,
 				'svgFonts'        => $preloaded_svg_fonts,
@@ -366,13 +504,34 @@ class ProductPageRenderer {
 	 * Render the personalization form on the single product page.
 	 */
 	public static function render_personalization_form() {
-		if ( ! self::is_active() ) {
+		global $product, $post;
+
+		$product_id = 0;
+		if ( is_object( $product ) && method_exists( $product, 'get_id' ) ) {
+			$product_id = (int) $product->get_id();
+		} elseif ( $post && 'product' === $post->post_type ) {
+			$product_id = (int) $post->ID;
+		} else {
+			$product_id = self::get_active_product_id();
+		}
+
+		if ( $product_id <= 0 || ! self::is_mr_tee_product( $product_id ) ) {
 			return;
 		}
 
-		global $post;
-		$config      = self::get_cached_config( $post->ID );
-		$all_fonts   = FontRegistry::get_fonts();
+		// Prevent themes with sticky add-to-cart bars or duplicate product forms from emitting duplicate DOM IDs.
+		if ( ! empty( self::$rendered_products[ $product_id ] ) ) {
+			return;
+		}
+		self::$rendered_products[ $product_id ] = true;
+
+		if ( ! self::$assets_enqueued ) {
+			self::enqueue_assets( $product_id );
+		}
+
+		$wc_product = is_object( $product ) && method_exists( $product, 'is_type' ) ? $product : ( function_exists( 'wc_get_product' ) ? wc_get_product( $product_id ) : null );
+		$config     = self::get_cached_config( $product_id );
+		$all_fonts  = FontRegistry::get_fonts();
 		$allowed_ids = array();
 		if ( ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
 			$allowed_ids = $config['allowed_fonts'];
@@ -405,7 +564,7 @@ class ProductPageRenderer {
 		$max_items  = isset( $rep['max_items'] ) ? intval( $rep['max_items'] ) : 6;
 
 		?>
-		<div id="mr-tee-editor-container" class="mr-tee-editor-container" data-product-id="<?php echo esc_attr( $post->ID ); ?>">
+		<div id="mr-tee-editor-container" class="mr-tee-editor-container" data-product-id="<?php echo esc_attr( $product_id ); ?>">
 			<!-- Header Card: PERSONNALISER -->
 			<div class="mr-tee-card mr-tee-main-card">
 				<div class="mr-tee-card-header">
@@ -467,11 +626,12 @@ class ProductPageRenderer {
 							<?php
 							continue;
 						endif;
+						$is_multiline = ! empty( $line['multiline'] );
 						?>
 						<div class="mr-tee-field-group" data-line-index="<?php echo esc_attr( $idx ); ?>" data-line-id="<?php echo esc_attr( $line['id'] ); ?>">
 							<div class="mr-tee-input-row">
-								<div class="mr-tee-floating-label-wrap">
-									<?php if ( ! empty( $line['multiline'] ) ) : ?>
+								<div class="mr-tee-floating-label-wrap <?php echo $is_multiline ? 'mr-tee-floating-label-wrap--textarea' : ''; ?>">
+									<?php if ( $is_multiline ) : ?>
 										<textarea
 											id="<?php echo esc_attr( $field_id ); ?>"
 											class="mr-tee-text-input mr-tee-textarea"
@@ -502,7 +662,7 @@ class ProductPageRenderer {
 										<?php echo esc_html( $line['label'] ); ?>
 									</label>
 									<span class="mr-tee-char-counter">
-										<span class="mr-tee-char-count"><?php echo mb_strlen( $line['default_text'] ); ?></span>/<?php echo esc_attr( $line['max_chars'] ); ?>
+										<span class="mr-tee-char-count"><?php echo esc_html( (string) self::strlen_utf8( $line['default_text'] ) ); ?></span>/<?php echo esc_attr( $line['max_chars'] ); ?>
 									</span>
 								</div>
 							</div>
@@ -581,7 +741,7 @@ class ProductPageRenderer {
 							</div>
 							<div class="mr-tee-trigger-right">
 								<span class="mr-tee-active-count-badge" id="mr-tee-active-count-display"><?php echo esc_html( $def_count ); ?></span>
-								<span class="dashicons dashicons-arrow-right-alt2"></span>
+								<svg class="mr-tee-chevron-icon" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.5 4.5L13 10l-5.5 5.5"/></svg>
 							</div>
 						</button>
 					</div>
@@ -612,7 +772,7 @@ class ProductPageRenderer {
 										<span class="mr-tee-rep-summary-text" id="mr-tee-rep-summary-<?php echo esc_attr( $item_num ); ?>"><?php echo esc_html( $def_item['name'] ); ?></span>
 									</div>
 									<button type="button" class="mr-tee-rep-toggle-btn" aria-label="Toggle details">
-										<span class="dashicons dashicons-arrow-down-alt2"></span>
+										<svg class="mr-tee-chevron-icon" width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7.5L10 12.5l5-5"/></svg>
 									</button>
 								</div>
 
@@ -634,7 +794,7 @@ class ProductPageRenderer {
 											<?php esc_html_e( 'Prénom', 'mr-tee-editor' ); ?>
 										</label>
 										<span class="mr-tee-char-counter">
-											<span class="mr-tee-char-count"><?php echo mb_strlen( $def_item['name'] ); ?></span>/<?php echo esc_attr( $rep['max_chars'] ); ?>
+											<span class="mr-tee-char-count"><?php echo esc_html( (string) self::strlen_utf8( $def_item['name'] ) ); ?></span>/<?php echo esc_attr( $rep['max_chars'] ); ?>
 										</span>
 									</div>
 
@@ -695,7 +855,9 @@ class ProductPageRenderer {
 			<div id="mr-tee-warning-modal" class="mr-tee-modal-backdrop mr-tee-warning-modal" style="display:none;">
 				<div class="mr-tee-modal-dialog">
 					<div class="mr-tee-modal-header mr-tee-warning-header">
-						<span class="dashicons dashicons-warning mr-tee-warn-icon"></span>
+						<span class="mr-tee-warn-icon" aria-hidden="true">
+							<svg width="24" height="24" viewBox="0 0 24 24" fill="#eab308" stroke="#854d0e" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13" stroke="#ffffff" stroke-width="2"/><circle cx="12" cy="17" r="1" fill="#ffffff" stroke="none"/></svg>
+						</span>
 						<h4 class="mr-tee-modal-title"><?php esc_html_e( 'Attention ! Personnalisation incomplète', 'mr-tee-editor' ); ?></h4>
 						<button type="button" class="mr-tee-modal-close-btn" id="mr-tee-close-warning-modal">&times;</button>
 					</div>
@@ -716,7 +878,9 @@ class ProductPageRenderer {
 			</div>
 
 			<!-- Hidden Form Inputs for Cart Payload Submission -->
-			<input type="hidden" name="add-to-cart" value="<?php echo esc_attr( $post->ID ); ?>" />
+			<?php if ( ! $wc_product || ( ! $wc_product->is_type( 'variable' ) && ! $wc_product->is_type( 'grouped' ) ) ) : ?>
+				<input type="hidden" name="add-to-cart" value="<?php echo esc_attr( $product_id ); ?>" />
+			<?php endif; ?>
 			<input type="hidden" name="mr_tee_design_key" id="mr_tee_design_key" value="" />
 			<input type="hidden" name="mr_tee_editor_payload" id="mr_tee_editor_payload" value="" />
 			<input type="hidden" name="mr_tee_preview_png" id="mr_tee_preview_png" value="" />

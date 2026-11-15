@@ -623,12 +623,17 @@ final class Plugin {
 	 */
 	public function filter_admin_script_loader_tag( $tag, $handle, $src ) {
 		if ( 'mr-tee-admin-order-export-js' === $handle ) {
-			$parsed = wp_parse_url( $src );
-			$path   = ! empty( $parsed['path'] ) ? $parsed['path'] : $src;
-			if ( ! empty( $parsed['query'] ) ) {
-				$path .= '?' . $parsed['query'];
+			$parsed    = wp_parse_url( $src );
+			$url_host  = ! empty( $parsed['host'] ) ? $parsed['host'] : '';
+			$site_host = wp_parse_url( home_url(), PHP_URL_HOST );
+			$http_host = isset( $_SERVER['HTTP_HOST'] ) ? preg_replace( '/:\d+$/', '', sanitize_text_field( wp_unslash( $_SERVER['HTTP_HOST'] ) ) ) : '';
+			$same_orig = ! $url_host || $url_host === $site_host || ( $http_host && $url_host === $http_host );
+
+			$resolved_src = $src;
+			if ( $same_orig && ! empty( $parsed['path'] ) ) {
+				$resolved_src = $parsed['path'] . ( ! empty( $parsed['query'] ) ? '?' . $parsed['query'] : '' );
 			}
-			return sprintf( '<script type="module" src="%s" id="mr-tee-admin-order-export-js-js"></script>' . "\n", esc_url( $path ) );
+			return sprintf( '<script type="module" src="%s" id="mr-tee-admin-order-export-js-js"></script>' . "\n", esc_url( $resolved_src ) );
 		}
 		return $tag;
 	}
@@ -655,8 +660,10 @@ final class Plugin {
 		$proto = is_ssl() ? 'https' : 'http';
 
 		// 1. WooCommerce Order edit screens (HPOS `wc-orders` and legacy CPT `shop_order`)
-		$order_id = 0;
-		if ( 'woocommerce_page_wc-orders' === $hook && ! empty( $_GET['id'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$order_id       = 0;
+		$hpos_screen    = function_exists( 'wc_get_page_screen_id' ) ? wc_get_page_screen_id( 'shop-order' ) : 'woocommerce_page_wc-orders';
+		$is_hpos_orders = ( $hook === $hpos_screen || 'woocommerce_page_wc-orders' === $hook || ( isset( $_GET['page'] ) && 'wc-orders' === sanitize_key( wp_unslash( $_GET['page'] ) ) ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		if ( $is_hpos_orders && ! empty( $_GET['id'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 			$action = isset( $_GET['action'] ) ? sanitize_key( wp_unslash( $_GET['action'] ) ) : 'edit'; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 			if ( 'edit' === $action ) {
 				$order_id = absint( $_GET['id'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended

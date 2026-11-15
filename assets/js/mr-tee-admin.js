@@ -361,26 +361,36 @@
 						const dx = (moveEvent.clientX - startX) / wrapRect.width * 100;
 						const dy = (moveEvent.clientY - startY) / wrapRect.height * 100;
 
+						const rightEdge = startLeft + startWidth;
+						const bottomEdge = startTop + startHeight;
+
 						let newW = startWidth;
 						let newH = startHeight;
 						let newL = startLeft;
 						let newT = startTop;
 
-						if (currentHandle.includes('e')) newW = Math.max(5, Math.min(100 - startLeft, startWidth + dx));
-						if (currentHandle.includes('s')) newH = Math.max(3, Math.min(100 - startTop, startHeight + dy));
+						if (currentHandle.includes('e')) {
+							newW = Math.max(5, Math.min(100 - startLeft, startWidth + dx));
+						}
+						if (currentHandle.includes('s')) {
+							newH = Math.max(3, Math.min(100 - startTop, startHeight + dy));
+						}
 						if (currentHandle.includes('w')) {
-							newW = Math.max(5, startWidth - dx);
-							newL = startLeft + dx;
+							newL = Math.max(0, Math.min(Math.max(0, rightEdge - 5), startLeft + dx));
+							newW = Math.max(5, rightEdge - newL);
 						}
 						if (currentHandle.includes('n')) {
-							newH = Math.max(3, startHeight - dy);
-							newT = startTop + dy;
+							newT = Math.max(0, Math.min(Math.max(0, bottomEdge - 3), startTop + dy));
+							newH = Math.max(3, bottomEdge - newT);
 						}
 
 						newW = Math.round(newW * 10) / 10;
 						newH = Math.round(newH * 10) / 10;
 						newL = Math.round(newL * 10) / 10;
 						newT = Math.round(newT * 10) / 10;
+
+						if (newL + newW > 100) newW = Math.max(5, Math.round((100 - newL) * 10) / 10);
+						if (newT + newH > 100) newH = Math.max(3, Math.round((100 - newT) * 10) / 10);
 
 						self.updateBoxBounds(currentIdx, newL, newT, newW, newH);
 					});
@@ -771,6 +781,12 @@
 			const color = FIELD_COLORS[newIdx % FIELD_COLORS.length];
 			const prevIdx = newIdx - 1;
 
+			this._uidCounter = (this._uidCounter || 0) + 1;
+			const uid = 'f' + Date.now().toString(36) + '_' + this._uidCounter + '_' + Math.random().toString(36).slice(2, 5);
+			const fieldId = `line_${uid}`;
+			const refId = `id-ref-${isImage ? 'image' : 'text'}-${uid}`;
+			const colorRefId = `id-ref-color-${uid}`;
+
 			let prevTop = 25.0;
 			let prevHeight = 8.5;
 			if (prevIdx >= 0) {
@@ -838,6 +854,9 @@
 					data-field-index="${newIdx}"
 					data-field-type="${fieldType}"
 				>
+					<input type="hidden" name="mr_tee_config[text_lines][${newIdx}][id]" value="${fieldId}" class="mr-tee-field-id" data-field-index="${newIdx}" />
+					<input type="hidden" name="mr_tee_config[text_lines][${newIdx}][ref_id]" value="${refId}" class="mr-tee-field-ref-id" data-field-index="${newIdx}" />
+					<input type="hidden" name="mr_tee_config[text_lines][${newIdx}][color_ref_id]" value="${colorRefId}" class="mr-tee-field-color-ref-id" data-field-index="${newIdx}" />
 					<div class="mr-tee-panel-badge-row">
 						<span class="mr-tee-panel-indicator" style="background: ${color};"></span>
 						<strong class="mr-tee-panel-title">Champ #${newIdx + 1} : ${fieldLabel}</strong>
@@ -1038,6 +1057,9 @@
 				const labelVal = $(this).find('.mr-tee-field-label-input').val() || `Champ ${i + 1}`;
 				$(this).attr('id', `mr-tee-field-panel-${i}`);
 				$(this).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-id').attr('name', `mr_tee_config[text_lines][${i}][id]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-ref-id').attr('name', `mr_tee_config[text_lines][${i}][ref_id]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-color-ref-id').attr('name', `mr_tee_config[text_lines][${i}][color_ref_id]`).attr('data-field-index', i);
 				$(this).find('.mr-tee-panel-indicator').css('background', color);
 				$(this).find('.mr-tee-panel-title').text(`Champ #${i + 1} : ${labelVal}`);
 				$(this).find('.mr-tee-field-label-input').attr('name', `mr_tee_config[text_lines][${i}][label]`).attr('data-field-index', i);
@@ -1199,6 +1221,7 @@
 					const letterSpacingUnits = (fontDef.letter_spacing !== undefined ? fontDef.letter_spacing : 0.05) * unitsPerEm;
 
 					const resolveAdminGlyph = (ch) => {
+						const isSpace = /^\s$/.test(ch);
 						const cands = [ch, ch.toUpperCase(), ch.toLowerCase()];
 						if (typeof ch.normalize === 'function') {
 							const base = ch.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -1209,10 +1232,28 @@
 							const entry = k ? svgData.glyphs[k] : null;
 							if (entry) {
 								if (!firstHit) firstHit = entry;
-								if (entry.svg || ch === ' ') return entry;
+								if ((entry.svg && entry.svg.trim() !== '') || isSpace) {
+									return {
+										svg: entry.svg || '',
+										hasSvg: Boolean(entry.svg && entry.svg.trim() !== ''),
+										isSpace,
+										adv: (entry.adv > 0) ? entry.adv : (isSpace ? Math.round(unitsPerEm * 0.32) : (svgData.defaultAdv || 500)),
+									};
+								}
 							}
 						}
-						return firstHit || { adv: svgData.defaultAdv || 500, svg: '' };
+						let ratio = 0.58;
+						if (/^[!.,:;'’‘|`1Iil]$/.test(ch)) {
+							ratio = 0.42;
+						} else if (/^[&?%@MWmw#]$/.test(ch)) {
+							ratio = 0.66;
+						}
+						return {
+							svg: '',
+							hasSvg: false,
+							isSpace,
+							adv: isSpace ? ((firstHit && firstHit.adv > 0) ? firstHit.adv : Math.round(unitsPerEm * 0.32)) : Math.round(unitsPerEm * ratio),
+						};
 					};
 
 					const lineWidths = [];
@@ -1222,7 +1263,7 @@
 						for (let i = 0; i < lineStr.length; i++) {
 							const ch = lineStr[i];
 							const g = resolveAdminGlyph(ch);
-							wUnits += (g.adv || 500) + (i < lineStr.length - 1 ? letterSpacingUnits : 0);
+							wUnits += g.adv + (i < lineStr.length - 1 ? letterSpacingUnits : 0);
 						}
 						lineWidths.push(wUnits);
 						if (wUnits > maxWidthUnits) maxWidthUnits = wUnits;
@@ -1236,6 +1277,8 @@
 					const scale = effectiveFontSize / unitsPerEm;
 					const lineStepY = effectiveFontSize * lineHeightRatio;
 					const startCenterY = (vbH / 2) - (((numLines - 1) * lineStepY) / 2);
+					const fbFontSize = Math.round(unitsPerEm * 0.78);
+					const fbStrokeWidth = Math.round(unitsPerEm * 0.11);
 
 					let glyphsMarkup = '';
 					for (let li = 0; li < lines.length; li++) {
@@ -1248,10 +1291,14 @@
 						for (let i = 0; i < lineStr.length; i++) {
 							const ch = lineStr[i];
 							const g = resolveAdminGlyph(ch);
-							if (g.svg) {
+							if (g.hasSvg) {
 								glyphsMarkup += `<g class="mrtee-ot-glyph" transform="translate(${cursorX.toFixed(3)}, ${baselineY.toFixed(3)}) scale(${scale.toFixed(5)})">${g.svg}</g>\n`;
+							} else if (!g.isSpace) {
+								const escapedCh = this.escapeXml(ch);
+								const fbCenterX = (g.adv / 2).toFixed(1);
+								glyphsMarkup += `<g class="mrtee-ot-glyph mrtee-ot-glyph-fallback" transform="translate(${cursorX.toFixed(3)}, ${baselineY.toFixed(3)}) scale(${scale.toFixed(5)})"><text x="${fbCenterX}" y="0" text-anchor="middle" font-family="'Bungee', 'Luckiest Guy', 'Impact', sans-serif" font-weight="900" font-size="${fbFontSize}" fill="#FFFFFF" stroke="#1E293B" stroke-width="${fbStrokeWidth}" stroke-linejoin="round" stroke-linecap="round" style="paint-order: stroke fill; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.45));">${escapedCh}</text></g>\n`;
 							}
-							cursorX += ((g.adv || 500) + letterSpacingUnits) * scale;
+							cursorX += (g.adv + letterSpacingUnits) * scale;
 						}
 					}
 

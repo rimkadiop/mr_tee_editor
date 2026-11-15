@@ -68,24 +68,41 @@ class NBDesignerBridge {
 			wp_mkdir_p( $nbd_dir . '/svg' );
 		}
 
-		// 1. Artifacts: Preview images (both root design_preview and preview/frame_0)
+		// 1. Artifacts: Preview images (write a single clean preview/frame_0.png so NBDesigner does not list duplicate thumbnails)
 		if ( ! empty( $preview_b64 ) ) {
 			$raw_b64 = strpos( $preview_b64, 'base64,' ) !== false ? explode( 'base64,', $preview_b64 )[1] : $preview_b64;
 			$decoded = base64_decode( $raw_b64 );
 			$is_jpg  = ( strpos( $preview_b64, 'image/jpeg' ) !== false || strpos( $preview_b64, 'image/jpg' ) !== false );
-			file_put_contents( trailingslashit( $nbd_dir ) . 'design_preview.png', $decoded );
-			file_put_contents( trailingslashit( $nbd_dir ) . 'preview/frame_0.png', $decoded );
-			if ( $is_jpg ) {
+			if ( $is_jpg && function_exists( 'imagecreatefromstring' ) && function_exists( 'imagepng' ) ) {
+				$im = @imagecreatefromstring( $decoded );
+				if ( false !== $im ) {
+					@imagepng( $im, trailingslashit( $nbd_dir ) . 'preview/frame_0.png' );
+					@imagepng( $im, trailingslashit( $nbd_dir ) . 'design_preview.png' );
+					@imagedestroy( $im );
+				} else {
+					file_put_contents( trailingslashit( $nbd_dir ) . 'preview/frame_0.jpg', $decoded );
+				}
 				file_put_contents( trailingslashit( $nbd_dir ) . 'design_preview.jpg', $decoded );
-				file_put_contents( trailingslashit( $nbd_dir ) . 'preview/frame_0.jpg', $decoded );
+			} else {
+				file_put_contents( trailingslashit( $nbd_dir ) . 'design_preview.png', $decoded );
+				file_put_contents( trailingslashit( $nbd_dir ) . 'preview/frame_0.png', $decoded );
 			}
 		} elseif ( ! empty( $source_files['preview_file'] ) && file_exists( $source_files['preview_file'] ) ) {
-			@copy( $source_files['preview_file'], trailingslashit( $nbd_dir ) . 'design_preview.png' );
-			@copy( $source_files['preview_file'], trailingslashit( $nbd_dir ) . 'preview/frame_0.png' );
 			$ext = strtolower( pathinfo( $source_files['preview_file'], PATHINFO_EXTENSION ) );
-			if ( 'jpg' === $ext || 'jpeg' === $ext ) {
+			if ( ( 'jpg' === $ext || 'jpeg' === $ext ) && function_exists( 'imagecreatefromstring' ) && function_exists( 'imagepng' ) ) {
+				$raw_bytes = @file_get_contents( $source_files['preview_file'] );
+				$im        = $raw_bytes ? @imagecreatefromstring( $raw_bytes ) : false;
+				if ( false !== $im ) {
+					@imagepng( $im, trailingslashit( $nbd_dir ) . 'preview/frame_0.png' );
+					@imagepng( $im, trailingslashit( $nbd_dir ) . 'design_preview.png' );
+					@imagedestroy( $im );
+				} else {
+					@copy( $source_files['preview_file'], trailingslashit( $nbd_dir ) . 'preview/frame_0.jpg' );
+				}
 				@copy( $source_files['preview_file'], trailingslashit( $nbd_dir ) . 'design_preview.jpg' );
-				@copy( $source_files['preview_file'], trailingslashit( $nbd_dir ) . 'preview/frame_0.jpg' );
+			} else {
+				@copy( $source_files['preview_file'], trailingslashit( $nbd_dir ) . 'design_preview.png' );
+				@copy( $source_files['preview_file'], trailingslashit( $nbd_dir ) . 'preview/frame_0.png' );
 			}
 		}
 
@@ -115,12 +132,12 @@ class NBDesignerBridge {
 
 		// 4. Product sides configuration with dynamic physical dimensions
 		$cfg    = \MrTeeEditor\Domain\SceneGraphSchema::get_product_config( $product_id );
-		$prod_w = isset( $cfg['print_real_width'] ) ? floatval( $cfg['print_real_width'] ) : 30.0;
-		$prod_h = isset( $cfg['print_real_height'] ) ? floatval( $cfg['print_real_height'] ) : 40.0;
-		$unit   = ! empty( $cfg['print_unit'] ) ? $cfg['print_unit'] : 'cm';
-		$dpi    = isset( $cfg['dpi'] ) ? intval( $cfg['dpi'] ) : 300;
-		$area_w = isset( $cfg['print_width_px'] ) ? intval( $cfg['print_width_px'] ) : 2400;
-		$area_h = isset( $cfg['print_height_px'] ) ? intval( $cfg['print_height_px'] ) : 3000;
+		$prod_w = ! empty( $custom_data['crop_print_width'] ) ? floatval( $custom_data['crop_print_width'] ) : ( isset( $cfg['print_real_width'] ) ? floatval( $cfg['print_real_width'] ) : 30.0 );
+		$prod_h = ! empty( $custom_data['crop_print_height'] ) ? floatval( $custom_data['crop_print_height'] ) : ( isset( $cfg['print_real_height'] ) ? floatval( $cfg['print_real_height'] ) : 40.0 );
+		$unit   = ! empty( $custom_data['print_unit'] ) ? $custom_data['print_unit'] : ( ! empty( $cfg['print_unit'] ) ? $cfg['print_unit'] : 'cm' );
+		$dpi    = ! empty( $custom_data['dpi'] ) ? intval( $custom_data['dpi'] ) : ( isset( $cfg['dpi'] ) ? intval( $cfg['dpi'] ) : 300 );
+		$area_w = ! empty( $custom_data['crop_width_px'] ) ? intval( $custom_data['crop_width_px'] ) : ( isset( $cfg['print_width_px'] ) ? intval( $cfg['print_width_px'] ) : 2400 );
+		$area_h = ! empty( $custom_data['crop_height_px'] ) ? intval( $custom_data['crop_height_px'] ) : ( isset( $cfg['print_height_px'] ) ? intval( $cfg['print_height_px'] ) : 3000 );
 
 		$product_sides = array(
 			array(
@@ -157,7 +174,7 @@ class NBDesignerBridge {
 
 		// 6. Artifact: config.json
 		$config_data = array(
-			'version'     => '2.2.0',
+			'version'     => '2.3.17',
 			'engine'      => 'mr_tee_editor',
 			'product_id'  => $product_id,
 			'created_at'  => current_time( 'mysql' ),
@@ -176,9 +193,26 @@ class NBDesignerBridge {
 		// 7. Artifact: design.json (Fabric/NBDesigner layers for "View detail" admin screen)
 		$objects = array();
 
-		// Text lines
+		// Text & Image fields
 		if ( ! empty( $custom_data['text_lines'] ) && is_array( $custom_data['text_lines'] ) ) {
 			foreach ( $custom_data['text_lines'] as $idx => $line ) {
+				$is_image = isset( $line['fieldType'] ) && 'image' === $line['fieldType'];
+				if ( $is_image ) {
+					$img_url = ! empty( $line['imageUrl'] ) ? $line['imageUrl'] : '';
+					if ( ! empty( $img_url ) ) {
+						$objects[] = array(
+							'type'       => 'image',
+							'src'        => $img_url,
+							'origin_url' => $img_url,
+							'left'       => 100,
+							'top'        => 50 + ( $idx * 55 ),
+							'width'      => 180,
+							'height'     => 180,
+						);
+					}
+					continue;
+				}
+
 				$text   = ! empty( $line['value'] ) ? $line['value'] : ( ! empty( $line['default_text'] ) ? $line['default_text'] : '' );
 				$family = ! empty( $line['fontId'] ) ? $line['fontId'] : 'Super Mario Wii';
 				if ( ! empty( $text ) ) {

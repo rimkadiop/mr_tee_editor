@@ -298,7 +298,7 @@ export class StateStore {
 	validateWarnings() {
 		const warnings = [];
 		const checkRef = (ref) => {
-			if (!ref) return;
+			if (!ref || ref.editable === false) return;
 			const props = ref.customProperties || [];
 			const warningProp = props.find(p => p.key === 'warning');
 			const editedProp = props.find(p => p.key === 'edited');
@@ -306,6 +306,7 @@ export class StateStore {
 			if (warningProp && warningProp.value && (!editedProp || !editedProp.value)) {
 				warnings.push({
 					id: ref.id,
+					type: ref.type || 'TEXT',
 					name: ref.name,
 					value: ref.value !== undefined ? ref.value : (ref.name || ''),
 				});

@@ -7,10 +7,10 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.3.15';
+import { SvgRenderer } from './svg-renderer.js?v=2.3.17';
 
 export class PrintExporter {
-	static CHUNK_SIZE_BYTES = 300 * 1024; // 300 KB binary chunks stay safely below shared host 413 limits
+	static CHUNK_SIZE_BYTES = 600 * 1024; // 600 KB binary chunks fit cleanly under 1 MB proxy/WAF limits while minimizing round-trips
 
 	static normalizeSameHostUrl(rawUrl) {
 		if (!rawUrl || typeof rawUrl !== 'string') return '';
@@ -26,7 +26,7 @@ export class PrintExporter {
 
 	static async fetchImageAsDataUrl(rawUrl) {
 		if (!rawUrl || typeof rawUrl !== 'string') return '';
-		if (rawUrl.startsWith('data:image/') && !rawUrl.startsWith('data:image/svg+xml')) {
+		if (rawUrl.startsWith('data:image/')) {
 			return rawUrl;
 		}
 		if (typeof window !== 'undefined') {
@@ -299,8 +299,14 @@ export class PrintExporter {
 	static async prepareExport(layers, zoomTransform, store, config) {
 		await this.ensureStoreImagesUploaded(store, config);
 
+		if (store && store.state && typeof window !== 'undefined' && window.mrTeeSceneGraphEngine) {
+			const merged = window.mrTeeSceneGraphEngine.getLayersMergedWithRefs(store.state.layers, store.state.references);
+			layers = window.mrTeeSceneGraphEngine.applyRowCentering(merged, store.state.activeCount);
+		}
+
 		const isFlatObject = config.product_type === 'flat_object';
 		const hasPerLineBoxes = Array.isArray(config.text_lines) && config.text_lines.some(l => l.box_left !== undefined && l.box_width !== undefined);
+		const hasRepeaterOrClipart = Boolean((config.repeater && config.repeater.enabled) || (config.vector_clipart && config.vector_clipart.enabled));
 		const realW  = parseFloat(config.print_real_width) || 30.0;
 		const realH  = parseFloat(config.print_real_height) || 40.0;
 		const unit   = config.print_unit || 'cm';
@@ -313,7 +319,7 @@ export class PrintExporter {
 		let exportPxH = parseInt(config.print_height_px, 10) || 3000;
 		let exportRatio = (realW > 0 && realH > 0) ? (realW / realH) : 1.0;
 
-		if (!isFlatObject && hasPerLineBoxes) {
+		if (!isFlatObject && hasPerLineBoxes && !hasRepeaterOrClipart) {
 			let xMin = 100, yMin = 100, xMax = 0, yMax = 0;
 			config.text_lines.forEach(l => {
 				if (l.box_left !== undefined && l.box_width !== undefined) {
@@ -409,9 +415,9 @@ export class PrintExporter {
 			fontFaceCss: this.extractFontFaceCss(),
 		});
 
-		// Inline external glyph & artwork images for reliable 300 DPI canvas rasterization
-		const inlinedExportSvg = await this.inlineExternalImages(svgMarkup);
-		const inlinedFullPreviewSvg = await this.inlineExternalImages(fullPreviewSvg);
+		// Inline external glyph, artwork images, and active @font-face font binaries for crisp 300 DPI SVG rasterization
+		const inlinedExportSvg = await this.inlineExternalFonts(await this.inlineExternalImages(svgMarkup));
+		const inlinedFullPreviewSvg = await this.inlineExternalFonts(await this.inlineExternalImages(fullPreviewSvg));
 
 		// 3. Rasterize to 300 DPI Transparent PNG (tightly cropped, lossless print output)
 		const print300DpiB64 = await this.rasterizeSvgToPng(inlinedExportSvg, exportPxW, exportPxH);
@@ -507,7 +513,8 @@ export class PrintExporter {
 
 		const urlMap = {};
 		await Promise.all(urlsToFetch.map(async (url) => {
-			const b64 = await this.fetchImageAsDataUrl(url);
+			const cleanUrl = url.replace(/&amp;/g, '&');
+			const b64 = await this.fetchImageAsDataUrl(cleanUrl);
 			if (b64) {
 				urlMap[url] = b64;
 			}
@@ -518,6 +525,174 @@ export class PrintExporter {
 			inlined = inlined.split(url).join(b64);
 		}
 		return inlined;
+	}
+
+	/**
+	 * Determine canonical font MIME type from a font file URL.
+	 *
+	 * @param {string} url Font resource URL.
+	 * @return {string}
+	 */
+	static getFontMimeType(url) {
+		const clean = String(url || '').split('?')[0].split('#')[0].toLowerCase();
+		if (clean.endsWith('.woff2')) return 'font/woff2';
+		if (clean.endsWith('.woff')) return 'font/woff';
+		if (clean.endsWith('.otf')) return 'font/otf';
+		return 'font/ttf';
+	}
+
+	/**
+	 * Fetch a font binary once and return a cached base64 data URI with explicit font MIME type.
+	 *
+	 * @param {string} rawUrl Font file URL.
+	 * @return {Promise<string>}
+	 */
+	static async fetchFontAsDataUrl(rawUrl) {
+		if (!rawUrl || typeof rawUrl !== 'string') return '';
+		if (rawUrl.startsWith('data:')) {
+			return rawUrl;
+		}
+		const fetchUrl = this.normalizeSameHostUrl(rawUrl);
+		if (typeof window !== 'undefined') {
+			window.mrTeeFontB64Cache = window.mrTeeFontB64Cache || {};
+			if (window.mrTeeFontB64Cache[rawUrl]) {
+				return window.mrTeeFontB64Cache[rawUrl];
+			}
+			if (window.mrTeeFontB64Cache[fetchUrl]) {
+				window.mrTeeFontB64Cache[rawUrl] = window.mrTeeFontB64Cache[fetchUrl];
+				return window.mrTeeFontB64Cache[fetchUrl];
+			}
+		}
+		try {
+			const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+			const timer = ctrl ? setTimeout(() => ctrl.abort(), 12000) : null;
+			const resp = await fetch(fetchUrl, ctrl ? { signal: ctrl.signal } : undefined);
+			if (timer) clearTimeout(timer);
+			if (resp.ok) {
+				const buf = await resp.arrayBuffer();
+				const typedBlob = new Blob([buf], { type: this.getFontMimeType(fetchUrl) });
+				const b64 = await new Promise((res, rej) => {
+					const reader = new FileReader();
+					reader.onloadend = () => res(reader.result);
+					reader.onerror = rej;
+					reader.readAsDataURL(typedBlob);
+				});
+				if (typeof window !== 'undefined' && b64) {
+					window.mrTeeFontB64Cache[rawUrl] = b64;
+					if (fetchUrl !== rawUrl) window.mrTeeFontB64Cache[fetchUrl] = b64;
+				}
+				return b64 || '';
+			}
+		} catch (e) {
+			console.warn('[MrTee PrintExporter] Failed to fetch font URL:', rawUrl, e);
+		}
+		return '';
+	}
+
+	/**
+	 * Inline active @font-face font binaries referenced by SVG nodes so standalone SVGs and
+	 * Blob-rendered rasterization canvases display exact custom TTF/OTF typography.
+	 *
+	 * @param {string} svgMarkup SVG XML markup.
+	 * @return {Promise<string>}
+	 */
+	static async inlineExternalFonts(svgMarkup) {
+		if (!svgMarkup) return '';
+
+		const markupWithoutStyles = svgMarkup.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '');
+		const usedFamilies = new Set();
+		const decodeEntities = (val) => String(val || '')
+			.replace(/&apos;|&#0*39;/gi, "'")
+			.replace(/&quot;/gi, '"')
+			.replace(/&amp;/gi, '&');
+
+		const addFamiliesFromList = (rawList) => {
+			if (!rawList) return;
+			const decoded = decodeEntities(rawList);
+			for (const part of decoded.split(',')) {
+				const cleaned = part.trim().replace(/^['"]+|['"]+$/g, '').trim().toLowerCase();
+				if (cleaned) {
+					usedFamilies.add(cleaned);
+				}
+			}
+		};
+
+		for (const m of markupWithoutStyles.matchAll(/\bfont-family\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)) {
+			addFamiliesFromList(m[1] !== undefined ? m[1] : m[2]);
+		}
+		for (const m of markupWithoutStyles.matchAll(/\bstyle\s*=\s*(?:"([^"]*)"|'([^']*)')/gi)) {
+			const styleStr = decodeEntities(m[1] !== undefined ? m[1] : m[2]);
+			for (const fm of styleStr.matchAll(/\bfont-family\s*:\s*([^;]+)/gi)) {
+				addFamiliesFromList(fm[1]);
+			}
+		}
+
+		if (usedFamilies.size === 0) {
+			return svgMarkup;
+		}
+
+		const fontUrls = [];
+		for (const sm of svgMarkup.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)) {
+			const cssBody = sm[1];
+			for (const ruleMatch of cssBody.matchAll(/@font-face\s*\{([^}]*)\}/gi)) {
+				const ruleBody = ruleMatch[1];
+				const famMatch = ruleBody.match(/font-family\s*:\s*(?:'([^']*)'|"([^"]*)"|([^;]+))/i);
+				if (!famMatch) continue;
+				const famName = decodeEntities(famMatch[1] || famMatch[2] || famMatch[3] || '')
+					.trim()
+					.replace(/^['"]+|['"]+$/g, '')
+					.trim()
+					.toLowerCase();
+				if (!famName || !usedFamilies.has(famName)) continue;
+
+				for (const urlMatch of ruleBody.matchAll(/url\(\s*(?:['"]([^'"]+)['"]|([^)\s'"]+))\s*\)/gi)) {
+					const rawUrl = (urlMatch[1] || urlMatch[2] || '').trim();
+					if (rawUrl && !rawUrl.startsWith('data:') && !fontUrls.includes(rawUrl)) {
+						fontUrls.push(rawUrl);
+					}
+				}
+			}
+		}
+
+		if (fontUrls.length === 0) {
+			return svgMarkup;
+		}
+
+		const fontMap = {};
+		await Promise.all(fontUrls.map(async (u) => {
+			const cleanUrl = decodeEntities(u);
+			const b64 = await this.fetchFontAsDataUrl(cleanUrl);
+			if (b64) {
+				fontMap[u] = b64;
+			}
+		}));
+
+		if (Object.keys(fontMap).length === 0) {
+			return svgMarkup;
+		}
+
+		return svgMarkup.replace(/<style\b([^>]*)>([\s\S]*?)<\/style>/gi, (fullStyle, attrs, cssBody) => {
+			const rewrittenCss = cssBody.replace(/@font-face\s*\{([^}]*)\}/gi, (ruleFull, ruleBody) => {
+				const famMatch = ruleBody.match(/font-family\s*:\s*(?:'([^']*)'|"([^"]*)"|([^;]+))/i);
+				if (!famMatch) return ruleFull;
+				const famName = decodeEntities(famMatch[1] || famMatch[2] || famMatch[3] || '')
+					.trim()
+					.replace(/^['"]+|['"]+$/g, '')
+					.trim()
+					.toLowerCase();
+				if (!famName || !usedFamilies.has(famName)) {
+					return ruleFull;
+				}
+				return ruleFull.replace(/url\(\s*(?:(['"])([^'"]+)\1|([^)\s'"]+))\s*\)/gi, (um, q, quotedUrl, bareUrl) => {
+					const rawUrl = (quotedUrl || bareUrl || '').trim();
+					if (fontMap[rawUrl]) {
+						return `url('${fontMap[rawUrl]}')`;
+					}
+					return um;
+				});
+			});
+			return `<style${attrs}>${rewrittenCss}</style>`;
+		});
 	}
 
 	/**

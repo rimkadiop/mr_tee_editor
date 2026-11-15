@@ -1147,6 +1147,11 @@ class SceneGraphSchema {
 					'y'          => $box_t,
 					'width'      => $box_w,
 					'height'     => $box_h,
+					'box_left'   => $box_l,
+					'box_top'    => $box_t,
+					'box_width'  => $box_w,
+					'box_height' => $box_h,
+					'box_rotate' => $box_r,
 					'items'      => array( $text_layer ),
 				);
 			} else {

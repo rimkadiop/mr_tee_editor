@@ -7,12 +7,12 @@
  * @package MrTeeEditor\Assets
  */
 
-import { StateStore } from './modules/state-store.js?v=2.3.15';
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.3.15';
-import { SvgRenderer } from './modules/svg-renderer.js?v=2.3.15';
-import { GalleryStage } from './modules/gallery-stage.js?v=2.3.15';
-import { FormController } from './modules/form-controller.js?v=2.3.15';
-import { PrintExporter } from './modules/print-exporter.js?v=2.3.15';
+import { StateStore } from './modules/state-store.js?v=2.3.17';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.3.17';
+import { SvgRenderer } from './modules/svg-renderer.js?v=2.3.17';
+import { GalleryStage } from './modules/gallery-stage.js?v=2.3.17';
+import { FormController } from './modules/form-controller.js?v=2.3.17';
+import { PrintExporter } from './modules/print-exporter.js?v=2.3.17';
 
 window.mrTeePrintExporter = PrintExporter;
 window.mrTeeSvgRenderer = SvgRenderer;
@@ -74,6 +74,15 @@ class MrTeeFrontendApp {
 
 		// Initial Render
 		this.renderSceneGraph();
+
+		// Re-sync SVG aspect ratio once gallery image finishes loading if not already complete
+		const galleryImg = document.querySelector('.woocommerce-product-gallery__image img:not(.emoji):not(.zoomImg)');
+		if (galleryImg && (!galleryImg.complete || !galleryImg.naturalWidth)) {
+			galleryImg.addEventListener('load', () => {
+				this._cachedAspectRatio = 0;
+				this.renderSceneGraph();
+			}, { once: true });
+		}
 
 		// 5. Stage 1 (Critical Initial Paint): Immediately decode ONLY the default_text glyphs
 		//    so the visible product preview renders with 0ms delay and zero bandwidth contention.
@@ -259,6 +268,12 @@ class MrTeeFrontendApp {
 		let ok = false;
 		let exportErr = null;
 		try {
+			if (this._rafRenderId) {
+				cancelAnimationFrame(this._rafRenderId);
+				this._rafRenderId = null;
+			}
+			this.renderSceneGraph();
+
 			await PrintExporter.prepareExport(
 				this.currentLayers,
 				this.currentZoom,

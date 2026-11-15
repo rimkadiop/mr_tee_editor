@@ -313,9 +313,9 @@ export class SvgRenderer {
 		const isMulti = colorSet.colorMode === 'multi' && Array.isArray(colorSet.palette) && colorSet.palette.length > 0;
 		const palette = isMulti ? colorSet.palette : [node.fill?.color?.hex || node.fill || colorSet.colorHex || '#ffffff'];
 
-		// Filter choice: embroidery relief vs 3d shadow
+		// Filter choice: embroidery relief vs 3d shadow (suppressed inside <mask> for sharp cutout edges)
 		const isEmbroidery = node.fontStyle === 'embroidery' || (colorSet.id && colorSet.id.includes('embroidery')) || strokeColor === 'transparent';
-		const filterAttr = isEmbroidery ? 'filter="url(#mrtee-embroidery-relief)"' : 'filter="url(#mrtee-3d-shadow)"';
+		const filterAttr = node._inMask ? '' : (isEmbroidery ? 'filter="url(#mrtee-embroidery-relief)"' : 'filter="url(#mrtee-3d-shadow)"');
 
 		let tspans = '';
 		let charIndex = 0;
@@ -389,8 +389,11 @@ export class SvgRenderer {
 	 * @return {string}
 	 */
 	static renderImageNode(node, options = {}) {
-		const url = node.url || '';
+		let url = node.url || '';
 		if (!url) return '';
+		if (!options.isExport && typeof window !== 'undefined' && window.mrTeeImageB64Cache && window.mrTeeImageB64Cache[url]) {
+			url = window.mrTeeImageB64Cache[url];
+		}
 
 		const ratio = (options.ratio && options.ratio > 0) ? options.ratio : 1.0;
 		const hasPerLine = Boolean(options.hasPerLineBoxes);
@@ -441,7 +444,6 @@ export class SvgRenderer {
 			<g clip-path="url(#${clipId})">
 				<image
 					href="${this.escapeXml(url)}"
-					xlink:href="${this.escapeXml(url)}"
 					x="${x.toFixed(4)}"
 					y="${y.toFixed(4)}"
 					width="${w.toFixed(4)}"
@@ -452,17 +454,25 @@ export class SvgRenderer {
 		</g>`;
 		}
 
-		const x = parseFloat(node.x) || 30;
-		const rawY = parseFloat(node.y) || 50;
+		let x = parseFloat(node.x) || 30;
+		let rawY = parseFloat(node.y) || 50;
+		let w = parseFloat(node.width) || 21;
+		let rawH = parseFloat(node.height) || 19;
+
+		if (options.cropBoundingBox && options.cropBoundingBox.spanW > 0 && options.cropBoundingBox.spanH > 0) {
+			const c = options.cropBoundingBox;
+			x = ((x - c.xMin) / c.spanW) * 100;
+			rawY = ((rawY - c.yMin) / c.spanH) * 100;
+			w = (w / c.spanW) * 100;
+			rawH = (rawH / c.spanH) * 100;
+		}
+
 		const y = (hasPerLine && ratio !== 1.0) ? (rawY / ratio) : rawY;
-		const w = parseFloat(node.width) || 21;
-		const rawH = parseFloat(node.height) || 19;
 		const h = (hasPerLine && ratio !== 1.0) ? (rawH / ratio) : rawH;
 
 		return `
 		<image
 			href="${this.escapeXml(url)}"
-			xlink:href="${this.escapeXml(url)}"
 			x="${x}"
 			y="${y}"
 			width="${w}"
@@ -503,42 +513,86 @@ export class SvgRenderer {
 	 * Render a MASK node (e.g. Leopard texture filled text).
 	 *
 	 * @param {Object} node MASK node definition.
+	 * @param {Object} options Rendering options.
 	 * @return {string}
 	 */
-	static renderMaskNode(node) {
+	static renderMaskNode(node, options = {}) {
 		const maskId = `mrtee-mask-${Math.random().toString(36).substr(2, 9)}`;
 		const childItems = node.items || [];
 		const textureUrl = node.textureUrl || (node.image && node.image.url) || 'https://cdn.monsieurtshirt.com/textures/leopard.png';
 
+		const ratio = (options.ratio && options.ratio > 0) ? options.ratio : 1.0;
+		const hasPerLine = Boolean(options.hasPerLineBoxes);
+		const firstTextChild = childItems.find(c => c && c.type === 'TEXT') || {};
+
+		let boxL = (node.box_left !== undefined) ? parseFloat(node.box_left)
+			: (node.x !== undefined ? parseFloat(node.x)
+				: (firstTextChild.box_left !== undefined ? parseFloat(firstTextChild.box_left) : 15));
+		let boxT = (node.box_top !== undefined) ? parseFloat(node.box_top)
+			: (node.y !== undefined ? parseFloat(node.y)
+				: (firstTextChild.box_top !== undefined ? parseFloat(firstTextChild.box_top) : 20));
+		let boxW = (node.box_width !== undefined) ? parseFloat(node.box_width)
+			: (node.width !== undefined ? parseFloat(node.width)
+				: (firstTextChild.box_width !== undefined ? parseFloat(firstTextChild.box_width) : 70));
+		let boxH = (node.box_height !== undefined) ? parseFloat(node.box_height)
+			: (node.height !== undefined ? parseFloat(node.height)
+				: (firstTextChild.box_height !== undefined ? parseFloat(firstTextChild.box_height) : 60));
+
+		if (options.cropBoundingBox && options.cropBoundingBox.spanW > 0 && options.cropBoundingBox.spanH > 0) {
+			const c = options.cropBoundingBox;
+			boxL = ((boxL - c.xMin) / c.spanW) * 100;
+			boxT = ((boxT - c.yMin) / c.spanH) * 100;
+			boxW = (boxW / c.spanW) * 100;
+			boxH = (boxH / c.spanH) * 100;
+		}
+
+		const x = boxL;
+		const w = Math.max(0.1, boxW);
+		const y = (hasPerLine && ratio !== 1.0) ? (boxT / ratio) : boxT;
+		const h = Math.max(0.1, (hasPerLine && ratio !== 1.0) ? (boxH / ratio) : boxH);
+
+		const cx = x + (w / 2);
+		const cy = y + (h / 2);
+		const rawRotate = node.box_rotate !== undefined ? node.box_rotate
+			: (node.rotate !== undefined ? node.rotate
+				: (firstTextChild.box_rotate !== undefined ? firstTextChild.box_rotate : firstTextChild.rotate));
+		const rotateAngle = parseFloat(rawRotate) || 0;
+		const transformAttr = (rotateAngle !== 0) ? ` transform="rotate(${rotateAngle.toFixed(2)}, ${cx.toFixed(4)}, ${cy.toFixed(4)})"` : '';
+
 		let maskContent = '';
 		for (const child of childItems) {
 			if (child.type === 'TEXT') {
-				// Render mask text in solid white (#ffffff)
+				// Render mask text in solid crisp white (#ffffff) with zero stroke or blur
 				const maskTextNode = Object.assign({}, child, {
 					fill: '#ffffff',
 					colorSet: null,
-					stroke: 'transparent',
-					strokeWidth: 0
+					stroke: { width: 0, color: 'transparent' },
+					strokeWidth: 0,
+					_inMask: true,
 				});
-				maskContent += this.renderTextNode(maskTextNode);
+				maskContent += this.renderTextNode(maskTextNode, options);
 			}
+		}
+
+		let textureHref = textureUrl;
+		if (!options.isExport && typeof window !== 'undefined' && window.mrTeeImageB64Cache && window.mrTeeImageB64Cache[textureHref]) {
+			textureHref = window.mrTeeImageB64Cache[textureHref];
 		}
 
 		return `
 		<mask id="${maskId}" maskUnits="userSpaceOnUse">
 			${maskContent}
 		</mask>
-		<image
-			href="${this.escapeXml(textureUrl)}"
-			xlink:href="${this.escapeXml(textureUrl)}"
-			x="${parseFloat(node.x) || 15}"
-			y="${parseFloat(node.y) || 20}"
-			width="${parseFloat(node.width) || 70}"
-			height="${parseFloat(node.height) || 60}"
-			preserveAspectRatio="xMidYMid slice"
-			mask="url(#${maskId})"
-			filter="url(#mrtee-3d-shadow)"
-		/>`;
+		<g mask="url(#${maskId})" filter="url(#mrtee-3d-shadow)">
+			<image
+				href="${this.escapeXml(textureHref)}"
+				x="${x.toFixed(4)}"
+				y="${y.toFixed(4)}"
+				width="${w.toFixed(4)}"
+				height="${h.toFixed(4)}"
+				preserveAspectRatio="xMidYMid slice"${transformAttr}
+			/>
+		</g>`;
 	}
 
 	/**
@@ -836,7 +890,11 @@ export class SvgRenderer {
 			pluginPath = rawPluginUrl;
 		}
 		if (!pluginPath.endsWith('/')) pluginPath += '/';
-		const base = manifest.base || `${pluginPath}assets/fonts/cache/${fontId}/`;
+		let base = manifest.base || `${pluginPath}assets/fonts/cache/${fontId}/`;
+		try {
+			base = new URL(base, (typeof window !== 'undefined' && window.location) ? window.location.origin : 'http://localhost').pathname;
+		} catch (e) {}
+		if (!base.endsWith('/')) base += '/';
 		const ver = manifest.v || '';
 		const images = manifest.images || {};
 		const previewUrls = {};
@@ -923,8 +981,19 @@ export class SvgRenderer {
 			|| (window.mrTeeAdminData && window.mrTeeAdminData.pluginUrl)
 			|| '';
 
+		const toSameOriginUrl = (raw) => {
+			if (!raw) return '';
+			try {
+				const parsed = new URL(raw, window.location.origin);
+				if (parsed.hostname === window.location.hostname) {
+					return parsed.pathname + parsed.search;
+				}
+			} catch (e) {}
+			return raw;
+		};
+
 		// 1. Fast mobile-first: try lightweight manifest (~20 KB vs 25 MB!)
-		const manifestUrl = def.manifest_url || `${pluginUrl}assets/fonts/cache/${cleanKey}/manifest.json`;
+		const manifestUrl = toSameOriginUrl(def.manifest_url || `${pluginUrl}assets/fonts/cache/${cleanKey}/manifest.json`);
 		if (manifestUrl) {
 			try {
 				const resp = await fetch(manifestUrl);
@@ -941,7 +1010,7 @@ export class SvgRenderer {
 		}
 
 		// 2. Legacy static JSON cache fallback
-		const dataUrl = def.data_url || `${pluginUrl}assets/fonts/cache/${cleanKey}.json`;
+		const dataUrl = toSameOriginUrl(def.data_url || `${pluginUrl}assets/fonts/cache/${cleanKey}.json`);
 		try {
 			const resp = await fetch(dataUrl);
 			if (resp.ok) {
@@ -956,8 +1025,10 @@ export class SvgRenderer {
 		}
 
 		// 3. AJAX Fallback
-		const ajaxUrl = (window.mrTeeProductData && window.mrTeeProductData.ajaxUrl)
-			|| (window.mrTeeAdminData && window.mrTeeAdminData.ajaxUrl);
+		const ajaxUrl = toSameOriginUrl(
+			(window.mrTeeProductData && window.mrTeeProductData.ajaxUrl)
+			|| (window.mrTeeAdminData && window.mrTeeAdminData.ajaxUrl)
+		);
 		if (ajaxUrl) {
 			try {
 				const resp = await fetch(`${ajaxUrl}?action=mr_tee_get_svg_font_data&font_id=${encodeURIComponent(cleanKey)}`);
@@ -979,10 +1050,46 @@ export class SvgRenderer {
 	}
 
 	/**
+	 * Resolve effective advance width and SVG status for a character in an OpenType-SVG font,
+	 * normalizing oversized demo watermark advances for digits/symbols that lack SVG bitmaps.
+	 *
+	 * @param {Object} fontData OpenType-SVG font dataset.
+	 * @param {string} ch Single character.
+	 * @param {number} unitsPerEm Font design units per em.
+	 * @return {{ g: Object, hasSvg: boolean, isSpace: boolean, adv: number }}
+	 */
+	static getEffectiveOpenTypeGlyph(fontData, ch, unitsPerEm = 1000) {
+		const g = this.resolveSvgGlyph(fontData.glyphs, ch, fontData.defaultAdv || 500);
+		const isSpace = /^\s$/.test(ch);
+		const hasSvg = Boolean(g && g.svg && g.svg.trim() !== '');
+		if (hasSvg || isSpace) {
+			return {
+				g,
+				hasSvg,
+				isSpace,
+				adv: (g && g.adv > 0) ? g.adv : (isSpace ? Math.round(unitsPerEm * 0.32) : (fontData.defaultAdv || 500)),
+			};
+		}
+		let ratio = 0.58;
+		if (/^[!.,:;'’‘|`1Iil]$/.test(ch)) {
+			ratio = 0.42;
+		} else if (/^[&?%@MWmw#]$/.test(ch)) {
+			ratio = 0.66;
+		}
+		return {
+			g,
+			hasSvg: false,
+			isSpace: false,
+			adv: Math.round(unitsPerEm * ratio),
+		};
+	}
+
+	/**
 	 * Render an OpenType-SVG text node into native color vector SVG elements.
 	 *
 	 * Preserves full vector artwork, multi-color gradient fills, transparent drop shadows,
-	 * horizontal advance metrics, auto-fit boundaries, and rotation.
+	 * horizontal advance metrics, auto-fit boundaries, and rotation, while providing a
+	 * 3D-styled vector fallback for digits and symbols omitted from demo SVG tables.
 	 *
 	 * @param {Object} node TEXT node definition.
 	 * @param {Object} fontData OpenType-SVG font metrics and glyph dataset.
@@ -992,8 +1099,9 @@ export class SvgRenderer {
 	 */
 	static renderOpenTypeSvgTextNode(node, fontData, layout, options = {}) {
 		const { boxL, boxT, boxW, boxH, x, y, hasBox, hasPerLine, ratio, val } = layout;
+		const fId = String(node.fontId || fontData.id || 'ot').toLowerCase().replace(/[\s\-]+/g, '_');
 
-		this.prepareFontData(fontData, node.fontId || fontData.id || '');
+		this.prepareFontData(fontData, fId);
 
 		const casing = node.casing || (node.uppercase === true ? 'UPPER' : 'ORIGINAL');
 		const displayText = (casing === 'UPPER') ? val.toUpperCase() : val;
@@ -1025,8 +1133,8 @@ export class SvgRenderer {
 			let widthUnits = 0;
 			for (let i = 0; i < lineText.length; i++) {
 				const ch = lineText[i];
-				const g = this.resolveSvgGlyph(fontData.glyphs, ch, fontData.defaultAdv || 500);
-				widthUnits += (g.adv || 500) + (i < lineText.length - 1 ? letterSpacingUnits : 0);
+				const eff = this.getEffectiveOpenTypeGlyph(fontData, ch, unitsPerEm);
+				widthUnits += eff.adv + (i < lineText.length - 1 ? letterSpacingUnits : 0);
 			}
 			if (widthUnits > maxLineDesignWidth) maxLineDesignWidth = widthUnits;
 			return { text: lineText, widthUnits };
@@ -1051,6 +1159,11 @@ export class SvgRenderer {
 		const totalHeight = effectiveFontSize + (numLines - 1) * effectiveFontSize * lineHeight;
 		const firstLineCenterY = y - (totalHeight / 2) + (effectiveFontSize / 2);
 
+		const rawFamily = String(node.fontFamily || fontData.name || 'Bungee').replace(/['"]/g, '');
+		const fbFontStack = `'${this.escapeXml(rawFamily)}', 'Bungee', 'Impact', sans-serif`;
+		const fbFontSize = Math.round(unitsPerEm * 0.78);
+		const fbStrokeWidth = Math.round(unitsPerEm * 0.11);
+
 		let glyphsMarkup = '';
 		lineMetrics.forEach((lm, lineIdx) => {
 			const lineW = (lm.widthUnits / unitsPerEm) * effectiveFontSize;
@@ -1068,13 +1181,20 @@ export class SvgRenderer {
 
 			for (let i = 0; i < lm.text.length; i++) {
 				const ch = lm.text[i];
-				const g = this.resolveSvgGlyph(fontData.glyphs, ch, fontData.defaultAdv || 500);
-				if (g.svg) {
+				const eff = this.getEffectiveOpenTypeGlyph(fontData, ch, unitsPerEm);
+				const g = eff.g;
+				if (eff.hasSvg) {
 					const glyphSvg = options.isExport ? (g.exportSvg || g.svg) : (g.liveSvg || g.svg);
 					const glyphKeyAttr = g.glyphKey ? ` data-glyph-key="${g.glyphKey}"` : '';
 					glyphsMarkup += `<g class="mrtee-ot-glyph"${glyphKeyAttr} transform="translate(${cursorX.toFixed(3)}, ${baselineY.toFixed(3)}) scale(${scale.toFixed(5)})">${glyphSvg}</g>\n`;
+				} else if (!eff.isSpace) {
+					const escapedCh = this.escapeXml(ch);
+					const fbCenterX = (eff.adv / 2).toFixed(1);
+					glyphsMarkup += `<g class="mrtee-ot-glyph mrtee-ot-glyph-fallback" data-glyph-key="${this.escapeXml(fId)}:fb:${escapedCh}" transform="translate(${cursorX.toFixed(3)}, ${baselineY.toFixed(3)}) scale(${scale.toFixed(5)})">` +
+						`<text x="${fbCenterX}" y="0" text-anchor="middle" font-family="${fbFontStack}" font-weight="900" font-size="${fbFontSize}" fill="#FFFFFF" stroke="#1E293B" stroke-width="${fbStrokeWidth}" stroke-linejoin="round" stroke-linecap="round" style="paint-order: stroke fill;" filter="url(#mrtee-3d-shadow)">${escapedCh}</text>` +
+						`</g>\n`;
 				}
-				cursorX += ((g.adv || 500) + letterSpacingUnits) * scale;
+				cursorX += (eff.adv + letterSpacingUnits) * scale;
 			}
 		});
 

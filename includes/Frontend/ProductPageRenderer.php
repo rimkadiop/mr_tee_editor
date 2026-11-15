@@ -425,7 +425,7 @@ class ProductPageRenderer {
 							$img_status   = $default_img ? __( 'Image par défaut', 'mr-tee-editor' ) : __( 'Aucune image sélectionnée', 'mr-tee-editor' );
 							?>
 							<div class="mr-tee-field-group mr-tee-field-group-image" data-line-index="<?php echo esc_attr( $idx ); ?>" data-line-id="<?php echo esc_attr( $line['id'] ); ?>" data-field-type="image">
-								<div class="mr-tee-image-field-card" data-ref-id="<?php echo esc_attr( $line['ref_id'] ); ?>" data-default-image="<?php echo esc_attr( $default_img ); ?>" data-warning="<?php echo ! empty( $line['warning_unedited'] ) ? '1' : '0'; ?>">
+								<div class="mr-tee-image-field-card" data-default-image="<?php echo esc_attr( $default_img ); ?>" data-warning="<?php echo ! empty( $line['warning_unedited'] ) ? '1' : '0'; ?>">
 									<div class="mr-tee-image-field-main">
 										<div class="mr-tee-img-field-thumb <?php echo $default_img ? '' : 'is-empty'; ?>">
 											<?php if ( $default_img ) : ?>
@@ -476,6 +476,7 @@ class ProductPageRenderer {
 											name="mr_tee_custom_text[<?php echo esc_attr( $idx ); ?>]"
 											rows="<?php echo esc_attr( ! empty( $line['max_lines'] ) ? $line['max_lines'] : 3 ); ?>"
 											maxlength="<?php echo esc_attr( $line['max_chars'] ); ?>"
+											data-ref-id="<?php echo esc_attr( $line['ref_id'] ); ?>"
 											data-default="<?php echo esc_attr( $line['default_text'] ); ?>"
 											data-warning="<?php echo ! empty( $line['warning_unedited'] ) ? '1' : '0'; ?>"
 											placeholder=" "
@@ -488,6 +489,7 @@ class ProductPageRenderer {
 											name="mr_tee_custom_text[<?php echo esc_attr( $idx ); ?>]"
 											value="<?php echo esc_attr( $line['default_text'] ); ?>"
 											maxlength="<?php echo esc_attr( $line['max_chars'] ); ?>"
+											data-ref-id="<?php echo esc_attr( $line['ref_id'] ); ?>"
 											data-default="<?php echo esc_attr( $line['default_text'] ); ?>"
 											data-warning="<?php echo ! empty( $line['warning_unedited'] ) ? '1' : '0'; ?>"
 											placeholder=" "
@@ -621,6 +623,8 @@ class ProductPageRenderer {
 											name="mr_tee_repeater[<?php echo esc_attr( $i ); ?>][name]"
 											value="<?php echo esc_attr( $def_item['name'] ); ?>"
 											maxlength="<?php echo esc_attr( $rep['max_chars'] ); ?>"
+											data-ref-id="id-ref-text-champ-<?php echo esc_attr( $item_num ); ?>"
+											data-warning="1"
 											placeholder=" "
 											autocomplete="off"
 										/>
@@ -695,12 +699,12 @@ class ProductPageRenderer {
 					</div>
 					<div class="mr-tee-modal-body">
 						<p id="mr-tee-warning-text">
-							<?php esc_html_e( 'Vous avez laissé un ou plusieurs champs avec les valeurs par défaut (ex: "Papa"). Voulez-vous continuer ou personnaliser vos textes ?', 'mr-tee-editor' ); ?>
+							<?php esc_html_e( 'Un ou plusieurs champs n\'ont pas été personnalisés. Souhaitez-vous continuer avec les valeurs par défaut ?', 'mr-tee-editor' ); ?>
 						</p>
 					</div>
 					<div class="mr-tee-modal-footer">
 						<button type="button" class="button mr-tee-btn-cancel-warning" id="mr-tee-btn-modify">
-							<?php esc_html_e( 'Modifier mes textes', 'mr-tee-editor' ); ?>
+							<?php esc_html_e( 'Modifier ma personnalisation', 'mr-tee-editor' ); ?>
 						</button>
 						<button type="button" class="button button-primary mr-tee-btn-ignore-warning" id="mr-tee-btn-proceed">
 							<?php esc_html_e( 'Continuer quand même', 'mr-tee-editor' ); ?>

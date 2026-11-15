@@ -427,15 +427,15 @@ export class GalleryStage {
 				existingSvg.setAttribute('viewBox', newViewBox);
 			}
 
-			// 2. Sync <defs> only when font definitions actually change
+			// 2. Sync <defs> only when font/clip definitions actually change for this specific SVG element
 			const existingDefs = existingSvg.querySelector('#mr-tee-svg-defs') || existingSvg.querySelector('defs');
 			const newDefs = newSvg.querySelector('#mr-tee-svg-defs') || newSvg.querySelector('defs');
 			if (existingDefs && newDefs) {
 				const newDefsHtml = newDefs.innerHTML;
-				if (this._lastDefsHtml !== newDefsHtml && existingDefs.innerHTML !== newDefsHtml) {
+				if (existingSvg._lastDefsHtml !== newDefsHtml && existingDefs.innerHTML !== newDefsHtml) {
 					const importedDefs = Array.from(newDefs.childNodes).map(n => document.importNode(n, true));
 					existingDefs.replaceChildren(...importedDefs);
-					this._lastDefsHtml = newDefsHtml;
+					existingSvg._lastDefsHtml = newDefsHtml;
 				}
 			}
 
@@ -521,6 +521,9 @@ export class GalleryStage {
 				if (c.classList.contains('mrtee-opentype-svg-text')) {
 					const nid = c.getAttribute('data-node-id') || `__idx_${i}`;
 					pushExisting(`ot:${nid}`, c);
+				} else if (c.classList.contains('mrtee-image-field')) {
+					const nid = c.getAttribute('data-node-id') || `__idx_${i}`;
+					pushExisting(`img:${nid}`, c);
 				} else if (c.nodeName.toLowerCase() === 'g' && c.classList.contains('mrtee-group')) {
 					const cls = c.getAttribute('class') || `__idx_${i}`;
 					pushExisting(`grp:${cls}`, c);
@@ -536,6 +539,17 @@ export class GalleryStage {
 					if (matchedEx) {
 						this.reconcileOpenTypeTextGroup(matchedEx, nwChild);
 						nextNodes.push(matchedEx);
+						continue;
+					}
+				} else if (nwChild.classList.contains('mrtee-image-field')) {
+					const nid = nwChild.getAttribute('data-node-id') || `__idx_${i}`;
+					const matchedEx = popExisting(`img:${nid}`);
+					if (matchedEx) {
+						if (matchedEx.outerHTML !== nwChild.outerHTML) {
+							nextNodes.push(document.importNode(nwChild, true));
+						} else {
+							nextNodes.push(matchedEx);
+						}
 						continue;
 					}
 				} else if (nwChild.nodeName.toLowerCase() === 'g' && nwChild.classList.contains('mrtee-group')) {

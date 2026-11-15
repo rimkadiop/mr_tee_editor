@@ -641,13 +641,16 @@ class FontRegistry {
 	 * @return string
 	 */
 	public static function get_font_face_css( $allowed_font_ids = null ) {
-		$css   = '';
-		$fonts = self::get_fonts();
+		$css       = '';
+		$all_fonts = self::get_fonts();
+		$fonts     = $all_fonts;
 
 		if ( is_array( $allowed_font_ids ) ) {
 			$allowed_map = array_flip( $allowed_font_ids );
-			$filtered    = array();
-			foreach ( $fonts as $fid => $fdef ) {
+			// Always include 'bungee' (72 KB) as a universal bold vector fallback for missing OpenType-SVG digits/symbols
+			$allowed_map['bungee'] = true;
+			$filtered              = array();
+			foreach ( $all_fonts as $fid => $fdef ) {
 				if ( isset( $allowed_map[ $fid ] ) ) {
 					$filtered[ $fid ] = $fdef;
 				}
@@ -656,8 +659,14 @@ class FontRegistry {
 		}
 
 		foreach ( $fonts as $font ) {
-			if ( ( ! empty( $font['font_type'] ) && 'opentype_svg' === $font['font_type'] ) || ! empty( $font['color_svg'] ) ) {
-				continue;
+			$is_ot_svg = ( ! empty( $font['font_type'] ) && 'opentype_svg' === $font['font_type'] ) || ! empty( $font['color_svg'] );
+			if ( $is_ot_svg ) {
+				// Skip multi-megabyte bitmap OpenType-SVG fonts (> 512 KB), but emit @font-face for lightweight
+				// hybrid COLR/CPAL/TrueType fonts (such as palestine_1445) so their vector outline glyphs render natively.
+				$f_path = ! empty( $font['path'] ) ? $font['path'] : '';
+				if ( empty( $f_path ) || ! file_exists( $f_path ) || filesize( $f_path ) > 524288 ) {
+					continue;
+				}
 			}
 
 			if ( ! empty( $font['url'] ) ) {
@@ -675,7 +684,7 @@ class FontRegistry {
 				// Family aliases declarations (e.g. 'SuperMario256' for 'Super Mario Wii')
 				if ( ! empty( $font['aliases'] ) && is_array( $font['aliases'] ) ) {
 					foreach ( $font['aliases'] as $alias ) {
-						if ( $alias !== $font['family'] ) {
+						if ( 0 !== strcasecmp( $alias, $font['family'] ) ) {
 							$css .= sprintf(
 								"@font-face { font-family: '%s'; src: url('%s') format('%s'); font-weight: normal; font-style: normal; font-display: swap; }\n",
 								esc_attr( $alias ),

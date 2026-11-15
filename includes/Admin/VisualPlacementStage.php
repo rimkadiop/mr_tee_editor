@@ -401,12 +401,20 @@ class VisualPlacementStage {
 							$image_fit    = ( isset( $line['image_fit'] ) && 'cover' === $line['image_fit'] ) ? 'cover' : 'contain';
 							$allow_upload = ! isset( $line['allow_image_upload'] ) || ! empty( $line['allow_image_upload'] );
 							?>
+							<?php
+							$field_uid       = ! empty( $line['id'] ) ? $line['id'] : 'line_' . ( $idx + 1 );
+							$field_ref_id    = ! empty( $line['ref_id'] ) ? $line['ref_id'] : ( 'id-ref-' . ( $is_image ? 'image' : 'text' ) . '-line-' . ( $idx + 1 ) );
+							$field_color_ref = ! empty( $line['color_ref_id'] ) ? $line['color_ref_id'] : 'id-ref-color-line-' . ( $idx + 1 );
+							?>
 							<div
 								class="mr-tee-field-panel <?php echo 0 === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-panel' : ''; ?>"
 								id="mr-tee-field-panel-<?php echo esc_attr( $idx ); ?>"
 								data-field-index="<?php echo esc_attr( $idx ); ?>"
 								data-field-type="<?php echo esc_attr( $field_type ); ?>"
 							>
+								<input type="hidden" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][id]" value="<?php echo esc_attr( $field_uid ); ?>" class="mr-tee-field-id" data-field-index="<?php echo esc_attr( $idx ); ?>" />
+								<input type="hidden" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][ref_id]" value="<?php echo esc_attr( $field_ref_id ); ?>" class="mr-tee-field-ref-id" data-field-index="<?php echo esc_attr( $idx ); ?>" />
+								<input type="hidden" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][color_ref_id]" value="<?php echo esc_attr( $field_color_ref ); ?>" class="mr-tee-field-color-ref-id" data-field-index="<?php echo esc_attr( $idx ); ?>" />
 								<div class="mr-tee-panel-badge-row">
 									<span class="mr-tee-panel-indicator" style="background: <?php echo esc_attr( $color ); ?>;"></span>
 									<strong class="mr-tee-panel-title"><?php echo esc_html( sprintf( __( 'Champ #%d : %s', 'mr-tee-editor' ), $idx + 1, $line['label'] ) ); ?></strong>

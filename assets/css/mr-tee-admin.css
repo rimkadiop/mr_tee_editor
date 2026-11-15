@@ -209,7 +209,7 @@
 	background: #f1f5f9;
 	border: 1px solid #cbd5e1;
 	border-radius: 12px;
-	overflow: hidden;
+	overflow: visible;
 	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
 	line-height: 0;
 	max-width: 520px;
@@ -220,6 +220,7 @@
 	width: 100%;
 	height: auto;
 	display: block;
+	border-radius: 11px;
 	user-select: none;
 	pointer-events: none;
 }

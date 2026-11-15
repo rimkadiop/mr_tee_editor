@@ -11,8 +11,8 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.3.15';
-import { PrintExporter } from './print-exporter.js?v=2.3.15';
+import { SvgRenderer } from './svg-renderer.js?v=2.3.17';
+import { PrintExporter } from './print-exporter.js?v=2.3.17';
 
 export class FormController {
 	constructor(store, config, onExportRequested) {
@@ -258,6 +258,13 @@ export class FormController {
 				if (this.bypassWarning) {
 					return; // Allow submission
 				}
+				if (
+					this.addToCartBtn.disabled ||
+					this.addToCartBtn.classList.contains('disabled') ||
+					this.addToCartBtn.classList.contains('wc-variation-selection-needed')
+				) {
+					return; // Let WooCommerce handle unselected variation alert natively
+				}
 
 				this.store.validateWarnings();
 				if (this.store.state.hasUneditedWarnings) {
@@ -282,17 +289,38 @@ export class FormController {
 		if (btnModify && this.warningModal) {
 			btnModify.addEventListener('click', () => {
 				this.warningModal.style.display = 'none';
-				// Focus first unedited text or image field
-				const firstInput = this.container.querySelector('.mr-tee-text-input[data-warning="1"], .mr-tee-image-file-input[data-warning="1"]');
-				if (firstInput) {
-					if (firstInput.classList.contains('mr-tee-image-file-input')) {
-						const card = firstInput.closest('.mr-tee-image-field-card');
+				let targetInput = null;
+				const warnings = (this.store && this.store.state && Array.isArray(this.store.state.warnings)) ? this.store.state.warnings : [];
+				for (const w of warnings) {
+					if (w && w.id) {
+						const safeId = (typeof CSS !== 'undefined' && typeof CSS.escape === 'function')
+							? CSS.escape(String(w.id))
+							: String(w.id).replace(/"/g, '\\"');
+						const el = this.container.querySelector(
+							`input[data-ref-id="${safeId}"], textarea[data-ref-id="${safeId}"], [data-ref-id="${safeId}"]`
+						);
+						if (el) {
+							targetInput = el;
+							break;
+						}
+					}
+				}
+				if (!targetInput) {
+					targetInput = this.container.querySelector('.mr-tee-text-input[data-warning="1"], .mr-tee-image-file-input[data-warning="1"]');
+				}
+				if (targetInput) {
+					const repCard = targetInput.closest('.mr-tee-repeater-item-card');
+					if (repCard && !repCard.classList.contains('is-open')) {
+						repCard.classList.add('is-open');
+					}
+					if (targetInput.classList.contains('mr-tee-image-file-input')) {
+						const card = targetInput.closest('.mr-tee-image-field-card');
 						const btn = card ? card.querySelector('.mr-tee-image-upload-btn') : null;
 						if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
 						if (btn) btn.focus();
 					} else {
-						firstInput.focus();
-						firstInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+						targetInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+						targetInput.focus();
 					}
 				}
 			});
@@ -335,6 +363,7 @@ export class FormController {
 
 		const restoreBtn = () => {
 			this.isSubmitting = false;
+			this.bypassWarning = false;
 			if (btn) {
 				btn.removeAttribute('aria-busy');
 				btn.style.pointerEvents = '';
@@ -363,7 +392,7 @@ export class FormController {
 					btn.style.pointerEvents = '';
 					btn.style.opacity = '';
 				}
-				this.submitCartForm();
+				this.submitCartForm(restoreBtn);
 			});
 		} else {
 			restoreBtn();
@@ -439,6 +468,11 @@ export class FormController {
 					}
 
 					if (card._uploadToken !== token) return;
+
+					if (typeof window !== 'undefined' && previewDataUrl) {
+						window.mrTeeImageB64Cache = window.mrTeeImageB64Cache || {};
+						window.mrTeeImageB64Cache[previewDataUrl] = previewDataUrl;
+					}
 
 					if (thumbWrap) {
 						thumbWrap.classList.remove('is-empty');
@@ -550,7 +584,7 @@ export class FormController {
 			}
 		}
 
-		if (uploadBlob.size > 280 * 1024) {
+		if (uploadBlob.size > 550 * 1024) {
 			const res = await PrintExporter.uploadBlobInChunks(uploadBlob, {
 				artifact: 'customer_image',
 				fileName: uploadName,
@@ -558,22 +592,31 @@ export class FormController {
 			return (res && res.url) ? String(res.url) : '';
 		}
 
-		const formData = new FormData();
-		formData.append('action', 'mr_tee_upload_customer_image');
-		formData.append('nonce', data.uploadNonce || '');
-		formData.append('product_id', String(this.config.productId || data.productId || 0));
-		formData.append('image_file', uploadBlob, uploadName);
+		try {
+			const formData = new FormData();
+			formData.append('action', 'mr_tee_upload_customer_image');
+			formData.append('nonce', data.uploadNonce || '');
+			formData.append('product_id', String(this.config.productId || data.productId || 0));
+			formData.append('image_file', uploadBlob, uploadName);
 
-		const resp = await fetch(ajaxUrl, { method: 'POST', body: formData });
-		if (!resp.ok) return '';
-		const json = await resp.json();
-		if (json && json.success && json.data && json.data.url) {
-			return String(json.data.url);
-		}
-		return '';
+			const resp = await fetch(ajaxUrl, { method: 'POST', body: formData });
+			if (resp.ok) {
+				const json = await resp.json();
+				if (json && json.success && json.data && json.data.url) {
+					return String(json.data.url);
+				}
+			}
+		} catch (e) {}
+
+		// Fallback to resilient chunked uploader on any transient single-POST error
+		const fallbackRes = await PrintExporter.uploadBlobInChunks(uploadBlob, {
+			artifact: 'customer_image',
+			fileName: uploadName,
+		});
+		return (fallbackRes && fallbackRes.url) ? String(fallbackRes.url) : '';
 	}
 
-	submitCartForm() {
+	submitCartForm(restoreBtn) {
 		this.bypassWarning = true;
 		this._awaitingCartRedirect = true;
 
@@ -595,14 +638,38 @@ export class FormController {
 			} else if (form.action && location.protocol === 'https:' && form.action.startsWith('http:')) {
 				form.action = form.action.replace('http:', 'https:');
 			}
+			const btn = this.addToCartBtn;
+			const canUseSubmitter = Boolean(
+				btn &&
+				form.contains(btn) &&
+				!btn.disabled &&
+				(btn.type === 'submit' || (btn.tagName === 'BUTTON' && !btn.getAttribute('type')))
+			);
 			if (typeof form.requestSubmit === 'function') {
-				form.requestSubmit(this.addToCartBtn);
+				try {
+					if (canUseSubmitter) {
+						form.requestSubmit(btn);
+					} else {
+						form.requestSubmit();
+					}
+				} catch (submitErr) {
+					form.submit();
+				}
 			} else {
 				form.submit();
 			}
 		} else if (this.addToCartBtn) {
 			this.addToCartBtn.click();
 		}
+
+		setTimeout(() => {
+			if (typeof restoreBtn === 'function') {
+				restoreBtn();
+			} else {
+				this.bypassWarning = false;
+				this.isSubmitting = false;
+			}
+		}, 2500);
 	}
 
 	updateModalCountDisplay(count) {
@@ -628,8 +695,34 @@ export class FormController {
 	}
 
 	showWarningModal() {
-		if (this.warningModal) {
-			this.warningModal.style.display = 'flex';
+		if (!this.warningModal) return;
+		const textEl = document.getElementById('mr-tee-warning-text');
+		const warnings = (this.store && this.store.state && Array.isArray(this.store.state.warnings)) ? this.store.state.warnings : [];
+		if (textEl) {
+			if (warnings.length > 0) {
+				const maxShow = 3;
+				const labels = warnings.slice(0, maxShow).map((w) => {
+					const name = w.name || 'Champ';
+					if (w.type === 'IMAGE') {
+						return name;
+					}
+					const rawVal = String(w.value || '').trim().replace(/\s+/g, ' ');
+					if (rawVal && rawVal !== name) {
+						const clipped = rawVal.length > 24 ? `${rawVal.slice(0, 21)}...` : rawVal;
+						return `${name} ("${clipped}")`;
+					}
+					return name;
+				});
+				const extra = warnings.length > maxShow ? ` (+${warnings.length - maxShow})` : '';
+				const summary = `${labels.join(', ')}${extra}`;
+				textEl.textContent = warnings.length === 1
+					? `Le champ suivant n'a pas été personnalisé : ${summary}. Voulez-vous continuer avec cette valeur par défaut ou modifier votre personnalisation ?`
+					: `Les champs suivants n'ont pas été personnalisés : ${summary}. Voulez-vous continuer avec les valeurs par défaut ou modifier votre personnalisation ?`;
+			} else {
+				const i18n = (window.mrTeeProductData && window.mrTeeProductData.i18n) || {};
+				textEl.textContent = i18n.warningMessage || 'Un ou plusieurs champs n\'ont pas été personnalisés. Souhaitez-vous continuer avec les valeurs par défaut ?';
+			}
 		}
+		this.warningModal.style.display = 'flex';
 	}
 }

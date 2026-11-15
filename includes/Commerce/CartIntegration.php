@@ -29,10 +29,35 @@ class CartIntegration {
 		add_filter( 'woocommerce_add_to_cart_redirect', array( __CLASS__, 'filter_add_to_cart_redirect' ), 99999, 2 );
 		add_filter( 'woocommerce_get_item_data', array( __CLASS__, 'display_cart_item_data' ), 10, 2 );
 		add_action( 'woocommerce_after_cart_item_name', array( __CLASS__, 'render_cart_item_preview_attachment' ), 20, 2 );
+		add_action( 'woocommerce_order_item_meta_start', array( __CLASS__, 'render_order_item_preview_attachment' ), 10, 4 );
 		add_action( 'woocommerce_checkout_create_order_line_item', array( __CLASS__, 'save_order_line_item_data' ), 10, 4 );
 		add_filter( 'woocommerce_cart_item_thumbnail', array( __CLASS__, 'filter_cart_item_thumbnail' ), 999, 3 );
 		add_filter( 'woocommerce_store_api_cart_item_images', array( __CLASS__, 'filter_store_api_cart_item_images' ), 999, 3 );
 		add_filter( 'woocommerce_cart_item_name', array( __CLASS__, 'filter_checkout_item_name' ), 25, 3 );
+	}
+
+	/**
+	 * Check whether a product ID is configured to use Mr. Tee Editor across all supported meta keys.
+	 *
+	 * @param int $product_id Product ID.
+	 * @return bool
+	 */
+	private static function is_mr_tee_product( $product_id ) {
+		$pid = (int) $product_id;
+		if ( $pid <= 0 ) {
+			return false;
+		}
+		$engine = get_post_meta( $pid, '_mr_tee_engine_mode', true );
+		if ( empty( $engine ) ) {
+			$engine = get_post_meta( $pid, '_mr_tee_editor_mode', true );
+		}
+		if ( empty( $engine ) ) {
+			$saved = get_post_meta( $pid, '_mr_tee_config', true );
+			if ( is_array( $saved ) && ! empty( $saved['editor_mode'] ) ) {
+				$engine = $saved['editor_mode'];
+			}
+		}
+		return 'mr_tee_editor' === $engine;
 	}
 
 	/**
@@ -82,7 +107,7 @@ class CartIntegration {
 		}
 
 		$is_mr_tee = false;
-		if ( $product_id > 0 && 'mr_tee_editor' === get_post_meta( $product_id, '_mr_tee_engine_mode', true ) ) {
+		if ( $product_id > 0 && self::is_mr_tee_product( $product_id ) ) {
 			$is_mr_tee = true;
 		} elseif ( ! empty( $_POST['mr_tee_editor_payload'] ) || ! empty( $_POST['mr_tee_design_key'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
 			$is_mr_tee = true;
@@ -107,8 +132,7 @@ class CartIntegration {
 	 * @return array<string, mixed>
 	 */
 	public static function capture_cart_item_data( $cart_item_data, $product_id, $variation_id ) {
-		$engine = get_post_meta( $product_id, '_mr_tee_engine_mode', true );
-		if ( 'mr_tee_editor' !== $engine ) {
+		if ( ! self::is_mr_tee_product( $product_id ) && empty( $_POST['mr_tee_editor_payload'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
 			return $cart_item_data;
 		}
 
@@ -268,6 +292,40 @@ class CartIntegration {
 				<img src="<?php echo esc_url( $preview_url ); ?>" alt="<?php esc_attr_e( 'Aperçu du produit personnalisé', 'mr-tee-editor' ); ?>" class="mr-tee-cart-attachment-img skip-lazy" style="width:76px;height:auto;max-height:100px;object-fit:contain;border-radius:6px;border:1px solid #cbd5e1;background:#ffffff;display:block;" />
 			</a>
 			<div class="mr-tee-cart-preview-meta" style="flex:1 1 130px;min-width:0;font-size:12px;line-height:1.35;">
+				<span style="display:block;font-weight:700;color:#0f172a;margin-bottom:2px;"><?php esc_html_e( 'Aperçu personnalisé', 'mr-tee-editor' ); ?></span>
+				<a href="<?php echo esc_url( $preview_url ); ?>" target="_blank" rel="noopener noreferrer" style="color:#154694;font-weight:600;text-decoration:underline;"><?php esc_html_e( 'Voir l\'image complète', 'mr-tee-editor' ); ?></a>
+			</div>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Render composite preview attachment on Customer Order Confirmation ("Thank You") and View Order pages.
+	 *
+	 * @param int                    $item_id    Order item ID.
+	 * @param \WC_Order_Item_Product $item       Order item object.
+	 * @param \WC_Order              $order      Order object.
+	 * @param bool                   $plain_text Whether rendering plain-text email.
+	 */
+	public static function render_order_item_preview_attachment( $item_id, $item, $order, $plain_text = false ) {
+		if ( $plain_text || ! is_object( $item ) || ! method_exists( $item, 'get_meta' ) ) {
+			return;
+		}
+		$data        = $item->get_meta( '_mr_tee_editor_data', true );
+		$raw_preview = ! empty( $data['preview_url'] ) ? $data['preview_url'] : $item->get_meta( '_mr_tee_preview_url', true );
+		if ( empty( $raw_preview ) ) {
+			return;
+		}
+		$preview_url = self::normalize_url( $raw_preview );
+		if ( empty( $preview_url ) ) {
+			return;
+		}
+		?>
+		<div class="mr-tee-order-preview-attachment" style="margin:8px 0 6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 8px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;max-width:340px;">
+			<a href="<?php echo esc_url( $preview_url ); ?>" target="_blank" rel="noopener noreferrer" style="display:block;flex-shrink:0;line-height:0;">
+				<img src="<?php echo esc_url( $preview_url ); ?>" alt="<?php esc_attr_e( 'Aperçu du produit personnalisé', 'mr-tee-editor' ); ?>" class="skip-lazy" style="width:72px;height:auto;max-height:96px;object-fit:contain;border-radius:6px;border:1px solid #cbd5e1;background:#ffffff;display:block;" />
+			</a>
+			<div style="flex:1 1 130px;min-width:0;font-size:12px;line-height:1.35;">
 				<span style="display:block;font-weight:700;color:#0f172a;margin-bottom:2px;"><?php esc_html_e( 'Aperçu personnalisé', 'mr-tee-editor' ); ?></span>
 				<a href="<?php echo esc_url( $preview_url ); ?>" target="_blank" rel="noopener noreferrer" style="color:#154694;font-weight:600;text-decoration:underline;"><?php esc_html_e( 'Voir l\'image complète', 'mr-tee-editor' ); ?></a>
 			</div>
@@ -578,6 +636,10 @@ class CartIntegration {
 			if ( is_string( $replaced ) && '' !== $replaced ) {
 				return $replaced;
 			}
+		}
+
+		if ( false === strpos( $product_name, 'mr-tee-checkout-thumb' ) ) {
+			return '<div class="mr-tee-checkout-thumb-wrap" style="display:inline-flex;align-items:center;gap:10px;vertical-align:middle;"><span style="flex-shrink:0;line-height:0;">' . $thumb_html . '</span><span>' . $product_name . '</span></div>';
 		}
 
 		return $product_name;

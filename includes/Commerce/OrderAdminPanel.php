@@ -44,6 +44,46 @@ class OrderAdminPanel {
 	}
 
 	/**
+	 * Normalize same-site asset URLs to match the active HTTP/HTTPS request scheme.
+	 *
+	 * @param string $url Raw URL.
+	 * @return string
+	 */
+	private static function normalize_url( $url ) {
+		if ( empty( $url ) || ! is_string( $url ) ) {
+			return '';
+		}
+		if ( 0 !== strpos( $url, 'http' ) ) {
+			return $url;
+		}
+		return set_url_scheme( $url, is_ssl() ? 'https' : 'http' );
+	}
+
+	/**
+	 * Extract customer-uploaded image fields from order item payload.
+	 *
+	 * @param array<string, mixed> $data Order item _mr_tee_editor_data.
+	 * @return array<int, array<string, string>>
+	 */
+	private static function extract_customer_images( array $data ) {
+		$images = array();
+		if ( ! empty( $data['payload']['text_lines'] ) && is_array( $data['payload']['text_lines'] ) ) {
+			foreach ( $data['payload']['text_lines'] as $idx => $line ) {
+				if ( isset( $line['fieldType'] ) && 'image' === $line['fieldType'] && ! empty( $line['imageUrl'] ) ) {
+					$url = self::normalize_url( $line['imageUrl'] );
+					if ( ! empty( $url ) && 0 === strpos( $url, 'http' ) ) {
+						$images[] = array(
+							'label' => ! empty( $line['label'] ) ? $line['label'] : sprintf( __( 'Image #%d', 'mr-tee-editor' ), $idx + 1 ),
+							'url'   => $url,
+						);
+					}
+				}
+			}
+		}
+		return $images;
+	}
+
+	/**
 	 * Render download links directly under the order line item.
 	 *
 	 * @param int                    $item_id Order item ID.
@@ -56,32 +96,52 @@ class OrderAdminPanel {
 			return;
 		}
 
+		$print_url   = ! empty( $data['print_url'] ) ? self::normalize_url( $data['print_url'] ) : '';
+		$svg_url     = ! empty( $data['svg_url'] ) ? self::normalize_url( $data['svg_url'] ) : '';
+		$preview_url = ! empty( $data['preview_url'] ) ? self::normalize_url( $data['preview_url'] ) : '';
+		$cust_images = self::extract_customer_images( $data );
+
 		?>
-		<div class="mr-tee-order-item-export" style="margin-top:10px;padding:8px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;">
-			<strong style="display:block;margin-bottom:6px;color:#111827;font-size:12px;">
+		<div class="mr-tee-order-item-export" style="margin-top:10px;padding:10px 12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;">
+			<strong style="display:block;margin-bottom:8px;color:#111827;font-size:12px;">
 				<?php esc_html_e( 'Fichiers Mr. Tee Designer :', 'mr-tee-editor' ); ?>
 			</strong>
+			<?php if ( ! empty( $preview_url ) ) : ?>
+				<div style="margin-bottom:8px;display:flex;align-items:center;gap:10px;">
+					<a href="<?php echo esc_url( $preview_url ); ?>" target="_blank" rel="noopener noreferrer">
+						<img src="<?php echo esc_url( $preview_url ); ?>" alt="Mockup Preview" style="width:68px;height:auto;max-height:90px;object-fit:contain;border-radius:5px;border:1px solid #d1d5db;background:#fff;display:block;" />
+					</a>
+					<span style="font-size:12px;color:#374151;"><?php esc_html_e( 'Aperçu complet (Produit + Design)', 'mr-tee-editor' ); ?></span>
+				</div>
+			<?php endif; ?>
 			<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-				<?php if ( ! empty( $data['print_url'] ) ) : ?>
-					<a href="<?php echo esc_url( $data['print_url'] ); ?>" target="_blank" class="button button-primary button-small" download>
+				<?php if ( ! empty( $print_url ) ) : ?>
+					<a href="<?php echo esc_url( $print_url ); ?>" target="_blank" class="button button-primary button-small" download>
 						<span class="dashicons dashicons-download" style="vertical-align:middle;font-size:14px;width:14px;height:14px;"></span>
 						<?php esc_html_e( 'PNG 300 DPI (Sans fond)', 'mr-tee-editor' ); ?>
 					</a>
 				<?php endif; ?>
 
-				<?php if ( ! empty( $data['svg_url'] ) ) : ?>
-					<a href="<?php echo esc_url( $data['svg_url'] ); ?>" target="_blank" class="button button-secondary button-small" download>
+				<?php if ( ! empty( $svg_url ) ) : ?>
+					<a href="<?php echo esc_url( $svg_url ); ?>" target="_blank" class="button button-secondary button-small" download>
 						<span class="dashicons dashicons-media-code" style="vertical-align:middle;font-size:14px;width:14px;height:14px;"></span>
 						<?php esc_html_e( 'Vector SVG', 'mr-tee-editor' ); ?>
 					</a>
 				<?php endif; ?>
 
-				<?php if ( ! empty( $data['preview_url'] ) ) : ?>
-					<a href="<?php echo esc_url( $data['preview_url'] ); ?>" target="_blank" class="button button-secondary button-small">
+				<?php if ( ! empty( $preview_url ) ) : ?>
+					<a href="<?php echo esc_url( $preview_url ); ?>" target="_blank" class="button button-secondary button-small" download>
 						<span class="dashicons dashicons-visibility" style="vertical-align:middle;font-size:14px;width:14px;height:14px;"></span>
 						<?php esc_html_e( 'Aperçu Mockup', 'mr-tee-editor' ); ?>
 					</a>
 				<?php endif; ?>
+
+				<?php foreach ( $cust_images as $c_img ) : ?>
+					<a href="<?php echo esc_url( $c_img['url'] ); ?>" target="_blank" class="button button-secondary button-small" download>
+						<span class="dashicons dashicons-format-image" style="vertical-align:middle;font-size:14px;width:14px;height:14px;"></span>
+						<?php echo esc_html( $c_img['label'] ); ?>
+					</a>
+				<?php endforeach; ?>
 			</div>
 		</div>
 		<?php
@@ -102,16 +162,22 @@ class OrderAdminPanel {
 		$found = false;
 		foreach ( $order->get_items() as $item ) {
 			$data = $item->get_meta( '_mr_tee_editor_data' );
-			if ( empty( $data ) ) {
+			if ( empty( $data ) || ! is_array( $data ) ) {
 				continue;
 			}
-			$found = true;
+			$found       = true;
+			$print_url   = ! empty( $data['print_url'] ) ? self::normalize_url( $data['print_url'] ) : '';
+			$svg_url     = ! empty( $data['svg_url'] ) ? self::normalize_url( $data['svg_url'] ) : '';
+			$preview_url = ! empty( $data['preview_url'] ) ? self::normalize_url( $data['preview_url'] ) : '';
+			$cust_images = self::extract_customer_images( $data );
 			?>
 			<div style="margin-bottom:15px;padding-bottom:12px;border-bottom:1px solid #e5e7eb;">
 				<h4 style="margin:0 0 8px 0;font-size:13px;"><?php echo esc_html( $item->get_name() ); ?></h4>
-				<?php if ( ! empty( $data['preview_url'] ) ) : ?>
+				<?php if ( ! empty( $preview_url ) ) : ?>
 					<div style="text-align:center;margin-bottom:10px;">
-						<img src="<?php echo esc_url( $data['preview_url'] ); ?>" alt="Preview" style="max-width:140px;border-radius:6px;border:1px solid #d1d5db;box-shadow:0 1px 3px rgba(0,0,0,0.1);" />
+						<a href="<?php echo esc_url( $preview_url ); ?>" target="_blank" rel="noopener noreferrer">
+							<img src="<?php echo esc_url( $preview_url ); ?>" alt="Preview" style="max-width:140px;border-radius:6px;border:1px solid #d1d5db;box-shadow:0 1px 3px rgba(0,0,0,0.1);" />
+						</a>
 					</div>
 				<?php endif; ?>
 				<ul style="margin:0 0 10px 0;padding-left:15px;font-size:12px;color:#4b5563;">
@@ -121,16 +187,26 @@ class OrderAdminPanel {
 					<?php endif; ?>
 				</ul>
 				<div style="display:flex;flex-direction:column;gap:6px;">
-					<?php if ( ! empty( $data['print_url'] ) ) : ?>
-						<a href="<?php echo esc_url( $data['print_url'] ); ?>" target="_blank" class="button button-primary" download style="text-align:center;">
+					<?php if ( ! empty( $print_url ) ) : ?>
+						<a href="<?php echo esc_url( $print_url ); ?>" target="_blank" class="button button-primary" download style="text-align:center;">
 							<?php esc_html_e( 'Télécharger PNG 300 DPI', 'mr-tee-editor' ); ?>
 						</a>
 					<?php endif; ?>
-					<?php if ( ! empty( $data['svg_url'] ) ) : ?>
-						<a href="<?php echo esc_url( $data['svg_url'] ); ?>" target="_blank" class="button" download style="text-align:center;">
+					<?php if ( ! empty( $svg_url ) ) : ?>
+						<a href="<?php echo esc_url( $svg_url ); ?>" target="_blank" class="button" download style="text-align:center;">
 							<?php esc_html_e( 'Télécharger Vector SVG', 'mr-tee-editor' ); ?>
 						</a>
 					<?php endif; ?>
+					<?php if ( ! empty( $preview_url ) ) : ?>
+						<a href="<?php echo esc_url( $preview_url ); ?>" target="_blank" class="button" download style="text-align:center;">
+							<?php esc_html_e( 'Télécharger Aperçu Mockup', 'mr-tee-editor' ); ?>
+						</a>
+					<?php endif; ?>
+					<?php foreach ( $cust_images as $c_img ) : ?>
+						<a href="<?php echo esc_url( $c_img['url'] ); ?>" target="_blank" class="button" download style="text-align:center;">
+							<?php echo esc_html( sprintf( __( 'Télécharger %s', 'mr-tee-editor' ), $c_img['label'] ) ); ?>
+						</a>
+					<?php endforeach; ?>
 				</div>
 			</div>
 			<?php

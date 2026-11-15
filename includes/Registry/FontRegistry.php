@@ -557,6 +557,10 @@ class FontRegistry {
 
 		$data = self::get_svg_font_data( $font_id );
 		if ( ! empty( $data ) ) {
+			if ( ! current_user_can( 'manage_woocommerce' ) && ! current_user_can( 'edit_products' ) ) {
+				unset( $data['fullMap'] );
+				$data['preview'] = false;
+			}
 			wp_send_json_success( $data );
 		} else {
 			wp_send_json_error( array( 'message' => 'Police non trouvée ou non compatible SVG.' ) );

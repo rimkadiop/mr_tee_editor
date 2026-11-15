@@ -29,7 +29,10 @@ export class SvgRenderer {
 		const tx = z.translateX !== undefined ? z.translateX : 0;
 		const ty = z.translateY !== undefined ? z.translateY : 0;
 
-		const fontFaceCss = options.fontFaceCss || (typeof window !== 'undefined' && window.mrTeeProductData && window.mrTeeProductData.fontFaceCss) || '';
+		const fontFaceCss = options.fontFaceCss
+			|| (typeof window !== 'undefined' && window.mrTeeOrderExportData && window.mrTeeOrderExportData.fontFaceCss)
+			|| (typeof window !== 'undefined' && window.mrTeeProductData && window.mrTeeProductData.fontFaceCss)
+			|| '';
 		let defs = '';
 		if (fontFaceCss) {
 			defs += `<style><![CDATA[\n${fontFaceCss}\n]]></style>`;
@@ -391,8 +394,14 @@ export class SvgRenderer {
 	static renderImageNode(node, options = {}) {
 		let url = node.url || '';
 		if (!url) return '';
-		if (!options.isExport && typeof window !== 'undefined' && window.mrTeeImageB64Cache && window.mrTeeImageB64Cache[url]) {
-			url = window.mrTeeImageB64Cache[url];
+		if (!options.isExport && typeof window !== 'undefined') {
+			if (options.useThumbCache) {
+				if (window.mrTeeThumbB64Cache && window.mrTeeThumbB64Cache[url]) {
+					url = window.mrTeeThumbB64Cache[url];
+				}
+			} else if (window.mrTeeImageB64Cache && window.mrTeeImageB64Cache[url]) {
+				url = window.mrTeeImageB64Cache[url];
+			}
 		}
 
 		const ratio = (options.ratio && options.ratio > 0) ? options.ratio : 1.0;
@@ -575,8 +584,14 @@ export class SvgRenderer {
 		}
 
 		let textureHref = textureUrl;
-		if (!options.isExport && typeof window !== 'undefined' && window.mrTeeImageB64Cache && window.mrTeeImageB64Cache[textureHref]) {
-			textureHref = window.mrTeeImageB64Cache[textureHref];
+		if (!options.isExport && typeof window !== 'undefined') {
+			if (options.useThumbCache) {
+				if (window.mrTeeThumbB64Cache && window.mrTeeThumbB64Cache[textureHref]) {
+					textureHref = window.mrTeeThumbB64Cache[textureHref];
+				}
+			} else if (window.mrTeeImageB64Cache && window.mrTeeImageB64Cache[textureHref]) {
+				textureHref = window.mrTeeImageB64Cache[textureHref];
+			}
 		}
 
 		return `
@@ -633,9 +648,10 @@ export class SvgRenderer {
 				return this.prepareFontData(window.mrTeeSvgFonts[fontKey], cleanKey);
 			}
 
-			// Preloaded fonts in mrTeeProductData or mrTeeAdminData
+			// Preloaded fonts in mrTeeProductData, mrTeeAdminData, or mrTeeOrderExportData
 			const preloaded = (window.mrTeeProductData && window.mrTeeProductData.svgFonts)
 				|| (window.mrTeeAdminData && window.mrTeeAdminData.svgFonts)
+				|| (window.mrTeeOrderExportData && window.mrTeeOrderExportData.svgFonts)
 				|| {};
 			if (preloaded[cleanKey]) {
 				const prepared = this.prepareFontData(preloaded[cleanKey], cleanKey);
@@ -651,6 +667,7 @@ export class SvgRenderer {
 			// Check registry definitions for aliases
 			const fonts = (window.mrTeeProductData && window.mrTeeProductData.fonts)
 				|| (window.mrTeeAdminData && window.mrTeeAdminData.fonts)
+				|| (window.mrTeeOrderExportData && window.mrTeeOrderExportData.fonts)
 				|| {};
 			for (const [id, def] of Object.entries(fonts)) {
 				if (id === fontKey || id === cleanKey || (def.family && def.family.toLowerCase() === String(fontKey).toLowerCase())) {
@@ -880,8 +897,10 @@ export class SvgRenderer {
 		if (!manifest) return null;
 		if (manifest.hydrated) return this.prepareFontData(manifest, fontId);
 
+		const allowFullPrint = typeof window !== 'undefined' && Boolean(window.mrTeeAdminData || window.mrTeeOrderExportData);
 		const rawPluginUrl = (typeof window !== 'undefined' && window.mrTeeProductData && window.mrTeeProductData.pluginUrl)
 			|| (typeof window !== 'undefined' && window.mrTeeAdminData && window.mrTeeAdminData.pluginUrl)
+			|| (typeof window !== 'undefined' && window.mrTeeOrderExportData && window.mrTeeOrderExportData.pluginUrl)
 			|| '/wp-content/plugins/mr_tee_editor/';
 		let pluginPath = '/wp-content/plugins/mr_tee_editor/';
 		try {
@@ -902,9 +921,10 @@ export class SvgRenderer {
 
 		for (const [key, img] of Object.entries(images)) {
 			const p = `${base}${img.p}?v=${ver}`;
-			const f = `${base}${img.f}?v=${ver}`;
 			previewUrls[key] = p;
-			fullMap[p] = f;
+			if (allowFullPrint && img.f) {
+				fullMap[p] = `${base}${img.f}?v=${ver}`;
+			}
 		}
 
 		const resolve = (svg) => {
@@ -925,8 +945,8 @@ export class SvgRenderer {
 			...manifest,
 			glyphs: hydratedGlyphs,
 			defs: resolve(manifest.defs || ''),
-			fullMap: fullMap,
-			preview: Object.keys(fullMap).length > 0,
+			fullMap: allowFullPrint ? fullMap : {},
+			preview: allowFullPrint && Object.keys(fullMap).length > 0,
 			hydrated: true,
 		};
 
@@ -971,14 +991,17 @@ export class SvgRenderer {
 			return applyWarmup(existing);
 		}
 
+		const allowFullPrint = Boolean(window.mrTeeAdminData || window.mrTeeOrderExportData);
 		const fonts = (window.mrTeeProductData && window.mrTeeProductData.fonts)
 			|| (window.mrTeeAdminData && window.mrTeeAdminData.fonts)
+			|| (window.mrTeeOrderExportData && window.mrTeeOrderExportData.fonts)
 			|| {};
 		const def = fontDef || fonts[fontId] || fonts[cleanKey];
 		if (!def) return null;
 
 		const pluginUrl = (window.mrTeeProductData && window.mrTeeProductData.pluginUrl)
 			|| (window.mrTeeAdminData && window.mrTeeAdminData.pluginUrl)
+			|| (window.mrTeeOrderExportData && window.mrTeeOrderExportData.pluginUrl)
 			|| '';
 
 		const toSameOriginUrl = (raw) => {
@@ -990,6 +1013,14 @@ export class SvgRenderer {
 				}
 			} catch (e) {}
 			return raw;
+		};
+
+		const sanitizeFontPayload = (rawObj) => {
+			if (!allowFullPrint && rawObj && typeof rawObj === 'object') {
+				rawObj.fullMap = {};
+				rawObj.preview = false;
+			}
+			return rawObj;
 		};
 
 		// 1. Fast mobile-first: try lightweight manifest (~20 KB vs 25 MB!)
@@ -1014,7 +1045,7 @@ export class SvgRenderer {
 		try {
 			const resp = await fetch(dataUrl);
 			if (resp.ok) {
-				const rawData = await resp.json();
+				const rawData = sanitizeFontPayload(await resp.json());
 				const data = this.prepareFontData(rawData, cleanKey);
 				window.mrTeeSvgFonts[cleanKey] = data;
 				window.mrTeeSvgFonts[fontId] = data;
@@ -1028,6 +1059,7 @@ export class SvgRenderer {
 		const ajaxUrl = toSameOriginUrl(
 			(window.mrTeeProductData && window.mrTeeProductData.ajaxUrl)
 			|| (window.mrTeeAdminData && window.mrTeeAdminData.ajaxUrl)
+			|| (window.mrTeeOrderExportData && window.mrTeeOrderExportData.ajaxUrl)
 		);
 		if (ajaxUrl) {
 			try {
@@ -1035,7 +1067,7 @@ export class SvgRenderer {
 				if (resp.ok) {
 					const json = await resp.json();
 					if (json.success && json.data) {
-						const data = this.prepareFontData(json.data, cleanKey);
+						const data = this.prepareFontData(sanitizeFontPayload(json.data), cleanKey);
 						window.mrTeeSvgFonts[cleanKey] = data;
 						window.mrTeeSvgFonts[fontId] = data;
 						return applyWarmup(data);

@@ -68,66 +68,66 @@ class NBDesignerBridge {
 			wp_mkdir_p( $nbd_dir . '/svg' );
 		}
 
-		// 1. Artifacts: Preview images (write a single clean preview/frame_0.png so NBDesigner does not list duplicate thumbnails)
+		// 1. Artifacts: Preview thumbnail (store directly without slow GD PNG re-encoding)
+		$preview_rel = '';
 		if ( ! empty( $preview_b64 ) ) {
 			$raw_b64 = strpos( $preview_b64, 'base64,' ) !== false ? explode( 'base64,', $preview_b64 )[1] : $preview_b64;
 			$decoded = base64_decode( $raw_b64 );
 			$is_jpg  = ( strpos( $preview_b64, 'image/jpeg' ) !== false || strpos( $preview_b64, 'image/jpg' ) !== false );
-			if ( $is_jpg && function_exists( 'imagecreatefromstring' ) && function_exists( 'imagepng' ) ) {
-				$im = @imagecreatefromstring( $decoded );
-				if ( false !== $im ) {
-					@imagepng( $im, trailingslashit( $nbd_dir ) . 'preview/frame_0.png' );
-					@imagepng( $im, trailingslashit( $nbd_dir ) . 'design_preview.png' );
-					@imagedestroy( $im );
-				} else {
+			if ( false !== $decoded && '' !== $decoded ) {
+				if ( $is_jpg ) {
+					file_put_contents( trailingslashit( $nbd_dir ) . 'design_preview.jpg', $decoded );
 					file_put_contents( trailingslashit( $nbd_dir ) . 'preview/frame_0.jpg', $decoded );
+					$preview_rel = 'preview/frame_0.jpg';
+				} else {
+					file_put_contents( trailingslashit( $nbd_dir ) . 'design_preview.png', $decoded );
+					file_put_contents( trailingslashit( $nbd_dir ) . 'preview/frame_0.png', $decoded );
+					$preview_rel = 'preview/frame_0.png';
 				}
-				file_put_contents( trailingslashit( $nbd_dir ) . 'design_preview.jpg', $decoded );
-			} else {
-				file_put_contents( trailingslashit( $nbd_dir ) . 'design_preview.png', $decoded );
-				file_put_contents( trailingslashit( $nbd_dir ) . 'preview/frame_0.png', $decoded );
 			}
 		} elseif ( ! empty( $source_files['preview_file'] ) && file_exists( $source_files['preview_file'] ) ) {
 			$ext = strtolower( pathinfo( $source_files['preview_file'], PATHINFO_EXTENSION ) );
-			if ( ( 'jpg' === $ext || 'jpeg' === $ext ) && function_exists( 'imagecreatefromstring' ) && function_exists( 'imagepng' ) ) {
-				$raw_bytes = @file_get_contents( $source_files['preview_file'] );
-				$im        = $raw_bytes ? @imagecreatefromstring( $raw_bytes ) : false;
-				if ( false !== $im ) {
-					@imagepng( $im, trailingslashit( $nbd_dir ) . 'preview/frame_0.png' );
-					@imagepng( $im, trailingslashit( $nbd_dir ) . 'design_preview.png' );
-					@imagedestroy( $im );
-				} else {
-					@copy( $source_files['preview_file'], trailingslashit( $nbd_dir ) . 'preview/frame_0.jpg' );
-				}
+			if ( 'jpg' === $ext || 'jpeg' === $ext ) {
 				@copy( $source_files['preview_file'], trailingslashit( $nbd_dir ) . 'design_preview.jpg' );
+				@copy( $source_files['preview_file'], trailingslashit( $nbd_dir ) . 'preview/frame_0.jpg' );
+				$preview_rel = 'preview/frame_0.jpg';
 			} else {
 				@copy( $source_files['preview_file'], trailingslashit( $nbd_dir ) . 'design_preview.png' );
 				@copy( $source_files['preview_file'], trailingslashit( $nbd_dir ) . 'preview/frame_0.png' );
+				$preview_rel = 'preview/frame_0.png';
 			}
 		}
 
-		// 2. Artifacts: SVG scene-graphs (root frame_0.svg, root design.svg, and svg/frame_0.svg)
+		// 2. Artifacts: SVG scene-graphs (populated during admin order export or if explicitly provided)
+		$svg_written = false;
 		if ( ! empty( $svg_markup ) ) {
 			file_put_contents( trailingslashit( $nbd_dir ) . 'design.svg', $svg_markup );
 			file_put_contents( trailingslashit( $nbd_dir ) . 'frame_0.svg', $svg_markup );
 			file_put_contents( trailingslashit( $nbd_dir ) . 'svg/frame_0.svg', $svg_markup );
+			$svg_written = true;
 		} elseif ( ! empty( $source_files['svg_file'] ) && file_exists( $source_files['svg_file'] ) ) {
 			@copy( $source_files['svg_file'], trailingslashit( $nbd_dir ) . 'design.svg' );
 			@copy( $source_files['svg_file'], trailingslashit( $nbd_dir ) . 'frame_0.svg' );
 			@copy( $source_files['svg_file'], trailingslashit( $nbd_dir ) . 'svg/frame_0.svg' );
+			$svg_written = true;
 		}
 
-		// 3. Artifacts: 300 DPI Transparent print rasters (frame_0.png, print_file_front.png, print_300dpi.png)
+		// 3. Artifacts: 300 DPI Transparent print rasters (populated during admin order export or if explicitly provided)
+		$print_written = false;
 		if ( ! empty( $print_b64 ) ) {
 			$raw_b64 = strpos( $print_b64, 'base64,' ) !== false ? explode( 'base64,', $print_b64 )[1] : $print_b64;
 			$decoded = base64_decode( $raw_b64 );
-			file_put_contents( trailingslashit( $nbd_dir ) . 'frame_0.png', $decoded );
-			file_put_contents( trailingslashit( $nbd_dir ) . 'print_file_front.png', $decoded );
-			file_put_contents( trailingslashit( $nbd_dir ) . 'print_300dpi.png', $decoded );
+			if ( false !== $decoded && '' !== $decoded ) {
+				file_put_contents( trailingslashit( $nbd_dir ) . 'frame_0.png', $decoded );
+				file_put_contents( trailingslashit( $nbd_dir ) . 'print_file_front.png', $decoded );
+				file_put_contents( trailingslashit( $nbd_dir ) . 'print_300dpi.png', $decoded );
+				$print_written = true;
+			}
 		} elseif ( ! empty( $source_files['print_file'] ) && file_exists( $source_files['print_file'] ) ) {
 			@copy( $source_files['print_file'], trailingslashit( $nbd_dir ) . 'frame_0.png' );
 			@copy( $source_files['print_file'], trailingslashit( $nbd_dir ) . 'print_file_front.png' );
 			@copy( $source_files['print_file'], trailingslashit( $nbd_dir ) . 'print_300dpi.png' );
+			$print_written = true;
 		}
 
 		// 4. Product sides configuration with dynamic physical dimensions
@@ -174,7 +174,7 @@ class NBDesignerBridge {
 
 		// 6. Artifact: config.json
 		$config_data = array(
-			'version'     => '2.3.17',
+			'version'     => '2.3.18',
 			'engine'      => 'mr_tee_editor',
 			'product_id'  => $product_id,
 			'created_at'  => current_time( 'mysql' ),
@@ -290,11 +290,59 @@ class NBDesignerBridge {
 			'nbd_data' => array(
 				'product_id' => $product_id,
 				'folder'     => $nbd_item_key,
-				'preview'    => trailingslashit( $nbd_url ) . 'preview/frame_0.png',
-				'svg'        => trailingslashit( $nbd_url ) . 'svg/frame_0.svg',
-				'print_file' => trailingslashit( $nbd_url ) . 'frame_0.png',
+				'preview'    => $preview_rel ? trailingslashit( $nbd_url ) . $preview_rel : '',
+				'svg'        => $svg_written ? trailingslashit( $nbd_url ) . 'svg/frame_0.svg' : '',
+				'print_file' => $print_written ? trailingslashit( $nbd_url ) . 'frame_0.png' : '',
 				'config'     => trailingslashit( $nbd_url ) . 'config.json',
 			),
 		);
+	}
+
+	/**
+	 * Copy deferred admin-generated vector SVG and 300 DPI print PNG into an existing
+	 * NBDesigner item folder so NBDesigner order downloads stay synchronized.
+	 *
+	 * @param string $nbd_item_key NBDesigner design item key.
+	 * @param string $svg_file     Source SVG file path.
+	 * @param string $print_file   Source 300 DPI PNG file path.
+	 * @return array{svg: string, print_file: string}
+	 */
+	public static function sync_print_artifacts( $nbd_item_key, $svg_file = '', $print_file = '' ) {
+		$out = array(
+			'svg'        => '',
+			'print_file' => '',
+		);
+
+		$clean_key = sanitize_file_name( (string) $nbd_item_key );
+		if ( '' === $clean_key ) {
+			return $out;
+		}
+
+		$wp_upload = wp_upload_dir();
+		$nbd_dir   = trailingslashit( $wp_upload['basedir'] ) . 'nbdesigner/designs/' . $clean_key;
+		$nbd_url   = trailingslashit( $wp_upload['baseurl'] ) . 'nbdesigner/designs/' . $clean_key;
+
+		if ( ! file_exists( $nbd_dir ) ) {
+			wp_mkdir_p( $nbd_dir );
+		}
+		if ( ! file_exists( $nbd_dir . '/svg' ) ) {
+			wp_mkdir_p( $nbd_dir . '/svg' );
+		}
+
+		if ( ! empty( $svg_file ) && file_exists( $svg_file ) ) {
+			@copy( $svg_file, trailingslashit( $nbd_dir ) . 'design.svg' );
+			@copy( $svg_file, trailingslashit( $nbd_dir ) . 'frame_0.svg' );
+			@copy( $svg_file, trailingslashit( $nbd_dir ) . 'svg/frame_0.svg' );
+			$out['svg'] = trailingslashit( $nbd_url ) . 'svg/frame_0.svg';
+		}
+
+		if ( ! empty( $print_file ) && file_exists( $print_file ) ) {
+			@copy( $print_file, trailingslashit( $nbd_dir ) . 'frame_0.png' );
+			@copy( $print_file, trailingslashit( $nbd_dir ) . 'print_file_front.png' );
+			@copy( $print_file, trailingslashit( $nbd_dir ) . 'print_300dpi.png' );
+			$out['print_file'] = trailingslashit( $nbd_url ) . 'frame_0.png';
+		}
+
+		return $out;
 	}
 }

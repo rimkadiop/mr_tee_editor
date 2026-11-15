@@ -7,12 +7,12 @@
  * @package MrTeeEditor\Assets
  */
 
-import { StateStore } from './modules/state-store.js?v=2.3.17';
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.3.17';
-import { SvgRenderer } from './modules/svg-renderer.js?v=2.3.17';
-import { GalleryStage } from './modules/gallery-stage.js?v=2.3.17';
-import { FormController } from './modules/form-controller.js?v=2.3.17';
-import { PrintExporter } from './modules/print-exporter.js?v=2.3.17';
+import { StateStore } from './modules/state-store.js?v=2.3.18';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.3.18';
+import { SvgRenderer } from './modules/svg-renderer.js?v=2.3.18';
+import { GalleryStage } from './modules/gallery-stage.js?v=2.3.18';
+import { FormController } from './modules/form-controller.js?v=2.3.18';
+import { PrintExporter } from './modules/print-exporter.js?v=2.3.18';
 
 window.mrTeePrintExporter = PrintExporter;
 window.mrTeeSvgRenderer = SvgRenderer;
@@ -260,7 +260,7 @@ class MrTeeFrontendApp {
 	}
 
 	/**
-	 * Handle Add-to-Cart export request: rasterizes 300 DPI PNG, uploads artifacts, and submits.
+	 * Handle Add-to-Cart export request: prepares lightweight composite thumbnail preview and payload.
 	 *
 	 * @param {Function} onDone Callback invoked after inputs are populated with (ok, err).
 	 */

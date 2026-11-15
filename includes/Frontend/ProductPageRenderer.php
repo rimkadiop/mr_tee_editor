@@ -313,6 +313,8 @@ class ProductPageRenderer {
 				if ( ! empty( $f_def ) && ( ( ! empty( $f_def['font_type'] ) && 'opentype_svg' === $f_def['font_type'] ) || ! empty( $f_def['color_svg'] ) ) ) {
 					$svg_data = FontRegistry::get_svg_font_data( $active_fid );
 					if ( $svg_data ) {
+						unset( $svg_data['fullMap'] );
+						$svg_data['preview']                 = false;
 						$preloaded_svg_fonts[ $active_fid ] = $svg_data;
 					}
 				}
@@ -346,7 +348,7 @@ class ProductPageRenderer {
 					'confirmKeep'      => __( 'Continuer quand même', 'mr-tee-editor' ),
 					'cancelEdit'       => __( 'Modifier ma personnalisation', 'mr-tee-editor' ),
 					'characters'       => __( 'caractères', 'mr-tee-editor' ),
-					'generatingDpi'    => __( 'Génération du fichier d\'impression haute résolution...', 'mr-tee-editor' ),
+					'generatingDpi'    => __( 'Préparation de l\'aperçu...', 'mr-tee-editor' ),
 					'changeImage'      => __( 'Changer l\'image', 'mr-tee-editor' ),
 					'importImage'      => __( 'Importer une image', 'mr-tee-editor' ),
 					'uploadingImage'   => __( 'Envoi en cours...', 'mr-tee-editor' ),
@@ -718,8 +720,6 @@ class ProductPageRenderer {
 			<input type="hidden" name="mr_tee_design_key" id="mr_tee_design_key" value="" />
 			<input type="hidden" name="mr_tee_editor_payload" id="mr_tee_editor_payload" value="" />
 			<input type="hidden" name="mr_tee_preview_png" id="mr_tee_preview_png" value="" />
-			<input type="hidden" name="mr_tee_vector_svg" id="mr_tee_vector_svg" value="" />
-			<input type="hidden" name="mr_tee_print_300dpi_png" id="mr_tee_print_300dpi_png" value="" />
 		</div>
 		<?php
 	}

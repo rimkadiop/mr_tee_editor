@@ -7,7 +7,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.3.17';
+import { SvgRenderer } from './svg-renderer.js?v=2.3.18';
 
 export class PrintExporter {
 	static CHUNK_SIZE_BYTES = 600 * 1024; // 600 KB binary chunks fit cleanly under 1 MB proxy/WAF limits while minimizing round-trips
@@ -22,6 +22,19 @@ export class PrintExporter {
 			}
 		} catch (e) {}
 		return rawUrl;
+	}
+
+	static isSameOriginImage(imgEl) {
+		if (!imgEl || !imgEl.complete || !imgEl.naturalWidth) return false;
+		const src = imgEl.currentSrc || imgEl.getAttribute('src') || '';
+		if (!src || src.startsWith('data:image/svg+xml')) return false;
+		if (src.startsWith('data:')) return true;
+		try {
+			const parsed = new URL(src, window.location.origin);
+			return parsed.origin === window.location.origin;
+		} catch (e) {
+			return false;
+		}
 	}
 
 	static async fetchImageAsDataUrl(rawUrl) {
@@ -39,7 +52,7 @@ export class PrintExporter {
 		try {
 			const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
 			const timer = ctrl ? setTimeout(() => ctrl.abort(), 12000) : null;
-			const resp = await fetch(fetchUrl, ctrl ? { signal: ctrl.signal } : undefined);
+			const resp = await fetch(fetchUrl, ctrl ? { signal: ctrl.signal, cache: 'force-cache' } : { cache: 'force-cache' });
 			if (timer) clearTimeout(timer);
 			if (resp.ok) {
 				const blob = await resp.blob();
@@ -59,6 +72,58 @@ export class PrintExporter {
 			console.warn('[MrTee PrintExporter] Failed to fetch image URL:', rawUrl, e);
 		}
 		return '';
+	}
+
+	static async getThumbnailImageDataUrl(rawUrl, maxDim = 420) {
+		if (!rawUrl || typeof rawUrl !== 'string') return '';
+		const normUrl = this.normalizeSameHostUrl(rawUrl);
+		if (typeof window !== 'undefined') {
+			window.mrTeeThumbB64Cache = window.mrTeeThumbB64Cache || {};
+			if (!rawUrl.startsWith('data:')) {
+				if (window.mrTeeThumbB64Cache[rawUrl]) {
+					return window.mrTeeThumbB64Cache[rawUrl];
+				}
+				if (normUrl && window.mrTeeThumbB64Cache[normUrl]) {
+					return window.mrTeeThumbB64Cache[normUrl];
+				}
+			}
+		}
+
+		const fullDataUrl = await this.fetchImageAsDataUrl(rawUrl);
+		if (!fullDataUrl) return '';
+		if (fullDataUrl.length <= 80 * 1024 || fullDataUrl.startsWith('data:image/svg+xml')) {
+			if (typeof window !== 'undefined' && !rawUrl.startsWith('data:')) {
+				window.mrTeeThumbB64Cache[rawUrl] = fullDataUrl;
+				if (normUrl) window.mrTeeThumbB64Cache[normUrl] = fullDataUrl;
+			}
+			return fullDataUrl;
+		}
+
+		try {
+			const img = await this.loadHtmlImage(fullDataUrl, false);
+			const natW = img.naturalWidth || maxDim;
+			const natH = img.naturalHeight || maxDim;
+			const longest = Math.max(natW, natH);
+			let resultUrl = fullDataUrl;
+			if (longest > maxDim) {
+				const scale = maxDim / longest;
+				const canvas = document.createElement('canvas');
+				canvas.width = Math.max(1, Math.round(natW * scale));
+				canvas.height = Math.max(1, Math.round(natH * scale));
+				const ctx = canvas.getContext('2d');
+				ctx.clearRect(0, 0, canvas.width, canvas.height);
+				ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+				const hasAlphaMime = fullDataUrl.startsWith('data:image/png') || fullDataUrl.startsWith('data:image/webp');
+				resultUrl = hasAlphaMime ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', 0.80);
+			}
+			if (typeof window !== 'undefined' && !rawUrl.startsWith('data:')) {
+				window.mrTeeThumbB64Cache[rawUrl] = resultUrl;
+				if (normUrl) window.mrTeeThumbB64Cache[normUrl] = resultUrl;
+			}
+			return resultUrl;
+		} catch (e) {
+			return fullDataUrl;
+		}
 	}
 
 	static findProductGalleryImageElement() {
@@ -164,7 +229,7 @@ export class PrintExporter {
 	}
 
 	static resolveAjaxUrl() {
-		const data = (typeof window !== 'undefined' && window.mrTeeProductData) ? window.mrTeeProductData : {};
+		const data = (typeof window !== 'undefined' && (window.mrTeeProductData || window.mrTeeOrderExportData || window.mrTeeAdminData)) || {};
 		const rawAjaxUrl = data.ajaxUrl || '/wp-admin/admin-ajax.php';
 		try {
 			const u = new URL(rawAjaxUrl, window.location.origin);
@@ -197,13 +262,15 @@ export class PrintExporter {
 		return new Blob([decodeURIComponent(body)], { type: mime });
 	}
 
-	static async uploadBlobInChunks(blob, { artifact, designKey = '', fileName = '' }) {
+	static async uploadBlobInChunks(blob, { artifact, designKey = '', fileName = '', nonce = '' }) {
 		if (!blob || blob.size === 0) {
 			return null;
 		}
-		const data = (typeof window !== 'undefined' && window.mrTeeProductData) ? window.mrTeeProductData : {};
-		const nonce = data.uploadNonce || '';
-		if (!nonce) {
+		const productData = (typeof window !== 'undefined' && window.mrTeeProductData) ? window.mrTeeProductData : {};
+		const orderExportData = (typeof window !== 'undefined' && window.mrTeeOrderExportData) ? window.mrTeeOrderExportData : {};
+		const adminData = (typeof window !== 'undefined' && window.mrTeeAdminData) ? window.mrTeeAdminData : {};
+		const resolvedNonce = nonce || productData.uploadNonce || orderExportData.nonce || adminData.nonce || '';
+		if (!resolvedNonce) {
 			throw new Error('Missing upload nonce');
 		}
 
@@ -224,7 +291,7 @@ export class PrintExporter {
 				attempt++;
 				const formData = new FormData();
 				formData.append('action', 'mr_tee_upload_design_artifact');
-				formData.append('nonce', nonce);
+				formData.append('nonce', resolvedNonce);
 				formData.append('artifact', artifact);
 				formData.append('upload_id', uploadId);
 				formData.append('chunk_index', String(chunkIndex));
@@ -287,39 +354,37 @@ export class PrintExporter {
 	}
 
 	/**
-	 * Prepare complete print export assets, upload binary artifacts in chunks,
-	 * and populate lightweight form inputs.
+	 * Compute cropped physical & 300 DPI print dimensions consistently across frontend metadata
+	 * and WP Admin print file generation.
 	 *
-	 * @param {Array} layers Merged scene-graph layers.
-	 * @param {Object} zoomTransform { scale, translateX, translateY }
-	 * @param {Object} store State store instance.
 	 * @param {Object} config Product configuration.
-	 * @return {Promise<boolean>}
+	 * @param {Object|null} editorData Optional saved order item _mr_tee_editor_data snapshot.
+	 * @return {Object} Computed print metrics & optional cropBoundingBox.
 	 */
-	static async prepareExport(layers, zoomTransform, store, config) {
-		await this.ensureStoreImagesUploaded(store, config);
-
-		if (store && store.state && typeof window !== 'undefined' && window.mrTeeSceneGraphEngine) {
-			const merged = window.mrTeeSceneGraphEngine.getLayersMergedWithRefs(store.state.layers, store.state.references);
-			layers = window.mrTeeSceneGraphEngine.applyRowCentering(merged, store.state.activeCount);
-		}
-
-		const isFlatObject = config.product_type === 'flat_object';
+	static computeExportMetrics(config = {}, editorData = null) {
+		const payload = (editorData && editorData.payload) ? editorData.payload : {};
+		const isFlatObject = (config.product_type || (editorData && editorData.product_type)) === 'flat_object';
 		const hasPerLineBoxes = Array.isArray(config.text_lines) && config.text_lines.some(l => l.box_left !== undefined && l.box_width !== undefined);
-		const hasRepeaterOrClipart = Boolean((config.repeater && config.repeater.enabled) || (config.vector_clipart && config.vector_clipart.enabled));
-		const realW  = parseFloat(config.print_real_width) || 30.0;
-		const realH  = parseFloat(config.print_real_height) || 40.0;
-		const unit   = config.print_unit || 'cm';
-		const dpi    = parseInt(config.dpi, 10) || 300;
+		const hasRepeaterOrClipart = Boolean((config.repeater && config.repeater.enabled) || (config.vector_clipart && config.vector_clipart.enabled) || (editorData && editorData.repeater_enabled));
+		const realW = parseFloat(config.print_real_width) || (editorData && parseFloat(editorData.ref_real_width)) || 30.0;
+		const realH = parseFloat(config.print_real_height) || (editorData && parseFloat(editorData.ref_real_height)) || 40.0;
+		const unit = config.print_unit || (payload && payload.print_unit) || (editorData && editorData.print_unit) || 'cm';
+		const dpi = parseInt(config.dpi || (payload && payload.dpi) || 300, 10) || 300;
 
 		let cropBoundingBox = null;
-		let exportRealW = realW;
-		let exportRealH = realH;
-		let exportPxW = parseInt(config.print_width_px, 10) || 2400;
-		let exportPxH = parseInt(config.print_height_px, 10) || 3000;
-		let exportRatio = (realW > 0 && realH > 0) ? (realW / realH) : 1.0;
+		let exportRealW = (payload && parseFloat(payload.crop_print_width)) || (editorData && parseFloat(editorData.print_real_width)) || realW;
+		let exportRealH = (payload && parseFloat(payload.crop_print_height)) || (editorData && parseFloat(editorData.print_real_height)) || realH;
+		let exportPxW = parseInt(config.print_width_px, 10) || (payload && parseInt(payload.crop_width_px, 10)) || (editorData && parseInt(editorData.print_width_px, 10)) || 2400;
+		let exportPxH = parseInt(config.print_height_px, 10) || (payload && parseInt(payload.crop_height_px, 10)) || (editorData && parseInt(editorData.print_height_px, 10)) || 3000;
+		let exportRatio = (exportRealW > 0 && exportRealH > 0) ? (exportRealW / exportRealH) : ((realW > 0 && realH > 0) ? (realW / realH) : 1.0);
 
-		if (!isFlatObject && hasPerLineBoxes && !hasRepeaterOrClipart) {
+		if (isFlatObject || hasRepeaterOrClipart || !hasPerLineBoxes) {
+			exportRealW = realW;
+			exportRealH = realH;
+			exportPxW = parseInt(config.print_width_px, 10) || (payload && parseInt(payload.crop_width_px, 10)) || (editorData && parseInt(editorData.print_width_px, 10)) || 2400;
+			exportPxH = parseInt(config.print_height_px, 10) || (payload && parseInt(payload.crop_height_px, 10)) || (editorData && parseInt(editorData.print_height_px, 10)) || 3000;
+			exportRatio = (realW > 0 && realH > 0) ? (realW / realH) : 1.0;
+		} else {
 			let xMin = 100, yMin = 100, xMax = 0, yMax = 0;
 			config.text_lines.forEach(l => {
 				if (l.box_left !== undefined && l.box_width !== undefined) {
@@ -378,129 +443,135 @@ export class PrintExporter {
 			};
 		}
 
-		// Resolve product background image before generating fullPreviewSvg so its exact
-		// natural aspect ratio matches the live stage on un-locked garment products.
-		const bgUrl = this.resolveProductBackgroundUrl();
-		const bgAsset = await this.loadBackgroundImage(bgUrl);
-		const domGarmentImg = this.findProductGalleryImageElement();
-		const isLocked = Boolean(config.lock_aspect_ratio) || isFlatObject;
+		return {
+			isFlatObject,
+			hasPerLineBoxes,
+			hasRepeaterOrClipart,
+			realW,
+			realH,
+			unit,
+			dpi,
+			exportRealW,
+			exportRealH,
+			exportPxW,
+			exportPxH,
+			exportRatio,
+			cropBoundingBox,
+		};
+	}
 
-		let compositeRatio = (realW > 0 && realH > 0) ? (realW / realH) : (parseFloat(config.print_aspect_ratio) || 1.0);
+	/**
+	 * Prepare ONLY the lightweight composite thumbnail preview and scene-graph payload
+	 * on the customer product page. Full 300 DPI PNG & vector SVG generation are deferred
+	 * exclusively to WP Admin order screens for maximum client speed and IP protection.
+	 *
+	 * @param {Array} layers Merged scene-graph layers.
+	 * @param {Object} zoomTransform { scale, translateX, translateY }
+	 * @param {Object} store State store instance.
+	 * @param {Object} config Product configuration.
+	 * @return {Promise<boolean>}
+	 */
+	static async prepareExport(layers, zoomTransform, store, config) {
+		await this.ensureStoreImagesUploaded(store, config);
+
+		if (store && store.state && typeof window !== 'undefined' && window.mrTeeSceneGraphEngine) {
+			const merged = window.mrTeeSceneGraphEngine.getLayersMergedWithRefs(store.state.layers, store.state.references);
+			layers = window.mrTeeSceneGraphEngine.applyRowCentering(merged, store.state.activeCount);
+		}
+
+		const metrics = this.computeExportMetrics(config);
+		const domGarmentImg = this.findProductGalleryImageElement();
+		const hasFastDomBg = this.isSameOriginImage(domGarmentImg);
+		const bgAsset = hasFastDomBg ? null : await this.loadBackgroundImage(this.resolveProductBackgroundUrl());
+		const isLocked = Boolean(config.lock_aspect_ratio) || metrics.isFlatObject;
+
+		let compositeRatio = (metrics.realW > 0 && metrics.realH > 0)
+			? (metrics.realW / metrics.realH)
+			: (parseFloat(config.print_aspect_ratio) || 1.0);
 		if (!isLocked) {
-			if (bgAsset && bgAsset.naturalWidth > 0 && bgAsset.naturalHeight > 0) {
-				compositeRatio = bgAsset.naturalWidth / bgAsset.naturalHeight;
-			} else if (domGarmentImg && domGarmentImg.naturalWidth > 0 && domGarmentImg.naturalHeight > 0) {
+			if (domGarmentImg && domGarmentImg.naturalWidth > 0 && domGarmentImg.naturalHeight > 0) {
 				compositeRatio = domGarmentImg.naturalWidth / domGarmentImg.naturalHeight;
+			} else if (bgAsset && bgAsset.naturalWidth > 0 && bgAsset.naturalHeight > 0) {
+				compositeRatio = bgAsset.naturalWidth / bgAsset.naturalHeight;
 			}
 		}
 
-		// 1. Build self-contained, clean vector SVG markup (tightly cropped to cumulative design area)
-		const svgMarkup = SvgRenderer.renderToString(layers, zoomTransform, {
-			isExport: true,
-			realWidth: exportRealW,
-			realHeight: exportRealH,
-			unit: unit,
-			dpi: dpi,
-			aspectRatio: exportRatio,
-			hasPerLineBoxes: hasPerLineBoxes,
-			cropBoundingBox: cropBoundingBox,
-			fontFaceCss: this.extractFontFaceCss(),
-		});
-
-		// 2. Build full uncropped SVG for visual composite preview on mockup photo
+		// Build full-canvas preview SVG strictly at thumbnail resolution (never generates print SVG/PNG)
 		const fullPreviewSvg = SvgRenderer.renderToString(layers, zoomTransform, {
 			isExport: false,
+			useThumbCache: true,
 			aspectRatio: compositeRatio,
-			hasPerLineBoxes: hasPerLineBoxes,
+			hasPerLineBoxes: metrics.hasPerLineBoxes,
 			fontFaceCss: this.extractFontFaceCss(),
 		});
 
-		// Inline external glyph, artwork images, and active @font-face font binaries for crisp 300 DPI SVG rasterization
-		const inlinedExportSvg = await this.inlineExternalFonts(await this.inlineExternalImages(svgMarkup));
-		const inlinedFullPreviewSvg = await this.inlineExternalFonts(await this.inlineExternalImages(fullPreviewSvg));
+		const inlinedImagesSvg = await this.inlineExternalImages(fullPreviewSvg, {
+			useThumbCache: true,
+			maxThumbDim: 420,
+		});
+		const inlinedFullPreviewSvg = await this.inlineExternalFonts(inlinedImagesSvg);
 
-		// 3. Rasterize to 300 DPI Transparent PNG (tightly cropped, lossless print output)
-		const print300DpiB64 = await this.rasterizeSvgToPng(inlinedExportSvg, exportPxW, exportPxH);
-
-		// 4. Render Composite Mockup Preview (Full Product Background + Design) as compact JPEG
+		// Render compact 360px JPEG composite mockup preview (~10-25 KB)
 		const compositeB64 = await this.renderCompositePreview(inlinedFullPreviewSvg, config, {
 			bgAsset,
 			domGarmentImg,
 			compositeRatio,
+			canvasWidth: 360,
+			quality: 0.74,
 		});
 
-		// 5. Serialize lightweight payload with print dimensions attached
 		const payload = store.getExportPayload();
-		payload.crop_print_width = exportRealW;
-		payload.crop_print_height = exportRealH;
-		payload.crop_width_px = exportPxW;
-		payload.crop_height_px = exportPxH;
-		payload.print_unit = unit;
-		payload.dpi = dpi;
+		payload.crop_print_width = metrics.exportRealW;
+		payload.crop_print_height = metrics.exportRealH;
+		payload.crop_width_px = metrics.exportPxW;
+		payload.crop_height_px = metrics.exportPxH;
+		payload.print_unit = metrics.unit;
+		payload.dpi = metrics.dpi;
 		const payloadJson = JSON.stringify(payload);
 
 		const designKeyInput = document.getElementById('mr_tee_design_key');
 		const payloadInput = document.getElementById('mr_tee_editor_payload');
 		const previewInput = document.getElementById('mr_tee_preview_png');
-		const svgInput = document.getElementById('mr_tee_vector_svg');
-		const printInput = document.getElementById('mr_tee_print_300dpi_png');
-
-		const exportSvgText = inlinedExportSvg || svgMarkup;
 		const designKey = this.generateDesignKey();
-		let uploadedToServer = false;
 
-		try {
+		const approxBytes = payloadJson.length + (compositeB64 ? compositeB64.length : 0);
+		if (approxBytes < 180 * 1024) {
+			if (designKeyInput) designKeyInput.value = designKey;
+			if (payloadInput) payloadInput.value = payloadJson;
+			if (previewInput) previewInput.value = compositeB64 || '';
+		} else {
 			const previewBlob = this.dataUrlToBlob(compositeB64);
 			const previewArtifact = (compositeB64 && compositeB64.includes('image/jpeg')) ? 'preview_jpg' : 'preview_png';
-			const svgBlob = exportSvgText ? new Blob([exportSvgText], { type: 'image/svg+xml;charset=utf-8' }) : null;
-			const printBlob = this.dataUrlToBlob(print300DpiB64);
-
-			const tasks = [];
-			if (previewBlob) tasks.push(this.uploadBlobInChunks(previewBlob, { artifact: previewArtifact, designKey }));
-			if (svgBlob) tasks.push(this.uploadBlobInChunks(svgBlob, { artifact: 'svg', designKey }));
-			if (printBlob) tasks.push(this.uploadBlobInChunks(printBlob, { artifact: 'print_png', designKey }));
-
-			await Promise.all(tasks);
-			uploadedToServer = true;
-		} catch (uploadErr) {
-			const approxBytes = payloadJson.length + (compositeB64 || '').length + exportSvgText.length + (print300DpiB64 || '').length;
-			if (approxBytes >= 180 * 1024) {
-				throw uploadErr;
+			if (previewBlob) {
+				await this.uploadBlobInChunks(previewBlob, { artifact: previewArtifact, designKey });
 			}
-			console.warn('[MrTee PrintExporter] Chunk upload failed on small payload, using inline fallback:', uploadErr);
-		}
-
-		if (uploadedToServer) {
 			if (designKeyInput) designKeyInput.value = designKey;
 			if (payloadInput) payloadInput.value = payloadJson;
 			if (previewInput) previewInput.value = '';
-			if (svgInput) svgInput.value = '';
-			if (printInput) printInput.value = '';
-		} else {
-			if (designKeyInput) designKeyInput.value = '';
-			if (payloadInput) payloadInput.value = payloadJson;
-			if (previewInput) previewInput.value = compositeB64;
-			if (svgInput) svgInput.value = exportSvgText;
-			if (printInput) printInput.value = print300DpiB64;
 		}
 
 		return true;
 	}
 
 	/**
-	 * Convert external image URLs inside an SVG to base64 data URIs so that HTML5 canvas
-	 * can draw the SVG without cross-origin or blob-tainting restrictions.
+	 * Convert external image URLs (and oversized local data URIs in thumbnail mode)
+	 * inside an SVG to compact base64 data URIs so HTML5 canvas draws without tainting or stalling.
 	 *
 	 * @param {string} svgMarkup SVG XML markup.
+	 * @param {Object} options Optional thumbnail downscaling flags ({ useThumbCache, maxThumbDim }).
 	 * @return {Promise<string>} Inlined SVG XML markup.
 	 */
-	static async inlineExternalImages(svgMarkup) {
+	static async inlineExternalImages(svgMarkup, options = {}) {
 		if (!svgMarkup) return '';
+		const useThumbCache = Boolean(options.useThumbCache);
+		const maxThumbDim = options.maxThumbDim || 420;
 		const matches = [...svgMarkup.matchAll(/(xlink:href|href)="([^"]+)"/g)];
 		const urlsToFetch = [];
 		for (const m of matches) {
 			const url = m[2];
-			if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('/')) {
+			const isRemoteOrRel = url.startsWith('http://') || url.startsWith('https://') || url.startsWith('/');
+			const isOversizedData = useThumbCache && url.startsWith('data:image/') && !url.startsWith('data:image/svg+xml') && url.length > 80 * 1024;
+			if (isRemoteOrRel || isOversizedData) {
 				if (!urlsToFetch.includes(url)) {
 					urlsToFetch.push(url);
 				}
@@ -514,8 +585,10 @@ export class PrintExporter {
 		const urlMap = {};
 		await Promise.all(urlsToFetch.map(async (url) => {
 			const cleanUrl = url.replace(/&amp;/g, '&');
-			const b64 = await this.fetchImageAsDataUrl(cleanUrl);
-			if (b64) {
+			const b64 = useThumbCache
+				? await this.getThumbnailImageDataUrl(cleanUrl, maxThumbDim)
+				: await this.fetchImageAsDataUrl(cleanUrl);
+			if (b64 && b64 !== url) {
 				urlMap[url] = b64;
 			}
 		}));
@@ -566,7 +639,7 @@ export class PrintExporter {
 		try {
 			const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
 			const timer = ctrl ? setTimeout(() => ctrl.abort(), 12000) : null;
-			const resp = await fetch(fetchUrl, ctrl ? { signal: ctrl.signal } : undefined);
+			const resp = await fetch(fetchUrl, ctrl ? { signal: ctrl.signal, cache: 'force-cache' } : { cache: 'force-cache' });
 			if (timer) clearTimeout(timer);
 			if (resp.ok) {
 				const buf = await resp.arrayBuffer();
@@ -752,11 +825,11 @@ export class PrintExporter {
 	}
 
 	/**
-	 * Render composite mockup image (garment photo + overlay design) as a lightweight high-quality JPEG.
+	 * Render composite mockup image (garment photo + overlay design) as a lightweight JPEG thumbnail.
 	 *
 	 * @param {string} svgMarkup SVG markup.
 	 * @param {Object} config Product configuration.
-	 * @param {Object} options Optional preloaded background assets ({ bgAsset, domGarmentImg, compositeRatio }).
+	 * @param {Object} options Optional preloaded background assets and size overrides ({ bgAsset, domGarmentImg, compositeRatio, canvasWidth, quality }).
 	 * @return {Promise<string>} Base64 composite image data URL.
 	 */
 	static async renderCompositePreview(svgMarkup, config, options = {}) {
@@ -783,8 +856,9 @@ export class PrintExporter {
 			}
 		}
 
-		const canvasW = 900;
-		const canvasH = Math.max(240, Math.min(1800, Math.round(canvasW / compositeRatio)));
+		const canvasW = Math.max(180, Math.min(900, parseInt(options.canvasWidth, 10) || 360));
+		const canvasH = Math.max(120, Math.min(900, Math.round(canvasW / compositeRatio)));
+		const quality = (typeof options.quality === 'number' && options.quality > 0 && options.quality <= 1) ? options.quality : 0.74;
 		const canvas = document.createElement('canvas');
 		canvas.width = canvasW;
 		canvas.height = canvasH;
@@ -837,7 +911,7 @@ export class PrintExporter {
 			};
 			const safetyTimer = setTimeout(() => {
 				try {
-					finish(canvas.toDataURL('image/jpeg', 0.88));
+					finish(canvas.toDataURL('image/jpeg', quality));
 				} catch (e) {
 					finish('');
 				}
@@ -864,7 +938,7 @@ export class PrintExporter {
 					const { left, top, w, h } = getPlacement();
 					try {
 						ctx.drawImage(designImg, left, top, w, h);
-						const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
+						const dataUrl = canvas.toDataURL('image/jpeg', quality);
 						URL.revokeObjectURL(url);
 						finish(dataUrl);
 					} catch (err) {
@@ -877,7 +951,7 @@ export class PrintExporter {
 							cleanCtx.fillStyle = '#ffffff';
 							cleanCtx.fillRect(0, 0, canvasW, canvasH);
 							cleanCtx.drawImage(designImg, left, top, w, h);
-							const cleanUrl = cleanCanvas.toDataURL('image/jpeg', 0.88);
+							const cleanUrl = cleanCanvas.toDataURL('image/jpeg', quality);
 							URL.revokeObjectURL(url);
 							finish(cleanUrl);
 						} catch (fallbackErr) {
@@ -890,7 +964,7 @@ export class PrintExporter {
 				designImg.onerror = () => {
 					URL.revokeObjectURL(url);
 					try {
-						finish(canvas.toDataURL('image/jpeg', 0.88));
+						finish(canvas.toDataURL('image/jpeg', quality));
 					} catch (e) {
 						finish('');
 					}
@@ -918,10 +992,12 @@ export class PrintExporter {
 	 * @return {string}
 	 */
 	static extractFontFaceCss() {
-		if (typeof window !== 'undefined' && window.mrTeeProductData && window.mrTeeProductData.fontFaceCss) {
-			const css = window.mrTeeProductData.fontFaceCss;
-			if (!css.includes('data:font') || css.length < 50000) {
-				return css;
+		if (typeof window !== 'undefined') {
+			const preCss = (window.mrTeeProductData && window.mrTeeProductData.fontFaceCss)
+				|| (window.mrTeeOrderExportData && window.mrTeeOrderExportData.fontFaceCss)
+				|| '';
+			if (preCss && (!preCss.includes('data:font') || preCss.length < 50000)) {
+				return preCss;
 			}
 		}
 

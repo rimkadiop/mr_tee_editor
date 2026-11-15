@@ -280,7 +280,7 @@ class ProductPageRenderer {
 		$same_orig   = ! $url_host || $url_host === $site_host || ( $http_host && $url_host === $http_host );
 		$base_path   = ( $same_orig && ! empty( $base_parsed['path'] ) ) ? trailingslashit( $base_parsed['path'] ) : trailingslashit( MR_TEE_EDITOR_URL );
 		$entry_ver   = self::get_asset_version( 'assets/js/mr-tee-frontend.js' );
-		$mod_ver     = MR_TEE_EDITOR_VERSION . '.1';
+		$mod_ver     = MR_TEE_EDITOR_VERSION . '.2';
 
 		printf(
 			"<link rel=\"modulepreload\" href=\"%s\" />\n",

@@ -7,7 +7,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.3.19.1';
+import { SvgRenderer } from './svg-renderer.js?v=2.3.19.2';
 
 export class PrintExporter {
 	static CHUNK_SIZE_BYTES = 600 * 1024; // 600 KB binary chunks fit cleanly under 1 MB proxy/WAF limits while minimizing round-trips
@@ -518,17 +518,17 @@ export class PrintExporter {
 
 		const inlinedImagesSvg = await this.inlineExternalImages(fullPreviewSvg, {
 			useThumbCache: true,
-			maxThumbDim: 420,
+			maxThumbDim: 760,
 		});
 		const inlinedFullPreviewSvg = await this.inlineExternalFonts(inlinedImagesSvg);
 
-		// Render compact 360px JPEG composite mockup preview (~10-25 KB)
+		// Render crisp 800px JPEG composite mockup preview for cart thumbnail & full-screen cart zoom modal
 		const compositeB64 = await this.renderCompositePreview(inlinedFullPreviewSvg, config, {
 			bgAsset,
 			domGarmentImg,
 			compositeRatio,
-			canvasWidth: 360,
-			quality: 0.74,
+			canvasWidth: 800,
+			quality: 0.85,
 		});
 
 		const payload = store.getExportPayload();
@@ -867,8 +867,8 @@ export class PrintExporter {
 			}
 		}
 
-		const canvasW = Math.max(180, Math.min(900, parseInt(options.canvasWidth, 10) || 360));
-		const canvasH = Math.max(120, Math.min(900, Math.round(canvasW / compositeRatio)));
+		const canvasW = Math.max(180, Math.min(1200, parseInt(options.canvasWidth, 10) || 800));
+		const canvasH = Math.max(120, Math.min(1400, Math.round(canvasW / compositeRatio)));
 		const quality = (typeof options.quality === 'number' && options.quality > 0 && options.quality <= 1) ? options.quality : 0.74;
 		const canvas = document.createElement('canvas');
 		canvas.width = canvasW;

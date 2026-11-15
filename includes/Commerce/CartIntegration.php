@@ -46,6 +46,7 @@ class CartIntegration {
 		add_filter( 'woocommerce_cart_item_name', array( __CLASS__, 'filter_checkout_item_name' ), 25, 3 );
 		add_filter( 'nbd_show_design_section_in_cart', array( __CLASS__, 'filter_nbd_show_design_in_cart' ), 999, 2 );
 		add_filter( 'nbd_show_edit_design_link_in_cart', array( __CLASS__, 'filter_nbd_show_edit_in_cart' ), 999, 2 );
+		add_action( 'wp_footer', array( __CLASS__, 'render_cart_preview_lightbox' ), 99 );
 	}
 
 	/**
@@ -348,7 +349,7 @@ class CartIntegration {
 		}
 		?>
 		<div class="mr-tee-order-preview-attachment" style="margin:8px 0 6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 8px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;max-width:340px;">
-			<img src="<?php echo esc_url( $preview_url ); ?>" alt="<?php esc_attr_e( 'Aperçu du produit personnalisé', 'mr-tee-editor' ); ?>" class="skip-lazy" style="width:72px;height:auto;max-height:96px;object-fit:contain;border-radius:6px;border:1px solid #cbd5e1;background:#ffffff;display:block;flex-shrink:0;" />
+			<img src="<?php echo esc_url( $preview_url ); ?>" data-mr-tee-preview="1" data-mr-tee-full-src="<?php echo esc_url( $preview_url ); ?>" alt="<?php esc_attr_e( 'Aperçu du produit personnalisé', 'mr-tee-editor' ); ?>" class="skip-lazy mr-tee-cart-thumb" style="width:72px;height:auto;max-height:96px;object-fit:contain;border-radius:6px;border:1px solid #cbd5e1;background:#ffffff;display:block;flex-shrink:0;cursor:zoom-in;" />
 			<div style="flex:1 1 130px;min-width:0;font-size:12px;line-height:1.35;">
 				<span style="display:block;font-weight:700;color:#0f172a;"><?php esc_html_e( 'Aperçu personnalisé', 'mr-tee-editor' ); ?></span>
 			</div>
@@ -577,7 +578,9 @@ class CartIntegration {
 				? sprintf( __( 'Aperçu personnalisé — %s', 'mr-tee-editor' ), $cart_item['data']->get_name() )
 				: __( 'Aperçu du produit personnalisé', 'mr-tee-editor' );
 			return sprintf(
-				'<img src="%s" class="attachment-woocommerce_thumbnail size-woocommerce_thumbnail mr-tee-cart-thumb skip-lazy" alt="%s" style="width:80px;max-width:100%%;height:auto;max-height:110px;object-fit:contain;border-radius:6px;border:1px solid #e2e8f0;background:#ffffff;display:block;" />',
+				'<span class="mr-tee-cart-thumb-wrap" data-mr-tee-preview-wrap="1" title="%s"><img src="%s" data-mr-tee-preview="1" data-mr-tee-full-src="%s" class="attachment-woocommerce_thumbnail size-woocommerce_thumbnail mr-tee-cart-thumb skip-lazy" alt="%s" style="width:80px;max-width:100%%;height:auto;max-height:110px;object-fit:contain;border-radius:6px;border:1px solid #e2e8f0;background:#ffffff;display:block;cursor:zoom-in;" /><span class="mr-tee-cart-zoom-hint" aria-hidden="true">+</span></span>',
+				esc_attr__( 'Cliquer pour agrandir votre aperçu personnalisé', 'mr-tee-editor' ),
+				esc_url( $preview_url ),
 				esc_url( $preview_url ),
 				esc_attr( $alt )
 			);
@@ -646,7 +649,8 @@ class CartIntegration {
 		}
 
 		$thumb_html = sprintf(
-			'<img src="%s" alt="%s" class="skip-lazy mr-tee-checkout-thumb" style="width:60px;height:auto;max-height:80px;object-fit:contain;border-radius:6px;border:1px solid #e2e8f0;background:#ffffff;" />',
+			'<img src="%s" data-mr-tee-preview="1" data-mr-tee-full-src="%s" alt="%s" class="skip-lazy mr-tee-checkout-thumb" style="width:60px;height:auto;max-height:80px;object-fit:contain;border-radius:6px;border:1px solid #e2e8f0;background:#ffffff;cursor:zoom-in;" />',
+			esc_url( $preview_url ),
 			esc_url( $preview_url ),
 			esc_attr__( 'Aperçu du produit personnalisé', 'mr-tee-editor' )
 		);
@@ -675,5 +679,363 @@ class CartIntegration {
 		}
 
 		return $product_name;
+	}
+
+	/**
+	 * Output universal Cart / Checkout / Order Preview Lightbox Modal and capture-phase click interceptor
+	 * so clicking a personalized product thumbnail on any WordPress theme opens a large preview dialog
+	 * instead of navigating away to the blank product page.
+	 */
+	public static function render_cart_preview_lightbox() {
+		if ( is_admin() ) {
+			return;
+		}
+		?>
+		<style id="mr-tee-cart-preview-lightbox-css">
+			.mr-tee-cart-thumb-wrap {
+				position: relative !important;
+				display: inline-block !important;
+				line-height: 0 !important;
+				cursor: zoom-in !important;
+				vertical-align: middle !important;
+			}
+			.mr-tee-cart-thumb,
+			.mr-tee-checkout-thumb,
+			.mr-tee-order-preview-attachment img,
+			.woocommerce-cart-form img[src*="mr_tee_editor/designs/"],
+			.wc-block-cart-item__image img[src*="mr_tee_editor/designs/"],
+			.wc-block-components-order-summary-item__image img[src*="mr_tee_editor/designs/"] {
+				cursor: zoom-in !important;
+				transition: transform 0.16s ease, box-shadow 0.16s ease !important;
+			}
+			.mr-tee-cart-thumb-wrap:hover .mr-tee-cart-thumb,
+			.mr-tee-checkout-thumb:hover,
+			.woocommerce-cart-form img[src*="mr_tee_editor/designs/"]:hover,
+			.wc-block-cart-item__image img[src*="mr_tee_editor/designs/"]:hover {
+				transform: scale(1.03);
+				box-shadow: 0 4px 12px rgba(15, 23, 42, 0.14);
+			}
+			.mr-tee-cart-zoom-hint {
+				position: absolute !important;
+				right: 4px !important;
+				bottom: 4px !important;
+				width: 20px !important;
+				height: 20px !important;
+				border-radius: 999px !important;
+				background: rgba(15, 23, 42, 0.78) !important;
+				color: #ffffff !important;
+				font-size: 13px !important;
+				font-weight: 700 !important;
+				line-height: 20px !important;
+				text-align: center !important;
+				pointer-events: none !important;
+				box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25) !important;
+			}
+			#mr-tee-cart-preview-modal {
+				position: fixed !important;
+				inset: 0 !important;
+				z-index: 2147483647 !important;
+				display: none;
+				align-items: center !important;
+				justify-content: center !important;
+				background: rgba(15, 23, 42, 0.88) !important;
+				backdrop-filter: blur(5px) !important;
+				-webkit-backdrop-filter: blur(5px) !important;
+				padding: 14px !important;
+				box-sizing: border-box !important;
+			}
+			#mr-tee-cart-preview-modal.is-open {
+				display: flex !important;
+			}
+			.mr-tee-cart-modal-dialog {
+				position: relative !important;
+				width: 100% !important;
+				max-width: 680px !important;
+				max-height: 92vh !important;
+				background: #ffffff !important;
+				border-radius: 16px !important;
+				box-shadow: 0 25px 60px rgba(0, 0, 0, 0.48) !important;
+				display: flex !important;
+				flex-direction: column !important;
+				overflow: hidden !important;
+				box-sizing: border-box !important;
+			}
+			.mr-tee-cart-modal-header {
+				display: flex !important;
+				align-items: center !important;
+				justify-content: space-between !important;
+				gap: 10px !important;
+				padding: 12px 16px !important;
+				border-bottom: 1px solid #e2e8f0 !important;
+				background: #ffffff !important;
+				flex-shrink: 0 !important;
+			}
+			.mr-tee-cart-modal-title {
+				margin: 0 !important;
+				font-size: 15px !important;
+				font-weight: 700 !important;
+				color: #0f172a !important;
+				line-height: 1.3 !important;
+				overflow: hidden !important;
+				text-overflow: ellipsis !important;
+				white-space: nowrap !important;
+			}
+			.mr-tee-cart-modal-actions {
+				display: inline-flex !important;
+				align-items: center !important;
+				gap: 8px !important;
+				flex-shrink: 0 !important;
+			}
+			.mr-tee-cart-modal-btn {
+				appearance: none !important;
+				-webkit-appearance: none !important;
+				border: 1px solid #cbd5e1 !important;
+				background: #f8fafc !important;
+				color: #0f172a !important;
+				border-radius: 8px !important;
+				height: 36px !important;
+				min-width: 36px !important;
+				padding: 0 10px !important;
+				font-size: 13px !important;
+				font-weight: 600 !important;
+				line-height: 1 !important;
+				display: inline-flex !important;
+				align-items: center !important;
+				justify-content: center !important;
+				cursor: pointer !important;
+				text-decoration: none !important;
+				box-shadow: none !important;
+				margin: 0 !important;
+			}
+			.mr-tee-cart-modal-btn:hover {
+				background: #e2e8f0 !important;
+				color: #0f172a !important;
+			}
+			.mr-tee-cart-modal-close {
+				font-size: 20px !important;
+				padding: 0 !important;
+				width: 36px !important;
+			}
+			.mr-tee-cart-modal-body {
+				flex: 1 1 auto !important;
+				overflow: auto !important;
+				display: flex !important;
+				align-items: center !important;
+				justify-content: center !important;
+				background: #f1f5f9 !important;
+				padding: 16px !important;
+				min-height: 240px !important;
+				max-height: calc(92vh - 62px) !important;
+				box-sizing: border-box !important;
+				-webkit-overflow-scrolling: touch !important;
+			}
+			.mr-tee-cart-modal-dialog.is-zoomed .mr-tee-cart-modal-body {
+				align-items: flex-start !important;
+				justify-content: flex-start !important;
+			}
+			.mr-tee-cart-modal-img {
+				display: block !important;
+				width: auto !important;
+				height: auto !important;
+				max-width: 100% !important;
+				max-height: calc(85vh - 96px) !important;
+				object-fit: contain !important;
+				border-radius: 10px !important;
+				background: #ffffff !important;
+				box-shadow: 0 8px 28px rgba(15, 23, 42, 0.12) !important;
+				cursor: zoom-in !important;
+				margin: auto !important;
+			}
+			.mr-tee-cart-modal-dialog.is-zoomed .mr-tee-cart-modal-img {
+				width: 175% !important;
+				max-width: none !important;
+				max-height: none !important;
+				cursor: zoom-out !important;
+			}
+		</style>
+		<div id="mr-tee-cart-preview-modal" role="dialog" aria-modal="true" aria-hidden="true" aria-label="<?php esc_attr_e( 'Aperçu du produit personnalisé', 'mr-tee-editor' ); ?>">
+			<div class="mr-tee-cart-modal-dialog" id="mr-tee-cart-modal-dialog">
+				<div class="mr-tee-cart-modal-header">
+					<div class="mr-tee-cart-modal-title" id="mr-tee-cart-modal-title"><?php esc_html_e( 'Aperçu de votre personnalisation', 'mr-tee-editor' ); ?></div>
+					<div class="mr-tee-cart-modal-actions">
+						<button type="button" class="mr-tee-cart-modal-btn" id="mr-tee-cart-modal-zoom" aria-label="<?php esc_attr_e( 'Zoomer', 'mr-tee-editor' ); ?>">Zoom +</button>
+						<button type="button" class="mr-tee-cart-modal-btn mr-tee-cart-modal-close" id="mr-tee-cart-modal-close" aria-label="<?php esc_attr_e( 'Fermer', 'mr-tee-editor' ); ?>">&times;</button>
+					</div>
+				</div>
+				<div class="mr-tee-cart-modal-body" id="mr-tee-cart-modal-body">
+					<img src="" alt="<?php esc_attr_e( 'Aperçu du produit personnalisé', 'mr-tee-editor' ); ?>" class="mr-tee-cart-modal-img skip-lazy" id="mr-tee-cart-modal-img" />
+				</div>
+			</div>
+		</div>
+		<script id="mr-tee-cart-preview-lightbox-js">
+		(function() {
+			var PREVIEW_SEL = 'img.mr-tee-cart-thumb, img.mr-tee-checkout-thumb, .mr-tee-order-preview-attachment img, img[data-mr-tee-preview="1"], img[src*="mr_tee_editor/designs/"]';
+
+			function getModalElements() {
+				var modal = document.getElementById('mr-tee-cart-preview-modal');
+				var dialog = document.getElementById('mr-tee-cart-modal-dialog');
+				var img = document.getElementById('mr-tee-cart-modal-img');
+				var title = document.getElementById('mr-tee-cart-modal-title');
+				var zoomBtn = document.getElementById('mr-tee-cart-modal-zoom');
+				var closeBtn = document.getElementById('mr-tee-cart-modal-close');
+				if (modal && modal.parentElement !== document.body) {
+					document.body.appendChild(modal);
+				}
+				return { modal: modal, dialog: dialog, img: img, title: title, zoomBtn: zoomBtn, closeBtn: closeBtn };
+			}
+
+			function setZoomState(zoomed) {
+				var els = getModalElements();
+				if (!els.dialog || !els.zoomBtn) return;
+				if (zoomed) {
+					els.dialog.classList.add('is-zoomed');
+					els.zoomBtn.textContent = 'Zoom \u2212';
+				} else {
+					els.dialog.classList.remove('is-zoomed');
+					els.zoomBtn.textContent = 'Zoom +';
+				}
+			}
+
+			function openPreviewModal(src, altText) {
+				if (!src) return;
+				var els = getModalElements();
+				if (!els.modal || !els.img) return;
+				setZoomState(false);
+				els.img.src = src;
+				els.img.alt = altText || 'Aper\u00e7u de votre personnalisation';
+				if (els.title) {
+					els.title.textContent = altText || 'Aper\u00e7u de votre personnalisation';
+				}
+				els.modal.classList.add('is-open');
+				els.modal.setAttribute('aria-hidden', 'false');
+			}
+
+			function closePreviewModal() {
+				var els = getModalElements();
+				if (!els.modal) return;
+				els.modal.classList.remove('is-open');
+				els.modal.setAttribute('aria-hidden', 'true');
+				setZoomState(false);
+			}
+
+			function isInsideProductStage(node) {
+				if (!node || !node.closest) return false;
+				return Boolean(
+					node.closest('#mr-tee-editor-container') ||
+					node.closest('.woocommerce-product-gallery') ||
+					node.closest('.product-gallery-slider') ||
+					node.closest('.wc-block-product-gallery') ||
+					node.closest('#mr-tee-cart-preview-modal')
+				);
+			}
+
+			function findPreviewImageFromEventTarget(target) {
+				if (!target || typeof target.closest !== 'function') return null;
+				if (isInsideProductStage(target)) return null;
+
+				var directImg = target.closest(PREVIEW_SEL);
+				if (directImg && !isInsideProductStage(directImg)) {
+					return directImg;
+				}
+
+				var wrap = target.closest('.mr-tee-cart-thumb-wrap, [data-mr-tee-preview-wrap="1"], .mr-tee-order-preview-attachment');
+				if (wrap) {
+					var wrapImg = wrap.querySelector(PREVIEW_SEL);
+					if (wrapImg) return wrapImg;
+				}
+
+				var thumbCellLink = target.closest(
+					'td.product-thumbnail a, .product-thumbnail a, .wc-block-cart-item__image a, .wc-block-components-order-summary-item__image a, a.mr-tee-cart-preview-link'
+				);
+				if (thumbCellLink) {
+					var linkImg = thumbCellLink.querySelector(PREVIEW_SEL);
+					if (linkImg) return linkImg;
+				}
+
+				return null;
+			}
+
+			function neutralizeThumbnailLinks() {
+				var imgs = document.querySelectorAll(PREVIEW_SEL);
+				for (var i = 0; i < imgs.length; i++) {
+					var img = imgs[i];
+					if (isInsideProductStage(img)) continue;
+					img.setAttribute('data-mr-tee-preview', '1');
+					var parentLink = img.closest('a');
+					if (!parentLink) continue;
+					var isDedicatedThumbLink = Boolean(
+						parentLink.closest('td.product-thumbnail, .product-thumbnail, .wc-block-cart-item__image, .wc-block-components-order-summary-item__image') ||
+						(parentLink.textContent || '').replace(/\+/g, '').trim() === ''
+					);
+					if (isDedicatedThumbLink) {
+						if (parentLink.getAttribute('href') && parentLink.getAttribute('href') !== '#mr-tee-preview') {
+							parentLink.setAttribute('data-mr-tee-orig-href', parentLink.getAttribute('href'));
+							parentLink.setAttribute('href', '#mr-tee-preview');
+						}
+						parentLink.classList.add('mr-tee-cart-preview-link');
+						parentLink.setAttribute('role', 'button');
+						parentLink.setAttribute('aria-label', 'Agrandir l\u2019aper\u00e7u personnalis\u00e9');
+					}
+				}
+			}
+
+			window.addEventListener('click', function(e) {
+				var target = e.target;
+				if (!target) return;
+
+				if (target.closest && target.closest('#mr-tee-cart-preview-modal')) {
+					var els = getModalElements();
+					if (target.closest('#mr-tee-cart-modal-close') || target === els.modal || target === els.dialog.parentElement) {
+						e.preventDefault();
+						closePreviewModal();
+						return;
+					}
+					if (target.closest('#mr-tee-cart-modal-zoom') || target.closest('#mr-tee-cart-modal-img')) {
+						e.preventDefault();
+						var isZoomed = els.dialog && els.dialog.classList.contains('is-zoomed');
+						setZoomState(!isZoomed);
+						return;
+					}
+					return;
+				}
+
+				var previewImg = findPreviewImageFromEventTarget(target);
+				if (!previewImg) return;
+
+				e.preventDefault();
+				e.stopPropagation();
+				if (typeof e.stopImmediatePropagation === 'function') {
+					e.stopImmediatePropagation();
+				}
+
+				var fullSrc = previewImg.getAttribute('data-mr-tee-full-src') || previewImg.currentSrc || previewImg.getAttribute('src') || '';
+				var altText = previewImg.getAttribute('alt') || 'Aper\u00e7u de votre personnalisation';
+				openPreviewModal(fullSrc, altText);
+			}, true);
+
+			window.addEventListener('keydown', function(e) {
+				if (e.key === 'Escape' || e.keyCode === 27) {
+					var modal = document.getElementById('mr-tee-cart-preview-modal');
+					if (modal && modal.classList.contains('is-open')) {
+						closePreviewModal();
+					}
+				}
+			});
+
+			if (document.readyState === 'loading') {
+				document.addEventListener('DOMContentLoaded', neutralizeThumbnailLinks);
+			} else {
+				neutralizeThumbnailLinks();
+			}
+
+			if (typeof MutationObserver !== 'undefined' && document.body) {
+				var obs = new MutationObserver(function() {
+					neutralizeThumbnailLinks();
+				});
+				obs.observe(document.body, { childList: true, subtree: true });
+			}
+		})();
+		</script>
+		<?php
 	}
 }

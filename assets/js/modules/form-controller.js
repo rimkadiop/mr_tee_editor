@@ -11,8 +11,8 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.3.19.1';
-import { PrintExporter } from './print-exporter.js?v=2.3.19.1';
+import { SvgRenderer } from './svg-renderer.js?v=2.3.19.2';
+import { PrintExporter } from './print-exporter.js?v=2.3.19.2';
 
 export class FormController {
 	constructor(store, config, onExportRequested) {

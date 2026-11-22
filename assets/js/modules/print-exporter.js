@@ -7,7 +7,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.3.19.2';
+import { SvgRenderer } from './svg-renderer.js?v=2.4.0';
 
 export class PrintExporter {
 	static CHUNK_SIZE_BYTES = 600 * 1024; // 600 KB binary chunks fit cleanly under 1 MB proxy/WAF limits while minimizing round-trips
@@ -126,8 +126,24 @@ export class PrintExporter {
 		}
 	}
 
-	static findProductGalleryImageElement() {
+	static findProductGalleryImageElement(viewId = null) {
+		if (viewId) {
+			const galleryRoot = document.getElementById('mr-tee-gallery-root');
+			if (galleryRoot) {
+				const slides = galleryRoot.querySelectorAll('.mr-tee-slide[data-view-id]');
+				for (const slide of slides) {
+					if (slide.getAttribute('data-view-id') === String(viewId)) {
+						const img = slide.querySelector('img.mr-tee-slide-img') || slide.querySelector('img:not(.emoji):not(.zoomImg)');
+						if (img) return img;
+					}
+				}
+			}
+			return null;
+		}
+
 		const selectors = [
+			'#mr-tee-gallery-root .mr-tee-slide.is-active img.mr-tee-slide-img',
+			'#mr-tee-gallery-root img.mr-tee-slide-img',
 			'.woocommerce-product-gallery .flex-active-slide img:not(.emoji):not(.zoomImg)',
 			'.woocommerce-product-gallery__image.flex-active-slide img:not(.emoji):not(.zoomImg)',
 			'.product-gallery-slider .slide.is-selected img:not(.emoji):not(.zoomImg)',
@@ -152,8 +168,8 @@ export class PrintExporter {
 		return null;
 	}
 
-	static resolveProductBackgroundUrl() {
-		const imgEl = this.findProductGalleryImageElement();
+	static resolveProductBackgroundUrl(viewId = null) {
+		const imgEl = this.findProductGalleryImageElement(viewId);
 		if (imgEl) {
 			const candidates = [
 				imgEl.currentSrc,
@@ -169,6 +185,10 @@ export class PrintExporter {
 			}
 		}
 		const data = (typeof window !== 'undefined' && window.mrTeeProductData) ? window.mrTeeProductData : {};
+		if (viewId && data.config && Array.isArray(data.config.preview_views)) {
+			const matched = data.config.preview_views.find(v => v && v.id === String(viewId) && v.image_url);
+			if (matched) return matched.image_url;
+		}
 		return data.productImageUrl || '';
 	}
 
@@ -273,7 +293,7 @@ export class PrintExporter {
 		return new Blob([decodeURIComponent(body)], { type: mime });
 	}
 
-	static async uploadBlobInChunks(blob, { artifact, designKey = '', fileName = '', nonce = '' }) {
+	static async uploadBlobInChunks(blob, { artifact, designKey = '', fileName = '', nonce = '', suffix = '', isPrimary = false }) {
 		if (!blob || blob.size === 0) {
 			return null;
 		}
@@ -309,6 +329,8 @@ export class PrintExporter {
 				formData.append('total_chunks', String(totalChunks));
 				if (designKey) formData.append('design_key', designKey);
 				if (fileName) formData.append('file_name', fileName);
+				if (suffix) formData.append('suffix', String(suffix));
+				if (isPrimary) formData.append('is_primary', '1');
 				formData.append('chunk_file', slice, fileName || `${artifact}.part`);
 
 				const resp = await fetch(ajaxUrl, { method: 'POST', body: formData });
@@ -365,66 +387,135 @@ export class PrintExporter {
 	}
 
 	/**
-	 * Compute cropped physical & 300 DPI print dimensions consistently across frontend metadata
-	 * and WP Admin print file generation.
+	 * Compute cropped physical & 300 DPI print dimensions for a specific print side
+	 * using that side's `print_sides` dimensions and its reference `full` view placements.
 	 *
-	 * @param {Object} config Product configuration.
+	 * @param {Object}      config     Product configuration.
 	 * @param {Object|null} editorData Optional saved order item _mr_tee_editor_data snapshot.
+	 * @param {string|null} sideId     Target print side ID (defaults to primary side / 'front').
 	 * @return {Object} Computed print metrics & optional cropBoundingBox.
 	 */
-	static computeExportMetrics(config = {}, editorData = null) {
+	static computeSideExportMetrics(config = {}, editorData = null, sideId = null) {
 		const payload = (editorData && editorData.payload) ? editorData.payload : {};
-		const isFlatObject = (config.product_type || (editorData && editorData.product_type)) === 'flat_object';
-		const hasPerLineBoxes = Array.isArray(config.text_lines) && config.text_lines.some(l => l.box_left !== undefined && l.box_width !== undefined);
-		const hasRepeaterOrClipart = Boolean((config.repeater && config.repeater.enabled) || (config.vector_clipart && config.vector_clipart.enabled) || (editorData && editorData.repeater_enabled));
-		const realW = parseFloat(config.print_real_width) || (editorData && parseFloat(editorData.ref_real_width)) || 30.0;
-		const realH = parseFloat(config.print_real_height) || (editorData && parseFloat(editorData.ref_real_height)) || 40.0;
-		const unit = config.print_unit || (payload && payload.print_unit) || (editorData && editorData.print_unit) || 'cm';
-		const dpi = parseInt(config.dpi || (payload && payload.dpi) || 300, 10) || 300;
+		const printSides = (Array.isArray(config.print_sides) && config.print_sides.length > 0)
+			? config.print_sides
+			: (Array.isArray(payload.print_sides) ? payload.print_sides : []);
+		const previewViews = (Array.isArray(config.preview_views) && config.preview_views.length > 0)
+			? config.preview_views
+			: (Array.isArray(payload.preview_views) ? payload.preview_views : []);
+
+		const primarySideId = (printSides.length > 0 && printSides[0] && printSides[0].id) ? String(printSides[0].id) : 'front';
+		const targetSideId = sideId ? String(sideId) : primarySideId;
+		const isPrimarySide = (targetSideId === primarySideId);
+		const sideDef = printSides.find(s => s && String(s.id) === targetSideId) || null;
+
+		const sideViews = previewViews.filter(v => v && String(v.side_id || 'front') === targetSideId);
+		const refView = sideViews.find(v => v.view_role === 'full') || sideViews[0] || null;
+		const refViewId = refView && refView.id ? String(refView.id) : null;
+
+		const isFlatObject = ((sideDef && sideDef.product_type) || config.product_type || (editorData && editorData.product_type)) === 'flat_object';
+		const lockAspectRatio = (sideDef && sideDef.lock_aspect_ratio !== undefined)
+			? Boolean(sideDef.lock_aspect_ratio)
+			: Boolean(config.lock_aspect_ratio);
+
+		const realW = (sideDef && parseFloat(sideDef.print_real_width))
+			|| parseFloat(config.print_real_width)
+			|| (editorData && parseFloat(editorData.ref_real_width))
+			|| 30.0;
+		const realH = (sideDef && parseFloat(sideDef.print_real_height))
+			|| parseFloat(config.print_real_height)
+			|| (editorData && parseFloat(editorData.ref_real_height))
+			|| 40.0;
+		const unit = (sideDef && sideDef.print_unit)
+			|| config.print_unit
+			|| (payload && payload.print_unit)
+			|| (editorData && editorData.print_unit)
+			|| 'cm';
+		const dpi = parseInt((sideDef && sideDef.dpi) || config.dpi || (payload && payload.dpi) || 300, 10) || 300;
+		const toInches = unit === 'mm' ? (1 / 25.4) : (unit === 'in' ? 1.0 : (1 / 2.54));
+
+		const allLines = (Array.isArray(config.text_lines) && config.text_lines.length > 0)
+			? config.text_lines
+			: (Array.isArray(payload.text_lines) ? payload.text_lines : []);
+		const sideLines = allLines.filter(l => l && String(l.side_id || l.sideId || 'front') === targetSideId);
+
+		const resolveLineBox = (line) => {
+			if (refViewId && line.placements && line.placements[refViewId]) {
+				const p = line.placements[refViewId];
+				if (p && p.box_left !== undefined && p.box_width !== undefined) {
+					return {
+						left: parseFloat(p.box_left) || 0,
+						top: parseFloat(p.box_top) || 0,
+						width: parseFloat(p.box_width) || 10,
+						height: parseFloat(p.box_height) || 10,
+						rot: parseFloat(p.box_rotate !== undefined ? p.box_rotate : (p.rotate !== undefined ? p.rotate : 0)) || 0,
+					};
+				}
+			}
+			if (line.box_left !== undefined && line.box_width !== undefined) {
+				return {
+					left: parseFloat(line.box_left) || 0,
+					top: parseFloat(line.box_top) || 0,
+					width: parseFloat(line.box_width) || 10,
+					height: parseFloat(line.box_height) || 10,
+					rot: parseFloat(line.box_rotate !== undefined ? line.box_rotate : (line.rotate !== undefined ? line.rotate : 0)) || 0,
+				};
+			}
+			return null;
+		};
+
+		const boxes = sideLines.map(resolveLineBox).filter(Boolean);
+		const hasPerLineBoxes = boxes.length > 0;
+		const hasRepeaterOrClipart = isPrimarySide && Boolean(
+			(config.repeater && config.repeater.enabled)
+			|| (config.vector_clipart && config.vector_clipart.enabled)
+			|| (editorData && editorData.repeater_enabled)
+		);
+
+		const defaultFullPxW = (sideDef && parseInt(sideDef.print_width_px, 10))
+			|| (isPrimarySide ? (parseInt(config.print_width_px, 10) || (payload && parseInt(payload.crop_width_px, 10)) || (editorData && parseInt(editorData.print_width_px, 10))) : 0)
+			|| Math.max(10, Math.round(realW * toInches * dpi))
+			|| 2400;
+		const defaultFullPxH = (sideDef && parseInt(sideDef.print_height_px, 10))
+			|| (isPrimarySide ? (parseInt(config.print_height_px, 10) || (payload && parseInt(payload.crop_height_px, 10)) || (editorData && parseInt(editorData.print_height_px, 10))) : 0)
+			|| Math.max(10, Math.round(realH * toInches * dpi))
+			|| 3000;
 
 		let cropBoundingBox = null;
-		let exportRealW = (payload && parseFloat(payload.crop_print_width)) || (editorData && parseFloat(editorData.print_real_width)) || realW;
-		let exportRealH = (payload && parseFloat(payload.crop_print_height)) || (editorData && parseFloat(editorData.print_real_height)) || realH;
-		let exportPxW = parseInt(config.print_width_px, 10) || (payload && parseInt(payload.crop_width_px, 10)) || (editorData && parseInt(editorData.print_width_px, 10)) || 2400;
-		let exportPxH = parseInt(config.print_height_px, 10) || (payload && parseInt(payload.crop_height_px, 10)) || (editorData && parseInt(editorData.print_height_px, 10)) || 3000;
+		let exportRealW = (isPrimarySide && payload && parseFloat(payload.crop_print_width)) || (isPrimarySide && editorData && parseFloat(editorData.print_real_width)) || realW;
+		let exportRealH = (isPrimarySide && payload && parseFloat(payload.crop_print_height)) || (isPrimarySide && editorData && parseFloat(editorData.print_real_height)) || realH;
+		let exportPxW = defaultFullPxW;
+		let exportPxH = defaultFullPxH;
 		let exportRatio = (exportRealW > 0 && exportRealH > 0) ? (exportRealW / exportRealH) : ((realW > 0 && realH > 0) ? (realW / realH) : 1.0);
 
 		if (isFlatObject || hasRepeaterOrClipart || !hasPerLineBoxes) {
 			exportRealW = realW;
 			exportRealH = realH;
-			exportPxW = parseInt(config.print_width_px, 10) || (payload && parseInt(payload.crop_width_px, 10)) || (editorData && parseInt(editorData.print_width_px, 10)) || 2400;
-			exportPxH = parseInt(config.print_height_px, 10) || (payload && parseInt(payload.crop_height_px, 10)) || (editorData && parseInt(editorData.print_height_px, 10)) || 3000;
+			exportPxW = defaultFullPxW;
+			exportPxH = defaultFullPxH;
 			exportRatio = (realW > 0 && realH > 0) ? (realW / realH) : 1.0;
 		} else {
 			let xMin = 100, yMin = 100, xMax = 0, yMax = 0;
-			config.text_lines.forEach(l => {
-				if (l.box_left !== undefined && l.box_width !== undefined) {
-					const left = parseFloat(l.box_left) || 0;
-					const top = parseFloat(l.box_top) || 0;
-					const width = parseFloat(l.box_width) || 10;
-					const height = parseFloat(l.box_height) || 10;
-					const rot = parseFloat(l.box_rotate !== undefined ? l.box_rotate : (l.rotate !== undefined ? l.rotate : 0)) || 0;
+			boxes.forEach(({ left, top, width, height, rot }) => {
+				if (rot !== 0) {
+					const rad = (rot * Math.PI) / 180;
+					const cos = Math.abs(Math.cos(rad));
+					const sin = Math.abs(Math.sin(rad));
+					const refRatio = (realW > 0 && realH > 0) ? (realW / realH) : 1.0;
+					const halfW = (width * cos + (height / refRatio) * sin) / 2;
+					const halfH = ((width * refRatio) * sin + height * cos) / 2;
+					const cx = left + (width / 2);
+					const cy = top + (height / 2);
 
-					if (rot !== 0) {
-						const rad = (rot * Math.PI) / 180;
-						const cos = Math.abs(Math.cos(rad));
-						const sin = Math.abs(Math.sin(rad));
-						const refRatio = (realW > 0 && realH > 0) ? (realW / realH) : 1.0;
-						const halfW = (width * cos + (height / refRatio) * sin) / 2;
-						const halfH = ((width * refRatio) * sin + height * cos) / 2;
-						const cx = left + (width / 2);
-						const cy = top + (height / 2);
-
-						xMin = Math.min(xMin, cx - halfW);
-						yMin = Math.min(yMin, cy - halfH);
-						xMax = Math.max(xMax, cx + halfW);
-						yMax = Math.max(yMax, cy + halfH);
-					} else {
-						xMin = Math.min(xMin, left);
-						yMin = Math.min(yMin, top);
-						xMax = Math.max(xMax, left + width);
-						yMax = Math.max(yMax, top + height);
-					}
+					xMin = Math.min(xMin, cx - halfW);
+					yMin = Math.min(yMin, cy - halfH);
+					xMax = Math.max(xMax, cx + halfW);
+					yMax = Math.max(yMax, cy + halfH);
+				} else {
+					xMin = Math.min(xMin, left);
+					yMin = Math.min(yMin, top);
+					xMax = Math.max(xMax, left + width);
+					yMax = Math.max(yMax, top + height);
 				}
 			});
 
@@ -434,7 +525,6 @@ export class PrintExporter {
 			exportRealW = Number(((spanW / 100) * realW).toFixed(2));
 			exportRealH = Number(((spanH / 100) * realH).toFixed(2));
 
-			const toInches = unit === 'mm' ? (1 / 25.4) : (unit === 'in' ? 1.0 : (1 / 2.54));
 			exportPxW = Math.max(10, Math.round(exportRealW * toInches * dpi));
 			exportPxH = Math.max(10, Math.round(exportRealH * toInches * dpi));
 			exportRatio = exportRealH > 0 ? (exportRealW / exportRealH) : 1.0;
@@ -455,7 +545,10 @@ export class PrintExporter {
 		}
 
 		return {
+			sideId: targetSideId,
+			refViewId,
 			isFlatObject,
+			lockAspectRatio,
 			hasPerLineBoxes,
 			hasRepeaterOrClipart,
 			realW,
@@ -472,7 +565,24 @@ export class PrintExporter {
 	}
 
 	/**
-	 * Prepare ONLY the lightweight composite thumbnail preview and scene-graph payload
+	 * Compute cropped physical & 300 DPI print dimensions consistently across frontend metadata
+	 * and WP Admin print file generation (delegates to computeSideExportMetrics for primary side).
+	 *
+	 * @param {Object} config Product configuration.
+	 * @param {Object|null} editorData Optional saved order item _mr_tee_editor_data snapshot.
+	 * @return {Object} Computed print metrics & optional cropBoundingBox.
+	 */
+	static computeExportMetrics(config = {}, editorData = null) {
+		const payload = (editorData && editorData.payload) ? editorData.payload : {};
+		const printSides = (Array.isArray(config.print_sides) && config.print_sides.length > 0)
+			? config.print_sides
+			: (Array.isArray(payload.print_sides) ? payload.print_sides : []);
+		const primarySideId = (printSides.length > 0 && printSides[0] && printSides[0].id) ? String(printSides[0].id) : 'front';
+		return this.computeSideExportMetrics(config, editorData, primarySideId);
+	}
+
+	/**
+	 * Prepare ONLY the lightweight composite thumbnail preview(s) and scene-graph payload
 	 * on the customer product page. Full 300 DPI PNG & vector SVG generation are deferred
 	 * exclusively to WP Admin order screens for maximum client speed and IP protection.
 	 *
@@ -490,61 +600,135 @@ export class PrintExporter {
 			layers = window.mrTeeSceneGraphEngine.applyRowCentering(merged, store.state.activeCount);
 		}
 
-		const metrics = this.computeExportMetrics(config);
-		const domGarmentImg = this.findProductGalleryImageElement();
-		const hasFastDomBg = this.isSameOriginImage(domGarmentImg);
-		const bgAsset = hasFastDomBg ? null : await this.loadBackgroundImage(this.resolveProductBackgroundUrl());
-		const isLocked = Boolean(config.lock_aspect_ratio) || metrics.isFlatObject;
+		const primaryMetrics = this.computeExportMetrics(config);
+		const allPreviewViews = Array.isArray(config.preview_views) ? config.preview_views.filter(Boolean) : [];
+		const allPrintSides = Array.isArray(config.print_sides) ? config.print_sides.filter(Boolean) : [];
 
-		let compositeRatio = (metrics.realW > 0 && metrics.realH > 0)
-			? (metrics.realW / metrics.realH)
-			: (parseFloat(config.print_aspect_ratio) || 1.0);
-		if (!isLocked) {
-			if (domGarmentImg && domGarmentImg.naturalWidth > 0 && domGarmentImg.naturalHeight > 0) {
-				compositeRatio = domGarmentImg.naturalWidth / domGarmentImg.naturalHeight;
-			} else if (bgAsset && bgAsset.naturalWidth > 0 && bgAsset.naturalHeight > 0) {
-				compositeRatio = bgAsset.naturalWidth / bgAsset.naturalHeight;
+		let cartViews = [];
+		if (allPreviewViews.length > 0) {
+			cartViews = allPreviewViews.filter(v => v.is_cart_preview !== false);
+			if (cartViews.length === 0) {
+				if (allPrintSides.length > 0) {
+					for (const side of allPrintSides) {
+						const sid = side.id || 'front';
+						const sideViews = allPreviewViews.filter(v => (v.side_id || 'front') === sid);
+						const fullView = sideViews.find(v => v.view_role === 'full') || sideViews[0];
+						if (fullView) cartViews.push(fullView);
+					}
+				}
+				if (cartViews.length === 0) {
+					cartViews = [allPreviewViews[0]];
+				}
 			}
+		} else if (allPrintSides.length > 1) {
+			cartViews = allPrintSides.map((s, idx) => ({
+				id: s.id || (idx === 0 ? 'front' : `side_${idx}`),
+				side_id: s.id || (idx === 0 ? 'front' : `side_${idx}`),
+				label: s.label || (idx === 0 ? 'Recto' : `Face ${idx + 1}`),
+				image_url: '',
+				blend_mode: 'normal',
+				isLegacy: false,
+			}));
+		} else {
+			cartViews = [{
+				id: '',
+				side_id: (allPrintSides[0] && allPrintSides[0].id) || 'front',
+				label: (allPrintSides[0] && allPrintSides[0].label) || 'Recto',
+				image_url: '',
+				blend_mode: 'normal',
+				isLegacy: true,
+			}];
 		}
 
-		// Build full-canvas preview SVG strictly at thumbnail resolution (never generates print SVG/PNG)
-		const fullPreviewSvg = SvgRenderer.renderToString(layers, zoomTransform, {
-			isExport: false,
-			useThumbCache: true,
-			aspectRatio: compositeRatio,
-			hasPerLineBoxes: metrics.hasPerLineBoxes,
-			fontFaceCss: this.extractFontFaceCss(),
-		});
+		const fontFaceCss = this.extractFontFaceCss();
+		const renderedViews = [];
 
-		const inlinedImagesSvg = await this.inlineExternalImages(fullPreviewSvg, {
-			useThumbCache: true,
-			maxThumbDim: 760,
-		});
-		const inlinedFullPreviewSvg = await this.inlineExternalFonts(inlinedImagesSvg);
+		for (let i = 0; i < cartViews.length; i++) {
+			const view = cartViews[i];
+			const sideId = view.side_id || 'front';
+			const viewId = view.id || null;
+			const sideMetrics = this.computeSideExportMetrics(config, null, sideId);
 
-		// Render crisp 800px JPEG composite mockup preview for cart thumbnail & full-screen cart zoom modal
-		const compositeB64 = await this.renderCompositePreview(inlinedFullPreviewSvg, config, {
-			bgAsset,
-			domGarmentImg,
-			compositeRatio,
-			canvasWidth: 800,
-			quality: 0.85,
-		});
+			let domGarmentImg = viewId ? this.findProductGalleryImageElement(viewId) : (i === 0 ? this.findProductGalleryImageElement() : null);
+			if (!domGarmentImg && i === 0 && !view.image_url) {
+				domGarmentImg = this.findProductGalleryImageElement();
+			}
+			const hasFastDomBg = this.isSameOriginImage(domGarmentImg);
+			const bgUrl = view.image_url || (i === 0 ? this.resolveProductBackgroundUrl(viewId) : '');
+			const bgAsset = hasFastDomBg ? null : (bgUrl ? await this.loadBackgroundImage(bgUrl) : null);
+			const isLocked = Boolean(sideMetrics.lockAspectRatio) || sideMetrics.isFlatObject;
+
+			let compositeRatio = (sideMetrics.realW > 0 && sideMetrics.realH > 0)
+				? (sideMetrics.realW / sideMetrics.realH)
+				: (parseFloat(config.print_aspect_ratio) || 1.0);
+			if (!isLocked) {
+				if (domGarmentImg && domGarmentImg.naturalWidth > 0 && domGarmentImg.naturalHeight > 0) {
+					compositeRatio = domGarmentImg.naturalWidth / domGarmentImg.naturalHeight;
+				} else if (bgAsset && bgAsset.naturalWidth > 0 && bgAsset.naturalHeight > 0) {
+					compositeRatio = bgAsset.naturalWidth / bgAsset.naturalHeight;
+				}
+			}
+
+			// Build full-canvas preview SVG strictly at thumbnail resolution (never generates print SVG/PNG)
+			const svgOptions = {
+				isExport: false,
+				useThumbCache: true,
+				aspectRatio: compositeRatio,
+				hasPerLineBoxes: sideMetrics.hasPerLineBoxes,
+				fontFaceCss,
+			};
+			if (!view.isLegacy) {
+				svgOptions.sideId = sideId;
+				if (viewId) svgOptions.viewId = viewId;
+			}
+
+			const fullPreviewSvg = SvgRenderer.renderToString(layers, zoomTransform, svgOptions);
+			const inlinedImagesSvg = await this.inlineExternalImages(fullPreviewSvg, {
+				useThumbCache: true,
+				maxThumbDim: 760,
+			});
+			const inlinedFullPreviewSvg = await this.inlineExternalFonts(inlinedImagesSvg);
+
+			// Render crisp 800px JPEG composite mockup preview for cart thumbnail & full-screen cart zoom modal
+			const compositeB64 = await this.renderCompositePreview(inlinedFullPreviewSvg, config, {
+				bgAsset,
+				domGarmentImg,
+				compositeRatio,
+				canvasWidth: 800,
+				quality: 0.85,
+				blendMode: view.blend_mode || 'normal',
+				isFlatObject: sideMetrics.isFlatObject,
+				isLocked,
+				hasPerLineBoxes: sideMetrics.hasPerLineBoxes,
+				realW: sideMetrics.realW,
+				realH: sideMetrics.realH,
+			});
+
+			renderedViews.push({
+				view,
+				b64: compositeB64 || '',
+			});
+		}
+
+		const primaryEntry = renderedViews[0] || { view: cartViews[0], b64: '' };
+		const compositeB64 = primaryEntry.b64;
 
 		const payload = store.getExportPayload();
-		payload.crop_print_width = metrics.exportRealW;
-		payload.crop_print_height = metrics.exportRealH;
-		payload.crop_width_px = metrics.exportPxW;
-		payload.crop_height_px = metrics.exportPxH;
-		payload.print_unit = metrics.unit;
-		payload.dpi = metrics.dpi;
+		payload.crop_print_width = primaryMetrics.exportRealW;
+		payload.crop_print_height = primaryMetrics.exportRealH;
+		payload.crop_width_px = primaryMetrics.exportPxW;
+		payload.crop_height_px = primaryMetrics.exportPxH;
+		payload.print_unit = primaryMetrics.unit;
+		payload.dpi = primaryMetrics.dpi;
 		const payloadJson = JSON.stringify(payload);
 
 		const designKeyInput = document.getElementById('mr_tee_design_key');
 		const payloadInput = document.getElementById('mr_tee_editor_payload');
 		const previewInput = document.getElementById('mr_tee_preview_png');
+		let previewsInput = document.getElementById('mr_tee_previews_json');
 		const designKey = this.generateDesignKey();
 
+		let primaryUploadedUrl = '';
 		const approxBytes = payloadJson.length + (compositeB64 ? compositeB64.length : 0);
 		if (approxBytes < 180 * 1024) {
 			if (designKeyInput) designKeyInput.value = designKey;
@@ -554,11 +738,62 @@ export class PrintExporter {
 			const previewBlob = this.dataUrlToBlob(compositeB64);
 			const previewArtifact = (compositeB64 && compositeB64.includes('image/jpeg')) ? 'preview_jpg' : 'preview_png';
 			if (previewBlob) {
-				await this.uploadBlobInChunks(previewBlob, { artifact: previewArtifact, designKey });
+				const upRes = await this.uploadBlobInChunks(previewBlob, { artifact: previewArtifact, designKey });
+				if (upRes && upRes.url) primaryUploadedUrl = upRes.url;
 			}
 			if (designKeyInput) designKeyInput.value = designKey;
 			if (payloadInput) payloadInput.value = payloadJson;
 			if (previewInput) previewInput.value = '';
+		}
+
+		// Upload additional cart preview views (index 1..N) and persist metadata in #mr_tee_previews_json
+		const previewsMeta = [];
+		if (renderedViews.length > 1) {
+			const v0 = primaryEntry.view || {};
+			previewsMeta.push({
+				view_id: v0.id || v0.side_id || 'front',
+				side_id: v0.side_id || 'front',
+				label: v0.label || 'Recto',
+				url: primaryUploadedUrl || '',
+			});
+
+			for (let i = 1; i < renderedViews.length; i++) {
+				const item = renderedViews[i];
+				const v = item.view || {};
+				const rawViewId = v.id || `view_${i}`;
+				const safeSuffix = String(rawViewId).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32) || `view_${i}`;
+				const blob = this.dataUrlToBlob(item.b64);
+				const previewArtifact = (item.b64 && item.b64.includes('image/jpeg')) ? 'preview_jpg' : 'preview_png';
+				let uploadedUrl = '';
+				if (blob) {
+					const upRes = await this.uploadBlobInChunks(blob, {
+						artifact: previewArtifact,
+						designKey,
+						suffix: safeSuffix,
+					});
+					if (upRes && upRes.url) {
+						uploadedUrl = upRes.url;
+					}
+				}
+				previewsMeta.push({
+					view_id: safeSuffix,
+					side_id: v.side_id || 'front',
+					label: v.label || `Vue ${i + 1}`,
+					url: uploadedUrl,
+				});
+			}
+
+			if (!previewsInput && designKeyInput && designKeyInput.parentNode) {
+				previewsInput = document.createElement('input');
+				previewsInput.type = 'hidden';
+				previewsInput.id = 'mr_tee_previews_json';
+				previewsInput.name = 'mr_tee_previews_json';
+				designKeyInput.parentNode.appendChild(previewsInput);
+			}
+		}
+
+		if (previewsInput) {
+			previewsInput.value = previewsMeta.length > 1 ? JSON.stringify(previewsMeta) : '';
 		}
 
 		return true;
@@ -845,14 +1080,19 @@ export class PrintExporter {
 	 */
 	static async renderCompositePreview(svgMarkup, config, options = {}) {
 		const bgAsset = options.bgAsset !== undefined ? options.bgAsset : await this.loadBackgroundImage(this.resolveProductBackgroundUrl());
-		const domGarmentImg = options.domGarmentImg || this.findProductGalleryImageElement();
+		const domGarmentImg = options.domGarmentImg !== undefined ? options.domGarmentImg : this.findProductGalleryImageElement();
 
-		const isFlatObject = config.product_type === 'flat_object';
-		const isLocked = Boolean(config.lock_aspect_ratio) || isFlatObject;
-		const hasPerLineBoxes = Array.isArray(config.text_lines) && config.text_lines.some(l => l.box_left !== undefined && l.box_width !== undefined);
-		const realRatio = (parseFloat(config.print_real_width) && parseFloat(config.print_real_height))
-			? (parseFloat(config.print_real_width) / parseFloat(config.print_real_height))
+		const isFlatObject = options.isFlatObject !== undefined ? Boolean(options.isFlatObject) : (config.product_type === 'flat_object');
+		const isLocked = options.isLocked !== undefined ? Boolean(options.isLocked) : (Boolean(config.lock_aspect_ratio) || isFlatObject);
+		const hasPerLineBoxes = options.hasPerLineBoxes !== undefined
+			? Boolean(options.hasPerLineBoxes)
+			: (Array.isArray(config.text_lines) && config.text_lines.some(l => l.box_left !== undefined && l.box_width !== undefined));
+		const realW = parseFloat(options.realW) || parseFloat(config.print_real_width) || 0;
+		const realH = parseFloat(options.realH) || parseFloat(config.print_real_height) || 0;
+		const realRatio = (realW > 0 && realH > 0)
+			? (realW / realH)
 			: (parseFloat(config.print_aspect_ratio) || 1.0);
+		const blendMode = options.blendMode || 'normal';
 
 		let compositeRatio = parseFloat(options.compositeRatio) || 0;
 		if (!compositeRatio || compositeRatio <= 0) {
@@ -948,11 +1188,22 @@ export class PrintExporter {
 				designImg.onload = () => {
 					const { left, top, w, h } = getPlacement();
 					try {
+						if (blendMode === 'multiply') {
+							ctx.globalCompositeOperation = 'multiply';
+							ctx.globalAlpha = 0.96;
+						} else if (blendMode === 'soft_ink') {
+							ctx.globalCompositeOperation = 'source-over';
+							ctx.globalAlpha = 0.91;
+						}
 						ctx.drawImage(designImg, left, top, w, h);
+						ctx.globalCompositeOperation = 'source-over';
+						ctx.globalAlpha = 1.0;
 						const dataUrl = canvas.toDataURL('image/jpeg', quality);
 						URL.revokeObjectURL(url);
 						finish(dataUrl);
 					} catch (err) {
+						ctx.globalCompositeOperation = 'source-over';
+						ctx.globalAlpha = 1.0;
 						// Recover from tainted canvas if background came from cross-origin DOM element
 						try {
 							const cleanCanvas = document.createElement('canvas');

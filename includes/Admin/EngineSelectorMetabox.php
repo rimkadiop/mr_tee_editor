@@ -390,6 +390,78 @@ class EngineSelectorMetabox {
 				}
 			}
 
+			// Parse toolbar/tab4 physical dimensions as fallback defaults for side 0
+			$toolbar_prod_type = isset( $raw_config['product_type'] ) ? sanitize_key( $raw_config['product_type'] ) : ( ! empty( $config['product_type'] ) ? sanitize_key( $config['product_type'] ) : 'garment' );
+			if ( ! in_array( $toolbar_prod_type, array( 'garment', 'flat_object' ), true ) ) {
+				$toolbar_prod_type = 'garment';
+			}
+			$toolbar_unit = isset( $raw_config['print_unit'] ) ? sanitize_key( $raw_config['print_unit'] ) : ( ! empty( $config['print_unit'] ) ? sanitize_key( $config['print_unit'] ) : 'cm' );
+			if ( ! in_array( $toolbar_unit, array( 'cm', 'mm', 'in' ), true ) ) {
+				$toolbar_unit = 'cm';
+			}
+			$toolbar_real_w = isset( $raw_config['print_real_width'] ) ? max( 0.1, floatval( $raw_config['print_real_width'] ) ) : ( isset( $config['print_real_width'] ) ? max( 0.1, floatval( $config['print_real_width'] ) ) : 30.0 );
+			$toolbar_real_h = isset( $raw_config['print_real_height'] ) ? max( 0.1, floatval( $raw_config['print_real_height'] ) ) : ( isset( $config['print_real_height'] ) ? max( 0.1, floatval( $config['print_real_height'] ) ) : 40.0 );
+			$toolbar_dpi    = isset( $raw_config['dpi'] ) ? max( 72, intval( $raw_config['dpi'] ) ) : ( isset( $config['dpi'] ) ? max( 72, intval( $config['dpi'] ) ) : 300 );
+			$toolbar_lock   = ! empty( $raw_config['lock_aspect_ratio'] ) || ( 'flat_object' === $toolbar_prod_type );
+
+			$fallback_side_dims = array(
+				'print_real_width'  => $toolbar_real_w,
+				'print_real_height' => $toolbar_real_h,
+				'print_unit'        => $toolbar_unit,
+				'dpi'               => $toolbar_dpi,
+				'product_type'      => $toolbar_prod_type,
+				'lock_aspect_ratio' => $toolbar_lock,
+			);
+
+			// Parse & sanitize print_sides (JSON string or array), ensuring at least 1 side exists
+			if ( isset( $raw_config['print_sides'] ) && '' !== $raw_config['print_sides'] && array() !== $raw_config['print_sides'] ) {
+				$print_sides = SceneGraphSchema::normalize_print_sides( $raw_config['print_sides'], $fallback_side_dims );
+			} else {
+				$existing_sides = ! empty( $config['print_sides'] ) ? $config['print_sides'] : array();
+				$print_sides    = SceneGraphSchema::normalize_print_sides( $existing_sides, $fallback_side_dims );
+				// Legacy POST without print_sides payload: keep side 0 synced with toolbar inputs
+				$print_sides[0]['print_real_width']  = $toolbar_real_w;
+				$print_sides[0]['print_real_height'] = $toolbar_real_h;
+				$print_sides[0]['print_unit']        = $toolbar_unit;
+				$print_sides[0]['dpi']               = $toolbar_dpi;
+				$print_sides[0]['product_type']      = $toolbar_prod_type;
+				$print_sides[0]['lock_aspect_ratio'] = $toolbar_lock;
+			}
+
+			$config['print_sides'] = $print_sides;
+			$valid_side_ids        = array_column( $print_sides, 'id' );
+			$default_side_id       = $print_sides[0]['id'];
+
+			// Sync top-level physical dimensions from side 0
+			$primary_side                = $print_sides[0];
+			$config['product_type']      = $primary_side['product_type'];
+			$config['print_unit']        = $primary_side['print_unit'];
+			$config['print_real_width']  = $primary_side['print_real_width'];
+			$config['print_real_height'] = $primary_side['print_real_height'];
+			$config['dpi']               = $primary_side['dpi'];
+			$config['lock_aspect_ratio'] = $primary_side['lock_aspect_ratio'];
+
+			// Parse & sanitize preview_views (JSON string or array)
+			$thumb_id     = (int) get_post_thumbnail_id( $post_id );
+			$featured_url = $thumb_id ? ( wp_get_attachment_image_url( $thumb_id, 'large' ) ?: wp_get_attachment_image_url( $thumb_id, 'full' ) ) : '';
+			if ( ! is_string( $featured_url ) ) {
+				$featured_url = '';
+			}
+			if ( isset( $raw_config['preview_views'] ) && '' !== $raw_config['preview_views'] && array() !== $raw_config['preview_views'] ) {
+				$preview_views = SceneGraphSchema::normalize_preview_views( $raw_config['preview_views'], $print_sides, $thumb_id, $featured_url );
+			} else {
+				$existing_views = ! empty( $config['preview_views'] ) ? $config['preview_views'] : array();
+				$preview_views  = SceneGraphSchema::normalize_preview_views( $existing_views, $print_sides, $thumb_id, $featured_url );
+			}
+			$config['preview_views'] = $preview_views;
+
+			// Sanitize WooCommerce gallery inclusion toggle
+			if ( isset( $raw_config['include_wc_gallery_slides'] ) ) {
+				$config['include_wc_gallery_slides'] = ! empty( $raw_config['include_wc_gallery_slides'] );
+			} elseif ( ! isset( $config['include_wc_gallery_slides'] ) ) {
+				$config['include_wc_gallery_slides'] = true;
+			}
+
 			// Sanitize fields (supports adding/deleting dynamic text & image fields and per-line rectangles)
 			if ( isset( $raw_config['text_lines'] ) && is_array( $raw_config['text_lines'] ) ) {
 				$existing_by_id = array();
@@ -448,12 +520,53 @@ class EngineSelectorMetabox {
 					$label   = isset( $line_data['label'] ) ? sanitize_text_field( $line_data['label'] ) : ( isset( $existing['label'] ) ? $existing['label'] : sprintf( __( 'Champ %d', 'mr-tee-editor' ), $line_num ) );
 					$warning = isset( $line_data['warning_unedited'] ) ? ! empty( $line_data['warning_unedited'] ) : ( isset( $existing['warning_unedited'] ) ? ! empty( $existing['warning_unedited'] ) : false );
 
+					// Sanitize printable side assignment
+					$raw_side_id   = isset( $line_data['side_id'] ) ? sanitize_key( $line_data['side_id'] ) : ( ! empty( $existing['side_id'] ) ? sanitize_key( $existing['side_id'] ) : $default_side_id );
+					$field_side_id = in_array( $raw_side_id, $valid_side_ids, true ) ? $raw_side_id : $default_side_id;
+
 					// Per-field rectangle dimensions & orientation
 					$box_l = isset( $line_data['box_left'] ) ? floatval( $line_data['box_left'] ) : ( isset( $existing['box_left'] ) ? floatval( $existing['box_left'] ) : 30.0 );
 					$box_t = isset( $line_data['box_top'] ) ? floatval( $line_data['box_top'] ) : ( isset( $existing['box_top'] ) ? floatval( $existing['box_top'] ) : ( 25.0 + $line_index * 12.0 ) );
 					$box_w = isset( $line_data['box_width'] ) ? floatval( $line_data['box_width'] ) : ( isset( $existing['box_width'] ) ? floatval( $existing['box_width'] ) : 40.0 );
 					$box_h = isset( $line_data['box_height'] ) ? floatval( $line_data['box_height'] ) : ( isset( $existing['box_height'] ) ? floatval( $existing['box_height'] ) : ( 'image' === $field_type ? 30.0 : 8.5 ) );
 					$box_r = isset( $line_data['box_rotate'] ) ? floatval( $line_data['box_rotate'] ) : ( isset( $existing['box_rotate'] ) ? floatval( $existing['box_rotate'] ) : 0.0 );
+
+					$base_box = array(
+						'box_left'   => $box_l,
+						'box_top'    => $box_t,
+						'box_width'  => $box_w,
+						'box_height' => $box_h,
+						'box_rotate' => $box_r,
+					);
+
+					$ref_view = SceneGraphSchema::get_side_reference_view( $preview_views, $field_side_id );
+
+					// Parse & sanitize per-view placements map (JSON string or array)
+					if ( isset( $line_data['placements'] ) && '' !== $line_data['placements'] && array() !== $line_data['placements'] ) {
+						$raw_placements = $line_data['placements'];
+						if ( is_string( $raw_placements ) ) {
+							$decoded_p      = json_decode( $raw_placements, true );
+							$raw_placements = is_array( $decoded_p ) ? $decoded_p : array();
+						}
+						$placements = SceneGraphSchema::normalize_field_placements( $raw_placements, $base_box, $preview_views, $field_side_id );
+					} else {
+						// Legacy POST without placements payload: update side's primary view from submitted box coordinates
+						$legacy_placements = ( ! empty( $existing['placements'] ) && is_array( $existing['placements'] ) ) ? $existing['placements'] : array();
+						if ( $ref_view && ! empty( $ref_view['id'] ) ) {
+							$legacy_placements[ $ref_view['id'] ] = $base_box;
+						}
+						$placements = SceneGraphSchema::normalize_field_placements( $legacy_placements, $base_box, $preview_views, $field_side_id );
+					}
+
+					// Keep top-level box_left/top/width/height/rotate synced with the side's primary view
+					if ( $ref_view && isset( $placements[ $ref_view['id'] ] ) ) {
+						$ref_p = $placements[ $ref_view['id'] ];
+						$box_l = $ref_p['box_left'];
+						$box_t = $ref_p['box_top'];
+						$box_w = $ref_p['box_width'];
+						$box_h = $ref_p['box_height'];
+						$box_r = $ref_p['box_rotate'];
+					}
 
 					if ( 'image' === $field_type ) {
 						$default_img_url  = isset( $line_data['default_image'] ) ? esc_url_raw( trim( $line_data['default_image'] ) ) : ( ( 'image' === $existing_type && isset( $existing['default_image'] ) ) ? esc_url_raw( $existing['default_image'] ) : '' );
@@ -466,6 +579,8 @@ class EngineSelectorMetabox {
 							'ref_id'             => $ref_id,
 							'color_ref_id'       => $color_ref_id,
 							'field_type'         => 'image',
+							'side_id'            => $field_side_id,
+							'placements'         => $placements,
 							'label'              => $label,
 							'default_text'       => '',
 							'default_image'      => $default_img_url,
@@ -510,6 +625,8 @@ class EngineSelectorMetabox {
 								'ref_id'           => $ref_id,
 								'color_ref_id'     => $color_ref_id,
 								'field_type'       => 'text',
+								'side_id'          => $field_side_id,
+								'placements'       => $placements,
 								'label'            => $label,
 								'default_text'     => $default_text,
 								'font'             => $font,
@@ -568,26 +685,9 @@ class EngineSelectorMetabox {
 				}
 			}
 
-			// Physical print dimensions & responsive aspect ratio settings
+			// NBDesigner handshake & derived print dimensions (top-level physical dims already synced from side 0)
 			$config['nbd_handshake'] = ! empty( $raw_config['nbd_handshake'] );
-			if ( isset( $raw_config['product_type'] ) ) {
-				$config['product_type'] = sanitize_key( $raw_config['product_type'] );
-			}
-			if ( isset( $raw_config['print_unit'] ) ) {
-				$config['print_unit'] = sanitize_key( $raw_config['print_unit'] );
-			}
-			if ( isset( $raw_config['print_real_width'] ) ) {
-				$config['print_real_width'] = max( 0.1, floatval( $raw_config['print_real_width'] ) );
-			}
-			if ( isset( $raw_config['print_real_height'] ) ) {
-				$config['print_real_height'] = max( 0.1, floatval( $raw_config['print_real_height'] ) );
-			}
-			if ( isset( $raw_config['dpi'] ) ) {
-				$config['dpi'] = max( 72, intval( $raw_config['dpi'] ) );
-			}
-			$config['lock_aspect_ratio'] = ! empty( $raw_config['lock_aspect_ratio'] ) || ( isset( $config['product_type'] ) && 'flat_object' === $config['product_type'] );
 
-			// Compute print dimensions and aspect ratio
 			$unit   = ! empty( $config['print_unit'] ) ? $config['print_unit'] : 'cm';
 			$real_w = isset( $config['print_real_width'] ) ? $config['print_real_width'] : 30.0;
 			$real_h = isset( $config['print_real_height'] ) ? $config['print_real_height'] : 40.0;

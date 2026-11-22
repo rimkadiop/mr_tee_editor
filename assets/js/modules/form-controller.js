@@ -11,20 +11,40 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.3.19.2';
-import { PrintExporter } from './print-exporter.js?v=2.3.19.2';
+import { SvgRenderer } from './svg-renderer.js?v=2.4.0';
+import { PrintExporter } from './print-exporter.js?v=2.4.0';
 
 export class FormController {
-	constructor(store, config, onExportRequested) {
+	constructor(store, config, onExportRequested, options = {}) {
 		this.store = store;
 		this.config = config || {};
 		this.onExportRequested = onExportRequested;
+		this.options = options || {};
+		this.onFieldSideFocus = typeof this.options.onFieldSideFocus === 'function'
+			? this.options.onFieldSideFocus
+			: null;
 		this.bypassWarning = false;
 		this.isSubmitting = false;
 		this.pendingUploads = [];
 
 		this.initDom();
 		this.bindEvents();
+	}
+
+	/**
+	 * Notify gallery stage when a user focuses or interacts with a control inside
+	 * a `.mr-tee-field-group[data-side-id]` so multi-side products auto-swipe smoothly.
+	 *
+	 * @param {Element|null} targetEl Interacted control element.
+	 */
+	notifySideFocus(targetEl) {
+		if (!this.onFieldSideFocus || !targetEl || !targetEl.closest) return;
+		const group = targetEl.closest('.mr-tee-field-group[data-side-id]');
+		if (!group) return;
+		const sideId = group.getAttribute('data-side-id');
+		if (sideId) {
+			this.onFieldSideFocus(sideId);
+		}
 	}
 
 	initDom() {
@@ -57,6 +77,7 @@ export class FormController {
 			const charCounter = group.querySelector('.mr-tee-char-count');
 
 			const warmLineFont = () => {
+				this.notifySideFocus(input);
 				const activeFontId = lineConfig.font || (Array.isArray(lineConfig.allowed_fonts) && lineConfig.allowed_fonts[0]);
 				if (activeFontId) {
 					const sData = SvgRenderer.getSvgFontData(activeFontId);
@@ -75,6 +96,7 @@ export class FormController {
 			input.addEventListener('focus', warmLineFont);
 
 			input.addEventListener('input', () => {
+				this.notifySideFocus(input);
 				const val = input.value;
 				if (charCounter) {
 					charCounter.textContent = val.length;
@@ -88,6 +110,7 @@ export class FormController {
 		// 2. Font Selector Pills
 		this.container.querySelectorAll('.mr-tee-font-pill').forEach((pill) => {
 			pill.addEventListener('pointerdown', () => {
+				this.notifySideFocus(pill);
 				const fontId = pill.getAttribute('data-font-id');
 				const fonts = (window.mrTeeProductData && window.mrTeeProductData.fonts) || {};
 				const fontDef = fonts[fontId] || null;
@@ -96,7 +119,12 @@ export class FormController {
 				}
 			}, { passive: true });
 
+			pill.addEventListener('focus', () => {
+				this.notifySideFocus(pill);
+			});
+
 			pill.addEventListener('click', () => {
+				this.notifySideFocus(pill);
 				const pillsContainer = pill.closest('.mr-tee-font-pills');
 				const lineIdx = parseInt(pillsContainer.getAttribute('data-line-index'), 10);
 				const lineConfig = (this.config.text_lines && this.config.text_lines[lineIdx]) || {};
@@ -132,7 +160,10 @@ export class FormController {
 
 		// 2b. Color Swatch Selector Pills (Embroidery Thread & Ink Palettes)
 		this.container.querySelectorAll('.mr-tee-color-swatch-pill').forEach((pill) => {
+			pill.addEventListener('pointerdown', () => this.notifySideFocus(pill), { passive: true });
+			pill.addEventListener('focus', () => this.notifySideFocus(pill));
 			pill.addEventListener('click', () => {
+				this.notifySideFocus(pill);
 				const group = pill.closest('.mr-tee-color-swatches-wrap');
 				const colorRefId = group ? group.getAttribute('data-color-ref-id') : 'id-ref-color-selector';
 				const colorHex = pill.getAttribute('data-color-hex');
@@ -325,6 +356,7 @@ export class FormController {
 					targetInput = this.container.querySelector('.mr-tee-text-input[data-warning="1"], .mr-tee-image-file-input[data-warning="1"]');
 				}
 				if (targetInput) {
+					this.notifySideFocus(targetInput);
 					const repCard = targetInput.closest('.mr-tee-repeater-item-card');
 					if (repCard && !repCard.classList.contains('is-open')) {
 						repCard.classList.add('is-open');
@@ -448,13 +480,19 @@ export class FormController {
 			const defaultImg = card.getAttribute('data-default-image') || '';
 
 			if (uploadBtn && fileInput) {
+				uploadBtn.addEventListener('pointerdown', () => this.notifySideFocus(uploadBtn), { passive: true });
+				uploadBtn.addEventListener('focus', () => this.notifySideFocus(uploadBtn));
 				uploadBtn.addEventListener('click', () => {
+					this.notifySideFocus(uploadBtn);
 					fileInput.click();
 				});
 			}
 
 			if (resetBtn && fileInput) {
+				resetBtn.addEventListener('pointerdown', () => this.notifySideFocus(resetBtn), { passive: true });
+				resetBtn.addEventListener('focus', () => this.notifySideFocus(resetBtn));
 				resetBtn.addEventListener('click', () => {
+					this.notifySideFocus(resetBtn);
 					card._uploadToken = (card._uploadToken || 0) + 1;
 					fileInput.value = '';
 					const refId = fileInput.getAttribute('data-ref-id');

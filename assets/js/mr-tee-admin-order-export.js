@@ -9,9 +9,9 @@
  * @package MrTeeEditor\Assets
  */
 
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.3.19.2';
-import { SvgRenderer } from './modules/svg-renderer.js?v=2.3.19.2';
-import { PrintExporter } from './modules/print-exporter.js?v=2.3.19.2';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.4.0';
+import { SvgRenderer } from './modules/svg-renderer.js?v=2.4.0';
+import { PrintExporter } from './modules/print-exporter.js?v=2.4.0';
 
 class MrTeeAdminOrderExporter {
 	constructor() {
@@ -85,18 +85,61 @@ class MrTeeAdminOrderExporter {
 	}
 
 	/**
+	 * Build a labeled per-side download anchor matching WP Admin OrderAdminPanel styling.
+	 *
+	 * @param {Object}  side      Normalized side export ({ side_id, label, print_url, svg_url }).
+	 * @param {string}  kind      'png' | 'svg'
+	 * @param {boolean} isMetabox Whether rendered inside sidebar metabox.
+	 * @return {HTMLAnchorElement}
+	 */
+	createSideExportButton(side, kind, isMetabox) {
+		const a = document.createElement('a');
+		const isPng = kind === 'png';
+		a.href = isPng ? side.print_url : side.svg_url;
+		a.target = '_blank';
+		a.setAttribute('download', '');
+		a.setAttribute('data-side-id', side.side_id || '');
+
+		const labelText = isPng
+			? `${side.label} — PNG 300 DPI`
+			: `${side.label} — Vector SVG`;
+
+		if (isMetabox) {
+			a.className = isPng
+				? 'button button-primary mr-tee-btn-side-export mr-tee-btn-side-png'
+				: 'button mr-tee-btn-side-export mr-tee-btn-side-svg';
+			a.style.textAlign = 'center';
+			a.textContent = labelText;
+		} else {
+			a.className = isPng
+				? 'button button-primary button-small mr-tee-btn-side-export mr-tee-btn-side-png'
+				: 'button button-secondary button-small mr-tee-btn-side-export mr-tee-btn-side-svg';
+			const iconClass = isPng ? 'dashicons-download' : 'dashicons-media-code';
+			a.innerHTML = `<span class="dashicons ${iconClass}" style="vertical-align:middle;font-size:14px;width:14px;height:14px;"></span> ${SvgRenderer.escapeXml(labelText)}`;
+		}
+		return a;
+	}
+
+	/**
 	 * Update UI status, buttons, and download links across all matching item panels.
 	 *
 	 * @param {number} orderId Order ID.
 	 * @param {number} itemId  Order item ID.
 	 * @param {string} state   'working' | 'ready' | 'error'
-	 * @param {Object} details Optional details ({ message, printUrl, svgUrl }).
+	 * @param {Object} details Optional details ({ message, printUrl, svgUrl, sideExports }).
 	 */
 	setItemUiState(orderId, itemId, state, details = {}) {
 		const containers = this.getItemContainers(orderId, itemId);
+		const sideList = details.sideExports
+			? (Array.isArray(details.sideExports) ? details.sideExports : Object.values(details.sideExports))
+				.filter((s) => s && (s.print_url || s.svg_url))
+			: [];
+		const isMultiSides = sideList.length > 1;
+
 		containers.forEach((box) => {
 			const isMetabox = box.classList.contains('mr-tee-metabox-item');
 			const statusEl = box.querySelector(isMetabox ? '.mr-tee-metabox-status' : '.mr-tee-print-status');
+			const actionsEl = box.querySelector(isMetabox ? '.mr-tee-metabox-actions' : '.mr-tee-print-actions');
 			const pngBtn = box.querySelector('.mr-tee-btn-print-png');
 			const svgBtn = box.querySelector('.mr-tee-btn-print-svg');
 			const genBtn = box.querySelector('.mr-tee-admin-gen-print-btn');
@@ -119,14 +162,45 @@ class MrTeeAdminOrderExporter {
 						? '300 DPI & SVG prêts'
 						: 'Fichiers d\'impression haute résolution (300 DPI & SVG) prêts.';
 				}
-				if (pngBtn && details.printUrl) {
-					pngBtn.setAttribute('href', details.printUrl);
-					pngBtn.style.display = '';
+
+				if (actionsEl) {
+					actionsEl.querySelectorAll('.mr-tee-btn-side-export').forEach((el) => el.remove());
 				}
-				if (svgBtn && details.svgUrl) {
-					svgBtn.setAttribute('href', details.svgUrl);
-					svgBtn.style.display = '';
+
+				if (isMultiSides && actionsEl) {
+					if (pngBtn) pngBtn.style.display = 'none';
+					if (svgBtn) svgBtn.style.display = 'none';
+
+					const anchor = pngBtn || genBtn || actionsEl.firstChild;
+					sideList.forEach((side) => {
+						if (side.print_url) {
+							actionsEl.insertBefore(this.createSideExportButton(side, 'png', isMetabox), anchor);
+						}
+						if (side.svg_url) {
+							actionsEl.insertBefore(this.createSideExportButton(side, 'svg', isMetabox), anchor);
+						}
+					});
+
+					const dimsEl = box.querySelector('.mr-tee-print-dimensions span');
+					if (dimsEl) {
+						const parts = sideList
+							.filter((s) => s.print_dimensions)
+							.map((s) => `${s.label} : ${s.print_dimensions}`);
+						if (parts.length > 0) {
+							dimsEl.textContent = parts.join(' | ');
+						}
+					}
+				} else {
+					if (pngBtn && details.printUrl) {
+						pngBtn.setAttribute('href', details.printUrl);
+						pngBtn.style.display = '';
+					}
+					if (svgBtn && details.svgUrl) {
+						svgBtn.setAttribute('href', details.svgUrl);
+						svgBtn.style.display = '';
+					}
 				}
+
 				if (genBtn) {
 					genBtn.disabled = false;
 					genBtn.style.opacity = '';
@@ -208,6 +282,108 @@ class MrTeeAdminOrderExporter {
 	}
 
 	/**
+	 * Hydrate missing side_id / placements metadata on merged layers from product/payload text_lines.
+	 *
+	 * @param {Array}  layers  Merged scene-graph layers.
+	 * @param {Object} config  Product config.
+	 * @param {Object} payload Order item payload.
+	 * @return {Map<string, string>} Reference ID -> side_id lookup map.
+	 */
+	hydrateLayerSideMetadata(layers, config, payload) {
+		const refMetaMap = new Map();
+		const refSideMap = new Map();
+
+		const registerLines = (lines) => {
+			if (!Array.isArray(lines)) return;
+			for (const l of lines) {
+				if (!l || !l.ref_id) continue;
+				const sid = l.side_id || l.sideId || 'front';
+				if (!refSideMap.has(l.ref_id)) {
+					refSideMap.set(l.ref_id, sid);
+				}
+				if (!refMetaMap.has(l.ref_id)) {
+					refMetaMap.set(l.ref_id, {
+						side_id: sid,
+						placements: (l.placements && typeof l.placements === 'object') ? l.placements : null,
+					});
+				}
+			}
+		};
+
+		registerLines(config && config.text_lines);
+		registerLines(payload && payload.text_lines);
+
+		const walk = (nodes, inheritedSide = null) => {
+			if (!Array.isArray(nodes)) return;
+			for (const node of nodes) {
+				if (!node || typeof node !== 'object') continue;
+				const meta = node.reference ? refMetaMap.get(node.reference) : null;
+				if (!node.side_id && !node.sideId) {
+					if (meta && meta.side_id) {
+						node.side_id = meta.side_id;
+					} else if (inheritedSide) {
+						node.side_id = inheritedSide;
+					}
+				}
+				if (!node.placements && meta && meta.placements) {
+					node.placements = meta.placements;
+				}
+				const nextSide = node.side_id || node.sideId || inheritedSide;
+				if (Array.isArray(node.items)) {
+					walk(node.items, nextSide);
+				}
+			}
+		};
+		walk(layers, null);
+
+		return refSideMap;
+	}
+
+	/**
+	 * Check whether a given print side has at least one visible non-empty layer.
+	 *
+	 * @param {Array}               layers     Merged scene-graph layers.
+	 * @param {string}              sideId     Target print side ID.
+	 * @param {Map<string, string>} refSideMap Reference ID -> side_id lookup map.
+	 * @return {boolean}
+	 */
+	sideHasVisibleLayer(layers, sideId, refSideMap) {
+		const target = String(sideId || 'front');
+		const inspect = (nodes, inheritedSide = null) => {
+			if (!Array.isArray(nodes)) return false;
+			for (const node of nodes) {
+				if (!node || node.hide) continue;
+				const nodeSide = node.side_id || node.sideId || (node.reference && refSideMap && refSideMap.get(node.reference)) || inheritedSide;
+				if (node.type === 'GROUP' || node.type === 'MASK') {
+					if (nodeSide && String(nodeSide) !== target) {
+						continue;
+					}
+					if (inspect(node.items || [], nodeSide || inheritedSide)) {
+						return true;
+					}
+				} else if (node.type === 'TEXT') {
+					const effSide = String(nodeSide || 'front');
+					if (effSide === target && String(node.value || node.text || '').trim().length > 0) {
+						return true;
+					}
+				} else if (node.type === 'IMAGE') {
+					const effSide = String(nodeSide || 'front');
+					if (effSide === target && Boolean(node.url)) {
+						return true;
+					}
+				} else if (node.type === 'PATH') {
+					const effSide = String(nodeSide || 'front');
+					if (effSide === target && Boolean(node.path)) {
+						return true;
+					}
+				}
+			}
+			return false;
+		};
+		return inspect(layers, null);
+	}
+
+	/**
 	 * Ensure all full-res OpenType-SVG fonts required for export have intact `fullMap` glyph URLs.
 	 *
 	 * @param {Object} ctx Context returned by mr_tee_admin_get_order_item_context.
@@ -273,8 +449,8 @@ class MrTeeAdminOrderExporter {
 	}
 
 	/**
-	 * Generate high-resolution vector SVG and 300 DPI transparent print PNG for an order line item,
-	 * upload them in chunks, and bind them to both WooCommerce order metadata and NBDesigner.
+	 * Generate high-resolution vector SVG and 300 DPI transparent print PNG for each active side
+	 * of an order line item, upload them in chunks, and bind them to WooCommerce + NBDesigner.
 	 *
 	 * @param {number}  orderId Order ID.
 	 * @param {number}  itemId  Order item ID.
@@ -328,56 +504,108 @@ class MrTeeAdminOrderExporter {
 				? (parseInt(payload.repeater_count, 10) || 0)
 				: ((config.repeater && config.repeater.enabled) ? ((config.repeater.default_count !== undefined) ? config.repeater.default_count : 2) : 0);
 			const layers = SceneGraphEngine.applyRowCentering(mergedLayers, activeCount);
+			const refSideMap = this.hydrateLayerSideMetadata(layers, config, payload);
 
-			const metrics = PrintExporter.computeExportMetrics(config, editorData);
+			const printSides = (Array.isArray(payload.print_sides) && payload.print_sides.length > 0)
+				? payload.print_sides
+				: ((Array.isArray(config.print_sides) && config.print_sides.length > 0)
+					? config.print_sides
+					: [{ id: 'front', label: 'Recto' }]);
+			const previewViews = (Array.isArray(payload.preview_views) && payload.preview_views.length > 0)
+				? payload.preview_views
+				: (Array.isArray(config.preview_views) ? config.preview_views : []);
+
+			const activeSides = printSides.length > 1
+				? printSides.filter((s, idx) => idx === 0 || this.sideHasVisibleLayer(layers, (s && s.id) || 'front', refSideMap))
+				: [printSides[0]];
+			const sidesToExport = activeSides.length > 0 ? activeSides : [printSides[0]];
+			const isMultiSide = sidesToExport.length > 1;
+
 			const bbox = SceneGraphEngine.getAllLayersBBox(layers);
-			const zoomTransform = metrics.hasPerLineBoxes
-				? { scale: 1.0, translateX: 0.0, translateY: 0.0 }
-				: SceneGraphEngine.getAreaTransformValuesZoom(bbox, perso.area && perso.area.transform);
-
-			// 4. Render 300 DPI Vector SVG & Transparent Print PNG
-			this.setItemUiState(orderId, itemId, 'working', {
-				message: `Rendu SVG & PNG 300 DPI (${metrics.exportPxW}×${metrics.exportPxH} px)...`,
-			});
-
 			const fontFaceCss = (window.mrTeeOrderExportData && window.mrTeeOrderExportData.fontFaceCss) || ctx.fontFaceCss || '';
-			const rawSvgMarkup = SvgRenderer.renderToString(layers, zoomTransform, {
-				isExport: true,
-				realWidth: metrics.exportRealW,
-				realHeight: metrics.exportRealH,
-				unit: metrics.unit,
-				dpi: metrics.dpi,
-				aspectRatio: metrics.exportRatio,
-				hasPerLineBoxes: metrics.hasPerLineBoxes,
-				cropBoundingBox: metrics.cropBoundingBox,
-				fontFaceCss,
-			});
+			const exportedSides = [];
 
-			const inlinedImagesSvg = await PrintExporter.inlineExternalImages(rawSvgMarkup);
-			const inlinedSvg = await PrintExporter.inlineExternalFonts(inlinedImagesSvg);
-			const printB64 = await PrintExporter.rasterizeSvgToPng(inlinedSvg, metrics.exportPxW, metrics.exportPxH);
+			// 4 & 5. Render and upload 300 DPI Vector SVG & Transparent Print PNG for each active side
+			for (let i = 0; i < sidesToExport.length; i++) {
+				const side = sidesToExport[i] || { id: 'front', label: 'Recto' };
+				const sideId = side.id || (i === 0 ? 'front' : `side_${i}`);
+				const sideLabel = side.label || (i === 0 ? 'Recto' : sideId);
+				const sideViews = previewViews.filter((v) => v && (v.side_id || 'front') === sideId);
+				const refView = sideViews.find((v) => v.view_role === 'full') || sideViews[0] || null;
 
-			const svgBlob = new Blob([inlinedSvg], { type: 'image/svg+xml;charset=utf-8' });
-			const printBlob = PrintExporter.dataUrlToBlob(printB64);
-			if (!svgBlob || svgBlob.size === 0 || !printBlob || printBlob.size === 0) {
-				throw new Error('La rastérisation 300 DPI a produit un fichier vide.');
+				const metrics = PrintExporter.computeSideExportMetrics(config, editorData, sideId);
+				const zoomTransform = metrics.hasPerLineBoxes
+					? { scale: 1.0, translateX: 0.0, translateY: 0.0 }
+					: SceneGraphEngine.getAreaTransformValuesZoom(bbox, perso.area && perso.area.transform);
+
+				this.setItemUiState(orderId, itemId, 'working', {
+					message: isMultiSide
+						? `Rendu ${sideLabel} (${i + 1}/${sidesToExport.length}) — ${metrics.exportPxW}×${metrics.exportPxH} px...`
+						: `Rendu SVG & PNG 300 DPI (${metrics.exportPxW}×${metrics.exportPxH} px)...`,
+				});
+
+				const renderOptions = {
+					isExport: true,
+					realWidth: metrics.exportRealW,
+					realHeight: metrics.exportRealH,
+					unit: metrics.unit,
+					dpi: metrics.dpi,
+					aspectRatio: metrics.exportRatio,
+					hasPerLineBoxes: metrics.hasPerLineBoxes,
+					cropBoundingBox: metrics.cropBoundingBox,
+					fontFaceCss,
+				};
+				if (isMultiSide || printSides.length > 1 || refView) {
+					renderOptions.sideId = sideId;
+					if (refView && refView.id) {
+						renderOptions.viewId = refView.id;
+					}
+				}
+
+				const rawSvgMarkup = SvgRenderer.renderToString(layers, zoomTransform, renderOptions);
+				const inlinedImagesSvg = await PrintExporter.inlineExternalImages(rawSvgMarkup);
+				const inlinedSvg = await PrintExporter.inlineExternalFonts(inlinedImagesSvg);
+				const printB64 = await PrintExporter.rasterizeSvgToPng(inlinedSvg, metrics.exportPxW, metrics.exportPxH);
+
+				const svgBlob = new Blob([inlinedSvg], { type: 'image/svg+xml;charset=utf-8' });
+				const printBlob = PrintExporter.dataUrlToBlob(printB64);
+				if (!svgBlob || svgBlob.size === 0 || !printBlob || printBlob.size === 0) {
+					throw new Error(`La rastérisation 300 DPI (${sideLabel}) a produit un fichier vide.`);
+				}
+
+				this.setItemUiState(orderId, itemId, 'working', {
+					message: isMultiSide
+						? `Téléversement ${sideLabel} (${i + 1}/${sidesToExport.length})...`
+						: 'Téléversement des fichiers haute résolution...',
+				});
+
+				const suffix = isMultiSide ? String(sideId).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32) : '';
+				const isPrimary = (i === 0);
+
+				const svgUpload = await PrintExporter.uploadBlobInChunks(svgBlob, {
+					artifact: 'svg',
+					designKey,
+					nonce: this.data.nonce,
+					suffix,
+					isPrimary,
+				});
+				const printUpload = await PrintExporter.uploadBlobInChunks(printBlob, {
+					artifact: 'print_png',
+					designKey,
+					nonce: this.data.nonce,
+					suffix,
+					isPrimary,
+				});
+
+				exportedSides.push({
+					side_id: sideId,
+					label: sideLabel,
+					suffix,
+					svg_file_name: (svgUpload && svgUpload.file_name) || (suffix ? `design_${suffix}.svg` : 'design.svg'),
+					print_file_name: (printUpload && printUpload.file_name) || (suffix ? `print_300dpi_${suffix}.png` : 'print_300dpi.png'),
+					print_dimensions: `${metrics.exportRealW} × ${metrics.exportRealH} ${metrics.unit} (${metrics.dpi} DPI | ${metrics.exportPxW} × ${metrics.exportPxH} px)`,
+				});
 			}
-
-			// 5. Upload vector SVG & 300 DPI PNG in chunks under admin nonce
-			this.setItemUiState(orderId, itemId, 'working', {
-				message: 'Téléversement des fichiers haute résolution...',
-			});
-
-			await PrintExporter.uploadBlobInChunks(svgBlob, {
-				artifact: 'svg',
-				designKey,
-				nonce: this.data.nonce,
-			});
-			await PrintExporter.uploadBlobInChunks(printBlob, {
-				artifact: 'print_png',
-				designKey,
-				nonce: this.data.nonce,
-			});
 
 			// 6. Bind saved print files to WooCommerce order item meta + NBDesigner folder
 			const saveBody = new URLSearchParams({
@@ -386,6 +614,7 @@ class MrTeeAdminOrderExporter {
 				order_id: String(orderId),
 				item_id: String(itemId),
 				design_key: designKey,
+				sides_json: JSON.stringify(exportedSides),
 			});
 			const saveResp = await fetch(ajaxUrl, { method: 'POST', body: saveBody });
 			const saveJson = await saveResp.json();
@@ -396,6 +625,7 @@ class MrTeeAdminOrderExporter {
 			this.setItemUiState(orderId, itemId, 'ready', {
 				printUrl: saveJson.data.print_url,
 				svgUrl: saveJson.data.svg_url,
+				sideExports: saveJson.data.side_exports || null,
 			});
 
 			return true;

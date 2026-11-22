@@ -1,0 +1,662 @@
+<?php
+/**
+ * Mr. Tee Editor - Dedicated Storefront Product Gallery Renderer
+ *
+ * Replaces WooCommerce's heavy default gallery (Flexslider + Zoom + PhotoSwipe)
+ * with a lightweight, zero-dependency multi-view GPU swipe gallery engineered
+ * specifically for live SVG customization overlays across Classic and Block themes.
+ *
+ * @package MrTeeEditor\Frontend
+ */
+
+namespace MrTeeEditor\Frontend;
+
+use MrTeeEditor\Domain\SceneGraphSchema;
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+class ProductGalleryRenderer {
+
+	/**
+	 * Guard against duplicate hook registration.
+	 *
+	 * @var bool
+	 */
+	private static $initialized = false;
+
+	/**
+	 * Register WordPress & WooCommerce gallery override hooks.
+	 */
+	public static function init() {
+		if ( self::$initialized ) {
+			return;
+		}
+		self::$initialized = true;
+
+		add_filter( 'woocommerce_locate_template', array( __CLASS__, 'override_product_image_template' ), 99, 3 );
+		add_filter( 'render_block', array( __CLASS__, 'override_product_gallery_block' ), 20, 2 );
+		add_action( 'wp_enqueue_scripts', array( __CLASS__, 'dequeue_theme_gallery_bloat' ), 100 );
+	}
+
+	/**
+	 * Resolve active product ID when WooCommerce renders single-product image templates.
+	 *
+	 * @return int
+	 */
+	private static function resolve_mr_tee_product_id() {
+		$active_id = ProductPageRenderer::get_active_product_id();
+		if ( $active_id > 0 ) {
+			return $active_id;
+		}
+
+		global $product;
+		if ( is_object( $product ) && method_exists( $product, 'get_id' ) ) {
+			$pid = (int) $product->get_id();
+			if ( $pid > 0 && ProductPageRenderer::is_mr_tee_product( $pid ) ) {
+				return $pid;
+			}
+		}
+
+		return 0;
+	}
+
+	/**
+	 * Override WooCommerce `single-product/product-image.php` exclusively on Mr. Tee products.
+	 *
+	 * @param string $template      Located template path.
+	 * @param string $template_name Template relative name.
+	 * @param string $template_path Template base path.
+	 * @return string
+	 */
+	public static function override_product_image_template( $template, $template_name, $template_path ) {
+		if ( 'single-product/product-image.php' !== $template_name ) {
+			return $template;
+		}
+
+		if ( self::resolve_mr_tee_product_id() <= 0 ) {
+			return $template;
+		}
+
+		$custom_template = MR_TEE_EDITOR_DIR . 'templates/single-product-gallery.php';
+		if ( file_exists( $custom_template ) ) {
+			return $custom_template;
+		}
+
+		return $template;
+	}
+
+	/**
+	 * Override WooCommerce Block theme gallery blocks exclusively on Mr. Tee products.
+	 *
+	 * @param string               $block_content Rendered block HTML.
+	 * @param array<string, mixed> $block         Parsed block array.
+	 * @return string
+	 */
+	public static function override_product_gallery_block( $block_content, $block ) {
+		if ( is_admin() || empty( $block['blockName'] ) ) {
+			return $block_content;
+		}
+
+		$gallery_blocks = array(
+			'woocommerce/product-image-gallery',
+			'woocommerce/product-gallery',
+		);
+		if ( ! in_array( $block['blockName'], $gallery_blocks, true ) ) {
+			return $block_content;
+		}
+
+		if ( ! ProductPageRenderer::is_active() ) {
+			return $block_content;
+		}
+
+		$product_id = ProductPageRenderer::get_active_product_id();
+		if ( $product_id <= 0 ) {
+			return $block_content;
+		}
+
+		$gallery_html = self::render_gallery_html( $product_id );
+		return '' !== $gallery_html ? $gallery_html : $block_content;
+	}
+
+	/**
+	 * Dequeue WooCommerce's unused gallery JS/CSS bloat (Flexslider, Zoom, PhotoSwipe)
+	 * exclusively on Mr. Tee product pages (~100 KB saved per page load).
+	 */
+	public static function dequeue_theme_gallery_bloat() {
+		if ( ! ProductPageRenderer::is_active() ) {
+			return;
+		}
+
+		$unused_scripts = array(
+			'flexslider',
+			'zoom',
+			'photoswipe',
+			'photoswipe-ui-default',
+		);
+		foreach ( $unused_scripts as $handle ) {
+			if ( wp_script_is( $handle, 'enqueued' ) || wp_script_is( $handle, 'registered' ) ) {
+				wp_dequeue_script( $handle );
+			}
+		}
+
+		$unused_styles = array(
+			'photoswipe',
+			'photoswipe-default-skin',
+		);
+		foreach ( $unused_styles as $handle ) {
+			if ( wp_style_is( $handle, 'enqueued' ) || wp_style_is( $handle, 'registered' ) ) {
+				wp_dequeue_style( $handle );
+			}
+		}
+	}
+
+	/**
+	 * Normalize HTTP/HTTPS scheme to match active `is_ssl()` state without breaking external CDNs.
+	 *
+	 * @param string $url Raw image URL.
+	 * @return string
+	 */
+	public static function normalize_url_scheme( $url ) {
+		if ( empty( $url ) || ! is_string( $url ) ) {
+			return '';
+		}
+		$url = trim( $url );
+		if ( 0 !== strpos( $url, 'http://' ) && 0 !== strpos( $url, 'https://' ) ) {
+			return $url;
+		}
+
+		$site_host = wp_parse_url( home_url(), PHP_URL_HOST );
+		$http_host = isset( $_SERVER['HTTP_HOST'] ) ? preg_replace( '/:\d+$/', '', sanitize_text_field( wp_unslash( $_SERVER['HTTP_HOST'] ) ) ) : '';
+		$url_host  = wp_parse_url( $url, PHP_URL_HOST );
+
+		if ( $url_host && ( $url_host === $site_host || ( $http_host && $url_host === $http_host ) ) ) {
+			return set_url_scheme( $url, is_ssl() ? 'https' : 'http' );
+		}
+
+		if ( is_ssl() && 0 === strpos( $url, 'http://' ) ) {
+			return set_url_scheme( $url, 'https' );
+		}
+
+		return $url;
+	}
+
+	/**
+	 * Normalize URL path key for deduplicating images across preview_views and WooCommerce gallery.
+	 *
+	 * @param string $url Raw URL.
+	 * @return string
+	 */
+	private static function normalize_dedup_key( $url ) {
+		if ( empty( $url ) || ! is_string( $url ) ) {
+			return '';
+		}
+		$path = wp_parse_url( $url, PHP_URL_PATH );
+		if ( ! is_string( $path ) || '' === $path ) {
+			return strtolower( trim( $url ) );
+		}
+		// Strip WP scaled/resized size suffixes like -1024x1024 for robust deduplication.
+		$clean = preg_replace( '/-\d+x\d+(?=\.[a-z0-9]+$)/i', '', $path );
+		return strtolower( $clean );
+	}
+
+	/**
+	 * Resolve image URL, thumbnail URL, alt text, and natural dimensions from an attachment ID.
+	 *
+	 * @param int    $attachment_id WP attachment ID.
+	 * @param string $fallback_alt  Fallback alt text.
+	 * @return array{image_url: string, thumb_url: string, alt: string, width: int, height: int, aspect_ratio: float}
+	 */
+	private static function resolve_attachment_image( $attachment_id, $fallback_alt = '' ) {
+		$att_id = absint( $attachment_id );
+		if ( $att_id <= 0 ) {
+			return array(
+				'image_url'    => '',
+				'thumb_url'    => '',
+				'alt'          => $fallback_alt,
+				'width'        => 0,
+				'height'       => 0,
+				'aspect_ratio' => 1.0,
+			);
+		}
+
+		$src = wp_get_attachment_image_src( $att_id, 'large' );
+		if ( empty( $src ) || empty( $src[0] ) ) {
+			$src = wp_get_attachment_image_src( $att_id, 'full' );
+		}
+
+		$image_url = ! empty( $src[0] ) ? self::normalize_url_scheme( $src[0] ) : '';
+		$width     = ! empty( $src[1] ) ? (int) $src[1] : 0;
+		$height    = ! empty( $src[2] ) ? (int) $src[2] : 0;
+
+		$thumb_src = wp_get_attachment_image_src( $att_id, 'woocommerce_gallery_thumbnail' );
+		if ( empty( $thumb_src ) || empty( $thumb_src[0] ) ) {
+			$thumb_src = wp_get_attachment_image_src( $att_id, 'thumbnail' );
+		}
+		$thumb_url = ! empty( $thumb_src[0] ) ? self::normalize_url_scheme( $thumb_src[0] ) : $image_url;
+
+		$alt = get_post_meta( $att_id, '_wp_attachment_image_alt', true );
+		if ( ! is_string( $alt ) || '' === trim( $alt ) ) {
+			$alt = $fallback_alt;
+		}
+
+		$aspect_ratio = ( $width > 0 && $height > 0 ) ? round( $width / $height, 4 ) : 1.0;
+
+		return array(
+			'image_url'    => $image_url,
+			'thumb_url'    => $thumb_url,
+			'alt'          => $alt,
+			'width'        => $width,
+			'height'       => $height,
+			'aspect_ratio' => $aspect_ratio,
+		);
+	}
+
+	/**
+	 * Return safe fallback placeholder image URL.
+	 *
+	 * @return string
+	 */
+	private static function get_placeholder_url() {
+		$placeholder = function_exists( 'wc_placeholder_img_src' )
+			? wc_placeholder_img_src( 'woocommerce_single' )
+			: '';
+		return self::normalize_url_scheme( $placeholder );
+	}
+
+	/**
+	 * Build ordered list of storefront gallery slides (customizable views first,
+	 * optionally followed by deduplicated static WooCommerce gallery photos).
+	 *
+	 * @param int                  $product_id WooCommerce product ID.
+	 * @param array<string, mixed> $config     Compiled product configuration.
+	 * @return array<int, array<string, mixed>>
+	 */
+	public static function get_gallery_slides( $product_id, array $config ) {
+		$product_id    = absint( $product_id );
+		$wc_product    = function_exists( 'wc_get_product' ) ? wc_get_product( $product_id ) : null;
+		$product_title = $wc_product && method_exists( $wc_product, 'get_name' )
+			? (string) $wc_product->get_name()
+			: get_the_title( $product_id );
+		$featured_id   = (int) get_post_thumbnail_id( $product_id );
+		if ( $featured_id <= 0 && $wc_product && method_exists( $wc_product, 'get_image_id' ) ) {
+			$featured_id = (int) $wc_product->get_image_id();
+		}
+
+		$placeholder_url     = self::get_placeholder_url();
+		$slides              = array();
+		$used_attachment_ids = array();
+		$used_url_keys       = array();
+		$featured_used       = false;
+
+		$raw_views = ( ! empty( $config['preview_views'] ) && is_array( $config['preview_views'] ) )
+			? $config['preview_views']
+			: array();
+
+		// Legacy single-view fallback when product config has no explicit preview_views yet.
+		if ( empty( $raw_views ) ) {
+			$raw_views = array(
+				array(
+					'id'         => 'view_front_full',
+					'side_id'    => 'front',
+					'label'      => __( 'Recto', 'mr-tee-editor' ),
+					'view_role'  => 'full',
+					'blend_mode' => 'normal',
+					'image_id'   => $featured_id,
+					'image_url'  => '',
+				),
+			);
+		}
+
+		foreach ( array_values( $raw_views ) as $idx => $view ) {
+			if ( ! is_array( $view ) ) {
+				continue;
+			}
+
+			$view_id = ! empty( $view['id'] )
+				? sanitize_key( $view['id'] )
+				: ( ! empty( $view['view_id'] ) ? sanitize_key( $view['view_id'] ) : 'view_' . $idx );
+			$side_id = ! empty( $view['side_id'] ) ? sanitize_key( $view['side_id'] ) : 'front';
+
+			$raw_role  = ! empty( $view['view_role'] ) ? sanitize_key( $view['view_role'] ) : ( ! empty( $view['role'] ) ? sanitize_key( $view['role'] ) : 'full' );
+			$view_role = in_array( $raw_role, array( 'full', 'closeup', 'detail' ), true ) ? $raw_role : 'full';
+
+			$raw_blend  = ! empty( $view['blend_mode'] ) ? sanitize_key( $view['blend_mode'] ) : 'normal';
+			$blend_mode = in_array( $raw_blend, array( 'normal', 'multiply', 'soft_ink' ), true ) ? $raw_blend : 'normal';
+
+			$default_label = ( 'back' === $side_id )
+				? __( 'Verso', 'mr-tee-editor' )
+				: ( 'closeup' === $view_role ? __( 'Zoom', 'mr-tee-editor' ) : __( 'Recto', 'mr-tee-editor' ) );
+			$label = ! empty( $view['label'] ) ? (string) $view['label'] : ( ! empty( $view['name'] ) ? (string) $view['name'] : $default_label );
+
+			$att_id = 0;
+			if ( ! empty( $view['image_id'] ) ) {
+				$att_id = absint( $view['image_id'] );
+			} elseif ( ! empty( $view['attachment_id'] ) ) {
+				$att_id = absint( $view['attachment_id'] );
+			}
+
+			$raw_url   = ! empty( $view['image_url'] ) ? (string) $view['image_url'] : ( ! empty( $view['url'] ) ? (string) $view['url'] : '' );
+			$raw_thumb = ! empty( $view['thumb_url'] ) ? (string) $view['thumb_url'] : '';
+
+			// Primary front slide falls back to product featured image if no custom mockup URL was assigned.
+			if ( $att_id <= 0 && '' === trim( $raw_url ) && $featured_id > 0 && ( 0 === $idx || 'front' === $side_id ) ) {
+				$att_id = $featured_id;
+			}
+
+			$att_meta = $att_id > 0
+				? self::resolve_attachment_image( $att_id, $product_title ? $product_title . ' - ' . $label : $label )
+				: array(
+					'image_url'    => '',
+					'thumb_url'    => '',
+					'alt'          => $product_title ? $product_title . ' - ' . $label : $label,
+					'width'        => ! empty( $view['width'] ) ? absint( $view['width'] ) : 0,
+					'height'       => ! empty( $view['height'] ) ? absint( $view['height'] ) : 0,
+					'aspect_ratio' => ! empty( $view['aspect_ratio'] ) ? floatval( $view['aspect_ratio'] ) : 1.0,
+				);
+
+			$image_url = '' !== trim( $raw_url )
+				? self::normalize_url_scheme( $raw_url )
+				: $att_meta['image_url'];
+
+			if ( '' === $image_url ) {
+				$image_url = $placeholder_url;
+			}
+
+			$thumb_url = '' !== trim( $raw_thumb )
+				? self::normalize_url_scheme( $raw_thumb )
+				: ( '' !== $att_meta['thumb_url'] ? $att_meta['thumb_url'] : $image_url );
+
+			$width        = $att_meta['width'] > 0 ? $att_meta['width'] : ( ! empty( $view['width'] ) ? absint( $view['width'] ) : 0 );
+			$height       = $att_meta['height'] > 0 ? $att_meta['height'] : ( ! empty( $view['height'] ) ? absint( $view['height'] ) : 0 );
+			$aspect_ratio = ( $width > 0 && $height > 0 )
+				? round( $width / $height, 4 )
+				: ( ! empty( $view['aspect_ratio'] ) && floatval( $view['aspect_ratio'] ) > 0 ? round( floatval( $view['aspect_ratio'] ), 4 ) : 1.0 );
+
+			if ( $att_id > 0 ) {
+				$used_attachment_ids[ $att_id ] = true;
+				if ( $att_id === $featured_id ) {
+					$featured_used = true;
+				}
+			}
+			$dedup_key = self::normalize_dedup_key( $image_url );
+			if ( '' !== $dedup_key ) {
+				$used_url_keys[ $dedup_key ] = true;
+			}
+			if ( $featured_id > 0 && ! $featured_used ) {
+				$feat_url = wp_get_attachment_image_url( $featured_id, 'full' );
+				if ( $feat_url && self::normalize_dedup_key( $feat_url ) === $dedup_key ) {
+					$featured_used = true;
+				}
+			}
+
+			$slides[] = array(
+				'is_customizable' => true,
+				'view_id'         => $view_id,
+				'side_id'         => $side_id,
+				'label'           => $label,
+				'view_role'       => $view_role,
+				'blend_mode'      => $blend_mode,
+				'image_id'        => $att_id,
+				'image_url'       => $image_url,
+				'thumb_url'       => $thumb_url,
+				'alt'             => ! empty( $view['alt'] ) ? (string) $view['alt'] : $att_meta['alt'],
+				'width'           => $width,
+				'height'          => $height,
+				'aspect_ratio'    => $aspect_ratio,
+			);
+		}
+
+		// Optionally append static WooCommerce gallery photos not already present in preview_views.
+		if ( ! empty( $config['include_wc_gallery_slides'] ) && $wc_product && method_exists( $wc_product, 'get_gallery_image_ids' ) ) {
+			$gallery_ids  = $wc_product->get_gallery_image_ids();
+			$static_index = 1;
+			if ( is_array( $gallery_ids ) ) {
+				foreach ( $gallery_ids as $raw_att_id ) {
+					$att_id = absint( $raw_att_id );
+					if ( $att_id <= 0 ) {
+						continue;
+					}
+					if ( isset( $used_attachment_ids[ $att_id ] ) ) {
+						continue;
+					}
+					if ( $featured_used && $att_id === $featured_id ) {
+						continue;
+					}
+
+					$att_meta = self::resolve_attachment_image(
+						$att_id,
+						$product_title ? sprintf( '%s - %s %d', $product_title, __( 'Photo', 'mr-tee-editor' ), $static_index ) : sprintf( __( 'Photo %d', 'mr-tee-editor' ), $static_index )
+					);
+					if ( '' === $att_meta['image_url'] ) {
+						continue;
+					}
+
+					$dedup_key = self::normalize_dedup_key( $att_meta['image_url'] );
+					if ( '' !== $dedup_key && isset( $used_url_keys[ $dedup_key ] ) ) {
+						continue;
+					}
+
+					$used_attachment_ids[ $att_id ] = true;
+					if ( '' !== $dedup_key ) {
+						$used_url_keys[ $dedup_key ] = true;
+					}
+
+					$slides[] = array(
+						'is_customizable' => false,
+						'view_id'         => 'static_' . $att_id,
+						'side_id'         => '',
+						'label'           => sprintf( __( 'Photo %d', 'mr-tee-editor' ), $static_index ),
+						'view_role'       => 'static',
+						'blend_mode'      => 'normal',
+						'image_id'        => $att_id,
+						'image_url'       => $att_meta['image_url'],
+						'thumb_url'       => $att_meta['thumb_url'],
+						'alt'             => $att_meta['alt'],
+						'width'           => $att_meta['width'],
+						'height'          => $att_meta['height'],
+						'aspect_ratio'    => $att_meta['aspect_ratio'],
+					);
+					$static_index++;
+				}
+			}
+		}
+
+		// Ultimate fallback if everything was empty.
+		if ( empty( $slides ) ) {
+			$slides[] = array(
+				'is_customizable' => true,
+				'view_id'         => 'view_front_full',
+				'side_id'         => 'front',
+				'label'           => __( 'Recto', 'mr-tee-editor' ),
+				'view_role'       => 'full',
+				'blend_mode'      => 'normal',
+				'image_id'        => 0,
+				'image_url'       => $placeholder_url,
+				'thumb_url'       => $placeholder_url,
+				'alt'             => $product_title ? $product_title : __( 'Aperçu produit', 'mr-tee-editor' ),
+				'width'           => 0,
+				'height'          => 0,
+				'aspect_ratio'    => 1.0,
+			);
+		}
+
+		return $slides;
+	}
+
+	/**
+	 * Render the dedicated Mr. Tee product gallery HTML markup.
+	 *
+	 * Keeps `woocommerce-product-gallery images` so every Classic, ThemeForest, and Block
+	 * theme's 2-column CSS layout stays 100% intact, while deliberately omitting
+	 * `woocommerce-product-gallery--with-images` so WooCommerce's Flexslider never hijacks it.
+	 *
+	 * @param int $product_id WooCommerce product ID.
+	 * @return string Rendered HTML.
+	 */
+	public static function render_gallery_html( $product_id ) {
+		$product_id = absint( $product_id );
+		if ( $product_id <= 0 ) {
+			return '';
+		}
+
+		$config      = SceneGraphSchema::get_product_config( $product_id );
+		$slides      = self::get_gallery_slides( $product_id, $config );
+		$slide_count = count( $slides );
+		$is_locked   = ! empty( $config['lock_aspect_ratio'] ) || ( isset( $config['product_type'] ) && 'flat_object' === $config['product_type'] );
+		$lock_ratio  = ( ! empty( $config['print_aspect_ratio'] ) && floatval( $config['print_aspect_ratio'] ) > 0 )
+			? floatval( $config['print_aspect_ratio'] )
+			: 1.0;
+
+		ob_start();
+		?>
+		<div
+			id="mr-tee-gallery-root"
+			class="woocommerce-product-gallery images mr-tee-dedicated-gallery<?php echo $is_locked ? ' mr-tee-gallery--aspect-locked' : ''; ?>"
+			data-product-id="<?php echo esc_attr( $product_id ); ?>"
+			data-columns="4"
+			data-slide-count="<?php echo esc_attr( $slide_count ); ?>"
+		>
+			<?php if ( $slide_count > 1 ) : ?>
+				<div class="mr-tee-view-pills" role="tablist" aria-label="<?php esc_attr_e( 'Vues du produit', 'mr-tee-editor' ); ?>">
+					<?php foreach ( $slides as $idx => $slide ) : ?>
+						<?php
+						$pill_icon = '👕';
+						if ( empty( $slide['is_customizable'] ) ) {
+							$pill_icon = '🖼️';
+						} elseif ( in_array( $slide['view_role'], array( 'closeup', 'detail' ), true ) ) {
+							$pill_icon = '🔍';
+						}
+						?>
+						<button
+							type="button"
+							role="tab"
+							class="mr-tee-view-pill<?php echo 0 === $idx ? ' is-active' : ''; ?>"
+							aria-selected="<?php echo 0 === $idx ? 'true' : 'false'; ?>"
+							data-slide-index="<?php echo esc_attr( $idx ); ?>"
+							data-view-id="<?php echo esc_attr( $slide['view_id'] ); ?>"
+							data-side-id="<?php echo esc_attr( $slide['side_id'] ); ?>"
+							data-view-role="<?php echo esc_attr( $slide['view_role'] ); ?>"
+						>
+							<span class="mr-tee-view-pill-icon" aria-hidden="true"><?php echo esc_html( $pill_icon ); ?></span>
+							<span class="mr-tee-view-pill-label"><?php echo esc_html( $slide['label'] ); ?></span>
+						</button>
+					<?php endforeach; ?>
+				</div>
+			<?php endif; ?>
+
+			<div class="mr-tee-gallery-viewport">
+				<div class="mr-tee-gallery-track">
+					<?php foreach ( $slides as $idx => $slide ) : ?>
+						<div
+							class="mr-tee-slide<?php echo 0 === $idx ? ' is-active' : ''; ?>"
+							data-slide-index="<?php echo esc_attr( $idx ); ?>"
+							data-view-id="<?php echo esc_attr( $slide['view_id'] ); ?>"
+							data-side-id="<?php echo esc_attr( $slide['side_id'] ); ?>"
+							data-view-role="<?php echo esc_attr( $slide['view_role'] ); ?>"
+							data-customizable="<?php echo ! empty( $slide['is_customizable'] ) ? '1' : '0'; ?>"
+						>
+							<div
+								class="mr-tee-slide-stage"
+								<?php if ( $is_locked ) : ?>
+									style="aspect-ratio: <?php echo esc_attr( (string) $lock_ratio ); ?>;"
+								<?php endif; ?>
+							>
+								<img
+									src="<?php echo esc_url( $slide['image_url'] ); ?>"
+									alt="<?php echo esc_attr( $slide['alt'] ); ?>"
+									class="mr-tee-slide-img<?php echo 0 === $idx ? ' wp-post-image' : ''; ?> skip-lazy no-lazyload"
+									data-no-lazy="1"
+									data-large_image="<?php echo esc_url( $slide['image_url'] ); ?>"
+									<?php if ( ! empty( $slide['width'] ) && ! empty( $slide['height'] ) ) : ?>
+										width="<?php echo esc_attr( (string) $slide['width'] ); ?>"
+										height="<?php echo esc_attr( (string) $slide['height'] ); ?>"
+									<?php endif; ?>
+									<?php if ( 0 === $idx ) : ?>
+										loading="eager"
+										fetchpriority="high"
+										decoding="sync"
+									<?php else : ?>
+										loading="lazy"
+										decoding="async"
+									<?php endif; ?>
+									draggable="false"
+								/>
+								<?php if ( ! empty( $slide['is_customizable'] ) ) : ?>
+									<div
+										class="mr-tee-live-stage-overlay"
+										data-view-id="<?php echo esc_attr( $slide['view_id'] ); ?>"
+										data-side-id="<?php echo esc_attr( $slide['side_id'] ); ?>"
+										data-blend="<?php echo esc_attr( $slide['blend_mode'] ); ?>"
+									>
+										<div class="mr-tee-live-svg-container"></div>
+									</div>
+								<?php endif; ?>
+							</div>
+						</div>
+					<?php endforeach; ?>
+				</div>
+
+				<?php if ( $slide_count > 1 ) : ?>
+					<button
+						type="button"
+						class="mr-tee-gallery-arrow mr-tee-gallery-arrow--prev"
+						aria-label="<?php esc_attr_e( 'Vue précédente', 'mr-tee-editor' ); ?>"
+					>
+						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+					</button>
+					<button
+						type="button"
+						class="mr-tee-gallery-arrow mr-tee-gallery-arrow--next"
+						aria-label="<?php esc_attr_e( 'Vue suivante', 'mr-tee-editor' ); ?>"
+					>
+						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>
+					</button>
+				<?php endif; ?>
+
+				<button
+					type="button"
+					class="mr-tee-gallery-fullscreen-btn"
+					aria-label="<?php esc_attr_e( 'Agrandir l\'aperçu', 'mr-tee-editor' ); ?>"
+					title="<?php esc_attr_e( 'Agrandir l\'aperçu', 'mr-tee-editor' ); ?>"
+				>
+					<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<circle cx="11" cy="11" r="7"/>
+						<line x1="21" y1="21" x2="16.65" y2="16.65"/>
+						<line x1="11" y1="8" x2="11" y2="14"/>
+						<line x1="8" y1="11" x2="14" y2="11"/>
+					</svg>
+				</button>
+			</div>
+
+			<?php if ( $slide_count > 1 ) : ?>
+				<div class="mr-tee-gallery-thumbs" role="group" aria-label="<?php esc_attr_e( 'Miniatures des vues', 'mr-tee-editor' ); ?>">
+					<?php foreach ( $slides as $idx => $slide ) : ?>
+						<button
+							type="button"
+							class="mr-tee-gallery-thumb<?php echo 0 === $idx ? ' is-active' : ''; ?>"
+							data-slide-index="<?php echo esc_attr( $idx ); ?>"
+							data-view-id="<?php echo esc_attr( $slide['view_id'] ); ?>"
+							data-side-id="<?php echo esc_attr( $slide['side_id'] ); ?>"
+							aria-label="<?php echo esc_attr( $slide['label'] ); ?>"
+						>
+							<img
+								src="<?php echo esc_url( $slide['thumb_url'] ); ?>"
+								alt="<?php echo esc_attr( $slide['label'] ); ?>"
+								class="skip-lazy no-lazyload"
+								data-no-lazy="1"
+								loading="lazy"
+								decoding="async"
+								draggable="false"
+							/>
+							<span class="mr-tee-gallery-thumb-label"><?php echo esc_html( $slide['label'] ); ?></span>
+						</button>
+					<?php endforeach; ?>
+				</div>
+			<?php endif; ?>
+		</div>
+		<?php
+		return (string) ob_get_clean();
+	}
+}

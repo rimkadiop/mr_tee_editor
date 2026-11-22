@@ -91,6 +91,75 @@ class OrderAdminPanel {
 	}
 
 	/**
+	 * Extract normalized mockup previews from order item data.
+	 *
+	 * @param array<string, mixed> $data Order item _mr_tee_editor_data.
+	 * @return array<int, array{label: string, url: string}>
+	 */
+	private static function extract_previews( array $data ) {
+		$previews = array();
+		$seen     = array();
+		if ( ! empty( $data['previews'] ) && is_array( $data['previews'] ) ) {
+			foreach ( $data['previews'] as $idx => $item ) {
+				if ( ! is_array( $item ) || empty( $item['url'] ) ) {
+					continue;
+				}
+				$url = self::normalize_url( $item['url'] );
+				if ( '' === $url || isset( $seen[ $url ] ) ) {
+					continue;
+				}
+				$seen[ $url ] = true;
+				$previews[]   = array(
+					'label' => ! empty( $item['label'] ) ? (string) $item['label'] : sprintf( __( 'Vue %d', 'mr-tee-editor' ), $idx + 1 ),
+					'url'   => $url,
+				);
+			}
+		}
+		if ( empty( $previews ) && ! empty( $data['preview_url'] ) ) {
+			$url = self::normalize_url( $data['preview_url'] );
+			if ( '' !== $url ) {
+				$previews[] = array(
+					'label' => '',
+					'url'   => $url,
+				);
+			}
+		}
+		return $previews;
+	}
+
+	/**
+	 * Extract normalized multi-side print export entries from order item data.
+	 *
+	 * @param array<string, mixed> $data Order item _mr_tee_editor_data.
+	 * @return array<int, array{side_id: string, label: string, print_url: string, svg_url: string, print_dimensions: string}>
+	 */
+	private static function extract_side_exports( array $data ) {
+		$sides = array();
+		if ( ! empty( $data['side_exports'] ) && is_array( $data['side_exports'] ) ) {
+			foreach ( $data['side_exports'] as $key => $entry ) {
+				if ( ! is_array( $entry ) ) {
+					continue;
+				}
+				$p_url = ! empty( $entry['print_url'] ) ? self::normalize_url( $entry['print_url'] ) : '';
+				$s_url = ! empty( $entry['svg_url'] ) ? self::normalize_url( $entry['svg_url'] ) : '';
+				if ( '' === $p_url && '' === $s_url ) {
+					continue;
+				}
+				$side_id = ! empty( $entry['side_id'] ) ? (string) $entry['side_id'] : ( is_string( $key ) ? $key : 'side_' . count( $sides ) );
+				$label   = ! empty( $entry['label'] ) ? (string) $entry['label'] : ucfirst( $side_id );
+				$sides[] = array(
+					'side_id'          => $side_id,
+					'label'            => $label,
+					'print_url'        => $p_url,
+					'svg_url'          => $s_url,
+					'print_dimensions' => ! empty( $entry['print_dimensions'] ) ? (string) $entry['print_dimensions'] : '',
+				);
+			}
+		}
+		return $sides;
+	}
+
+	/**
 	 * Render download links and on-demand high-res print export controls directly under the order line item.
 	 *
 	 * @param int                    $item_id Order item ID.
@@ -109,13 +178,17 @@ class OrderAdminPanel {
 			return;
 		}
 
-		$order_id    = method_exists( $item, 'get_order_id' ) ? (int) $item->get_order_id() : 0;
-		$design_key  = ! empty( $data['key'] ) ? $data['key'] : '';
-		$print_url   = ! empty( $data['print_url'] ) ? self::normalize_url( $data['print_url'] ) : '';
-		$svg_url     = ! empty( $data['svg_url'] ) ? self::normalize_url( $data['svg_url'] ) : '';
-		$preview_url = ! empty( $data['preview_url'] ) ? self::normalize_url( $data['preview_url'] ) : '';
-		$cust_images = self::extract_customer_images( $data );
-		$has_print   = ( ! empty( $print_url ) && ! empty( $svg_url ) );
+		$order_id          = method_exists( $item, 'get_order_id' ) ? (int) $item->get_order_id() : 0;
+		$design_key        = ! empty( $data['key'] ) ? $data['key'] : '';
+		$print_url         = ! empty( $data['print_url'] ) ? self::normalize_url( $data['print_url'] ) : '';
+		$svg_url           = ! empty( $data['svg_url'] ) ? self::normalize_url( $data['svg_url'] ) : '';
+		$preview_url       = ! empty( $data['preview_url'] ) ? self::normalize_url( $data['preview_url'] ) : '';
+		$previews          = self::extract_previews( $data );
+		$side_exports      = self::extract_side_exports( $data );
+		$is_multi_previews = count( $previews ) > 1;
+		$is_multi_sides    = count( $side_exports ) > 1;
+		$cust_images       = self::extract_customer_images( $data );
+		$has_print         = $is_multi_sides || ( ! empty( $print_url ) && ! empty( $svg_url ) );
 
 		?>
 		<div
@@ -129,13 +202,46 @@ class OrderAdminPanel {
 			<strong style="display:block;margin-bottom:6px;color:#111827;font-size:12px;">
 				<?php esc_html_e( 'Fichiers Mr. Tee Designer :', 'mr-tee-editor' ); ?>
 			</strong>
-			<?php if ( ! empty( $data['print_dimensions'] ) ) : ?>
-				<div style="margin-bottom:8px;font-size:11.5px;color:#4b5563;">
+			<?php if ( $is_multi_sides ) : ?>
+				<?php
+				$dim_parts = array();
+				foreach ( $side_exports as $s_exp ) {
+					if ( ! empty( $s_exp['print_dimensions'] ) ) {
+						$dim_parts[] = $s_exp['label'] . ' : ' . $s_exp['print_dimensions'];
+					}
+				}
+				?>
+				<?php if ( ! empty( $dim_parts ) ) : ?>
+					<div class="mr-tee-print-dimensions" style="margin-bottom:8px;font-size:11.5px;color:#4b5563;">
+						<strong><?php esc_html_e( "Dimensions d'impression :", 'mr-tee-editor' ); ?></strong>
+						<span><?php echo esc_html( implode( ' | ', $dim_parts ) ); ?></span>
+					</div>
+				<?php elseif ( ! empty( $data['print_dimensions'] ) ) : ?>
+					<div class="mr-tee-print-dimensions" style="margin-bottom:8px;font-size:11.5px;color:#4b5563;">
+						<strong><?php esc_html_e( "Dimensions d'impression :", 'mr-tee-editor' ); ?></strong>
+						<span><?php echo esc_html( $data['print_dimensions'] ); ?></span>
+					</div>
+				<?php endif; ?>
+			<?php elseif ( ! empty( $data['print_dimensions'] ) ) : ?>
+				<div class="mr-tee-print-dimensions" style="margin-bottom:8px;font-size:11.5px;color:#4b5563;">
 					<strong><?php esc_html_e( "Dimensions d'impression :", 'mr-tee-editor' ); ?></strong>
 					<span><?php echo esc_html( $data['print_dimensions'] ); ?></span>
 				</div>
 			<?php endif; ?>
-			<?php if ( ! empty( $preview_url ) ) : ?>
+			<?php if ( $is_multi_previews ) : ?>
+				<div style="margin-bottom:8px;display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;">
+					<?php foreach ( $previews as $pv ) : ?>
+						<div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+							<a href="<?php echo esc_url( $pv['url'] ); ?>" target="_blank" rel="noopener noreferrer">
+								<img src="<?php echo esc_url( $pv['url'] ); ?>" alt="<?php echo esc_attr( $pv['label'] ? $pv['label'] : 'Mockup Preview' ); ?>" style="width:68px;height:auto;max-height:90px;object-fit:contain;border-radius:5px;border:1px solid #d1d5db;background:#fff;display:block;" />
+							</a>
+							<?php if ( ! empty( $pv['label'] ) ) : ?>
+								<span style="font-size:11px;font-weight:600;color:#374151;"><?php echo esc_html( $pv['label'] ); ?></span>
+							<?php endif; ?>
+						</div>
+					<?php endforeach; ?>
+				</div>
+			<?php elseif ( ! empty( $preview_url ) ) : ?>
 				<div style="margin-bottom:8px;display:flex;align-items:center;gap:10px;">
 					<a href="<?php echo esc_url( $preview_url ); ?>" target="_blank" rel="noopener noreferrer">
 						<img src="<?php echo esc_url( $preview_url ); ?>" alt="Mockup Preview" style="width:68px;height:auto;max-height:90px;object-fit:contain;border-radius:5px;border:1px solid #d1d5db;background:#fff;display:block;" />
@@ -153,12 +259,41 @@ class OrderAdminPanel {
 				?>
 			</div>
 			<div class="mr-tee-print-actions" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+				<?php if ( $is_multi_sides ) : ?>
+					<?php foreach ( $side_exports as $s_exp ) : ?>
+						<?php if ( ! empty( $s_exp['print_url'] ) ) : ?>
+							<a
+								href="<?php echo esc_url( $s_exp['print_url'] ); ?>"
+								target="_blank"
+								class="button button-primary button-small mr-tee-btn-side-export mr-tee-btn-side-png"
+								data-side-id="<?php echo esc_attr( $s_exp['side_id'] ); ?>"
+								download
+							>
+								<span class="dashicons dashicons-download" style="vertical-align:middle;font-size:14px;width:14px;height:14px;"></span>
+								<?php echo esc_html( sprintf( __( '%s — PNG 300 DPI', 'mr-tee-editor' ), $s_exp['label'] ) ); ?>
+							</a>
+						<?php endif; ?>
+						<?php if ( ! empty( $s_exp['svg_url'] ) ) : ?>
+							<a
+								href="<?php echo esc_url( $s_exp['svg_url'] ); ?>"
+								target="_blank"
+								class="button button-secondary button-small mr-tee-btn-side-export mr-tee-btn-side-svg"
+								data-side-id="<?php echo esc_attr( $s_exp['side_id'] ); ?>"
+								download
+							>
+								<span class="dashicons dashicons-media-code" style="vertical-align:middle;font-size:14px;width:14px;height:14px;"></span>
+								<?php echo esc_html( sprintf( __( '%s — Vector SVG', 'mr-tee-editor' ), $s_exp['label'] ) ); ?>
+							</a>
+						<?php endif; ?>
+					<?php endforeach; ?>
+				<?php endif; ?>
+
 				<a
 					href="<?php echo esc_url( $print_url ? $print_url : '#' ); ?>"
 					target="_blank"
 					class="button button-primary button-small mr-tee-btn-print-png"
 					download
-					style="<?php echo empty( $print_url ) ? 'display:none;' : ''; ?>"
+					style="<?php echo ( $is_multi_sides || empty( $print_url ) ) ? 'display:none;' : ''; ?>"
 				>
 					<span class="dashicons dashicons-download" style="vertical-align:middle;font-size:14px;width:14px;height:14px;"></span>
 					<?php esc_html_e( 'PNG 300 DPI (Sans fond)', 'mr-tee-editor' ); ?>
@@ -169,7 +304,7 @@ class OrderAdminPanel {
 					target="_blank"
 					class="button button-secondary button-small mr-tee-btn-print-svg"
 					download
-					style="<?php echo empty( $svg_url ) ? 'display:none;' : ''; ?>"
+					style="<?php echo ( $is_multi_sides || empty( $svg_url ) ) ? 'display:none;' : ''; ?>"
 				>
 					<span class="dashicons dashicons-media-code" style="vertical-align:middle;font-size:14px;width:14px;height:14px;"></span>
 					<?php esc_html_e( 'Vector SVG', 'mr-tee-editor' ); ?>
@@ -186,7 +321,14 @@ class OrderAdminPanel {
 					<?php echo $has_print ? esc_html__( 'Régénérer 300 DPI & SVG', 'mr-tee-editor' ) : esc_html__( 'Générer 300 DPI & SVG', 'mr-tee-editor' ); ?>
 				</button>
 
-				<?php if ( ! empty( $preview_url ) ) : ?>
+				<?php if ( $is_multi_previews ) : ?>
+					<?php foreach ( $previews as $pv ) : ?>
+						<a href="<?php echo esc_url( $pv['url'] ); ?>" target="_blank" class="button button-secondary button-small" download>
+							<span class="dashicons dashicons-visibility" style="vertical-align:middle;font-size:14px;width:14px;height:14px;"></span>
+							<?php echo esc_html( sprintf( __( 'Aperçu %s', 'mr-tee-editor' ), $pv['label'] ) ); ?>
+						</a>
+					<?php endforeach; ?>
+				<?php elseif ( ! empty( $preview_url ) ) : ?>
 					<a href="<?php echo esc_url( $preview_url ); ?>" target="_blank" class="button button-secondary button-small" download>
 						<span class="dashicons dashicons-visibility" style="vertical-align:middle;font-size:14px;width:14px;height:14px;"></span>
 						<?php esc_html_e( 'Aperçu Mockup', 'mr-tee-editor' ); ?>
@@ -223,13 +365,17 @@ class OrderAdminPanel {
 			if ( empty( $data ) || ! is_array( $data ) ) {
 				continue;
 			}
-			$found       = true;
-			$design_key  = ! empty( $data['key'] ) ? $data['key'] : '';
-			$print_url   = ! empty( $data['print_url'] ) ? self::normalize_url( $data['print_url'] ) : '';
-			$svg_url     = ! empty( $data['svg_url'] ) ? self::normalize_url( $data['svg_url'] ) : '';
-			$preview_url = ! empty( $data['preview_url'] ) ? self::normalize_url( $data['preview_url'] ) : '';
-			$cust_images = self::extract_customer_images( $data );
-			$has_print   = ( ! empty( $print_url ) && ! empty( $svg_url ) );
+			$found             = true;
+			$design_key        = ! empty( $data['key'] ) ? $data['key'] : '';
+			$print_url         = ! empty( $data['print_url'] ) ? self::normalize_url( $data['print_url'] ) : '';
+			$svg_url           = ! empty( $data['svg_url'] ) ? self::normalize_url( $data['svg_url'] ) : '';
+			$preview_url       = ! empty( $data['preview_url'] ) ? self::normalize_url( $data['preview_url'] ) : '';
+			$previews          = self::extract_previews( $data );
+			$side_exports      = self::extract_side_exports( $data );
+			$is_multi_previews = count( $previews ) > 1;
+			$is_multi_sides    = count( $side_exports ) > 1;
+			$cust_images       = self::extract_customer_images( $data );
+			$has_print         = $is_multi_sides || ( ! empty( $print_url ) && ! empty( $svg_url ) );
 			?>
 			<div
 				class="mr-tee-metabox-item"
@@ -240,7 +386,20 @@ class OrderAdminPanel {
 				style="margin-bottom:15px;padding-bottom:12px;border-bottom:1px solid #e5e7eb;"
 			>
 				<h4 style="margin:0 0 8px 0;font-size:13px;"><?php echo esc_html( $item->get_name() ); ?></h4>
-				<?php if ( ! empty( $preview_url ) ) : ?>
+				<?php if ( $is_multi_previews ) : ?>
+					<div style="display:flex;justify-content:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+						<?php foreach ( $previews as $pv ) : ?>
+							<div style="text-align:center;">
+								<a href="<?php echo esc_url( $pv['url'] ); ?>" target="_blank" rel="noopener noreferrer">
+									<img src="<?php echo esc_url( $pv['url'] ); ?>" alt="<?php echo esc_attr( $pv['label'] ? $pv['label'] : 'Preview' ); ?>" style="max-width:108px;border-radius:6px;border:1px solid #d1d5db;box-shadow:0 1px 3px rgba(0,0,0,0.1);display:block;" />
+								</a>
+								<?php if ( ! empty( $pv['label'] ) ) : ?>
+									<span style="display:block;margin-top:3px;font-size:11px;font-weight:600;color:#374151;"><?php echo esc_html( $pv['label'] ); ?></span>
+								<?php endif; ?>
+							</div>
+						<?php endforeach; ?>
+					</div>
+				<?php elseif ( ! empty( $preview_url ) ) : ?>
 					<div style="text-align:center;margin-bottom:10px;">
 						<a href="<?php echo esc_url( $preview_url ); ?>" target="_blank" rel="noopener noreferrer">
 							<img src="<?php echo esc_url( $preview_url ); ?>" alt="Preview" style="max-width:140px;border-radius:6px;border:1px solid #d1d5db;box-shadow:0 1px 3px rgba(0,0,0,0.1);" />
@@ -257,12 +416,41 @@ class OrderAdminPanel {
 					<?php echo $has_print ? esc_html__( '300 DPI & SVG prêts', 'mr-tee-editor' ) : esc_html__( 'Génération 300 DPI & SVG requise', 'mr-tee-editor' ); ?>
 				</div>
 				<div class="mr-tee-metabox-actions" style="display:flex;flex-direction:column;gap:6px;">
+					<?php if ( $is_multi_sides ) : ?>
+						<?php foreach ( $side_exports as $s_exp ) : ?>
+							<?php if ( ! empty( $s_exp['print_url'] ) ) : ?>
+								<a
+									href="<?php echo esc_url( $s_exp['print_url'] ); ?>"
+									target="_blank"
+									class="button button-primary mr-tee-btn-side-export mr-tee-btn-side-png"
+									data-side-id="<?php echo esc_attr( $s_exp['side_id'] ); ?>"
+									download
+									style="text-align:center;"
+								>
+									<?php echo esc_html( sprintf( __( '%s — PNG 300 DPI', 'mr-tee-editor' ), $s_exp['label'] ) ); ?>
+								</a>
+							<?php endif; ?>
+							<?php if ( ! empty( $s_exp['svg_url'] ) ) : ?>
+								<a
+									href="<?php echo esc_url( $s_exp['svg_url'] ); ?>"
+									target="_blank"
+									class="button mr-tee-btn-side-export mr-tee-btn-side-svg"
+									data-side-id="<?php echo esc_attr( $s_exp['side_id'] ); ?>"
+									download
+									style="text-align:center;"
+								>
+									<?php echo esc_html( sprintf( __( '%s — Vector SVG', 'mr-tee-editor' ), $s_exp['label'] ) ); ?>
+								</a>
+							<?php endif; ?>
+						<?php endforeach; ?>
+					<?php endif; ?>
+
 					<a
 						href="<?php echo esc_url( $print_url ? $print_url : '#' ); ?>"
 						target="_blank"
 						class="button button-primary mr-tee-btn-print-png"
 						download
-						style="text-align:center;<?php echo empty( $print_url ) ? 'display:none;' : ''; ?>"
+						style="text-align:center;<?php echo ( $is_multi_sides || empty( $print_url ) ) ? 'display:none;' : ''; ?>"
 					>
 						<?php esc_html_e( 'Télécharger PNG 300 DPI', 'mr-tee-editor' ); ?>
 					</a>
@@ -271,7 +459,7 @@ class OrderAdminPanel {
 						target="_blank"
 						class="button mr-tee-btn-print-svg"
 						download
-						style="text-align:center;<?php echo empty( $svg_url ) ? 'display:none;' : ''; ?>"
+						style="text-align:center;<?php echo ( $is_multi_sides || empty( $svg_url ) ) ? 'display:none;' : ''; ?>"
 					>
 						<?php esc_html_e( 'Télécharger Vector SVG', 'mr-tee-editor' ); ?>
 					</a>
@@ -285,7 +473,13 @@ class OrderAdminPanel {
 					>
 						<?php echo $has_print ? esc_html__( 'Régénérer 300 DPI & SVG', 'mr-tee-editor' ) : esc_html__( 'Générer 300 DPI & SVG', 'mr-tee-editor' ); ?>
 					</button>
-					<?php if ( ! empty( $preview_url ) ) : ?>
+					<?php if ( $is_multi_previews ) : ?>
+						<?php foreach ( $previews as $pv ) : ?>
+							<a href="<?php echo esc_url( $pv['url'] ); ?>" target="_blank" class="button" download style="text-align:center;">
+								<?php echo esc_html( sprintf( __( 'Télécharger Aperçu %s', 'mr-tee-editor' ), $pv['label'] ) ); ?>
+							</a>
+						<?php endforeach; ?>
+					<?php elseif ( ! empty( $preview_url ) ) : ?>
 						<a href="<?php echo esc_url( $preview_url ); ?>" target="_blank" class="button" download style="text-align:center;">
 							<?php esc_html_e( 'Télécharger Aperçu Mockup', 'mr-tee-editor' ); ?>
 						</a>

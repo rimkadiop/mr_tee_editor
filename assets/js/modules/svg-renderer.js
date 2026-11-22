@@ -16,11 +16,67 @@
 
 export class SvgRenderer {
 	/**
+	 * Filter a scene-graph layer tree so only layers belonging to `sideId` remain.
+	 * Layers without an explicit `side_id` / `sideId` default to `'front'`.
+	 *
+	 * @param {Array} layers Scene-graph layers array.
+	 * @param {string} sideId Target print side identifier (e.g. 'front', 'back').
+	 * @return {Array}
+	 */
+	static filterLayersBySide(layers, sideId) {
+		if (!sideId || !Array.isArray(layers)) {
+			return Array.isArray(layers) ? layers : [];
+		}
+		const target = String(sideId);
+		const filtered = [];
+		for (const node of layers) {
+			if (!node || node.hide) continue;
+			if (node.type === 'GROUP') {
+				const groupSide = node.side_id || node.sideId || null;
+				if (groupSide && String(groupSide) !== target) {
+					continue;
+				}
+				const childItems = this.filterLayersBySide(node.items || [], target);
+				if (childItems.length > 0) {
+					filtered.push(Object.assign({}, node, { items: childItems }));
+				}
+			} else if (node.type === 'MASK') {
+				const firstChild = Array.isArray(node.items) && node.items[0] ? node.items[0] : null;
+				const maskSide = node.side_id || node.sideId || (firstChild && (firstChild.side_id || firstChild.sideId)) || 'front';
+				if (String(maskSide) === target) {
+					filtered.push(node);
+				}
+			} else {
+				const nodeSide = node.side_id || node.sideId || 'front';
+				if (String(nodeSide) === target) {
+					filtered.push(node);
+				}
+			}
+		}
+		return filtered;
+	}
+
+	/**
+	 * Resolve optional per-view placement override (`node.placements[viewId]`) for a scene-graph node.
+	 *
+	 * @param {Object} node Scene-graph node.
+	 * @param {string} viewId Target preview view identifier.
+	 * @return {Object|null}
+	 */
+	static resolveNodeViewPlacement(node, viewId) {
+		if (!viewId || !node || !node.placements || typeof node.placements !== 'object') {
+			return null;
+		}
+		const vp = node.placements[viewId];
+		return (vp && typeof vp === 'object') ? vp : null;
+	}
+
+	/**
 	 * Build complete SVG string from merged layers and zoom transform.
 	 *
 	 * @param {Array} layers Merged scene-graph layers.
 	 * @param {Object} zoomTransform { scale, translateX, translateY }
-	 * @param {Object} options Rendering options (e.g. isExport, fontFaceCss, idPrefix).
+	 * @param {Object} options Rendering options (e.g. isExport, fontFaceCss, idPrefix, sideId, viewId).
 	 * @return {string} Valid SVG XML markup string.
 	 */
 	static renderToString(layers, zoomTransform = { scale: 1, translateX: 0, translateY: 0 }, options = {}) {
@@ -29,6 +85,7 @@ export class SvgRenderer {
 		const tx = z.translateX !== undefined ? z.translateX : 0;
 		const ty = z.translateY !== undefined ? z.translateY : 0;
 		const idPrefix = options.idPrefix ? String(options.idPrefix).replace(/[^a-zA-Z0-9_-]/g, '') : '';
+		const activeLayers = options.sideId ? this.filterLayersBySide(layers, options.sideId) : (Array.isArray(layers) ? layers : []);
 
 		const fontFaceCss = options.fontFaceCss
 			|| (typeof window !== 'undefined' && window.mrTeeOrderExportData && window.mrTeeOrderExportData.fontFaceCss)
@@ -39,18 +96,18 @@ export class SvgRenderer {
 			defs += `<style><![CDATA[\n${fontFaceCss}\n]]></style>`;
 		}
 
-		// 3D Drop shadow filter
+		// Crisp proportional-friendly drop shadow & embroidery relief filters
 		defs += `
 			<filter id="${idPrefix}mrtee-3d-shadow" x="-20%" y="-20%" width="140%" height="140%">
-				<feDropShadow dx="0" dy="0.9" stdDeviation="0.4" flood-color="#000000" flood-opacity="0.32" />
+				<feDropShadow dx="0" dy="0.35" stdDeviation="0.18" flood-color="#000000" flood-opacity="0.28" />
 			</filter>
-			<filter id="${idPrefix}mrtee-embroidery-relief" x="-10%" y="-10%" width="120%" height="120%">
-				<feDropShadow dx="0" dy="0.6" stdDeviation="0.3" flood-color="#000000" flood-opacity="0.35" />
+			<filter id="${idPrefix}mrtee-embroidery-relief" x="-12%" y="-12%" width="124%" height="124%">
+				<feDropShadow dx="0" dy="0.22" stdDeviation="0.12" flood-color="#000000" flood-opacity="0.26" />
 			</filter>
 		`;
 
 		// Append OpenType-SVG font defs (gradients, masks, filters) if present
-		if (Array.isArray(layers)) {
+		if (Array.isArray(activeLayers)) {
 			const appendFontDefs = (nodes) => {
 				for (const n of nodes) {
 					if (!n) continue;
@@ -67,10 +124,16 @@ export class SvgRenderer {
 					if (Array.isArray(n.items)) appendFontDefs(n.items);
 				}
 			};
-			appendFontDefs(layers);
+			appendFontDefs(activeLayers);
 		}
 
-		const hasPerLineBoxes = Boolean(options.hasPerLineBoxes) || (Array.isArray(layers) && layers.some(n => n.box_top !== undefined || (Array.isArray(n.items) && n.items.some(c => c.box_top !== undefined))));
+		const nodeHasBox = (n) => Boolean(
+			n && (
+				n.box_top !== undefined
+				|| (options.viewId && n.placements && n.placements[options.viewId] && n.placements[options.viewId].box_top !== undefined)
+			)
+		);
+		const hasPerLineBoxes = Boolean(options.hasPerLineBoxes) || (Array.isArray(activeLayers) && activeLayers.some(n => nodeHasBox(n) || (Array.isArray(n.items) && n.items.some(c => nodeHasBox(c)))));
 		const ratio = (options.aspectRatio && parseFloat(options.aspectRatio) > 0)
 			? parseFloat(options.aspectRatio)
 			: (options.realWidth && options.realHeight ? (parseFloat(options.realWidth) / parseFloat(options.realHeight)) : 1.0);
@@ -80,7 +143,7 @@ export class SvgRenderer {
 		const viewBoxAttr = `viewBox="0 0 ${vbWidth} ${vbHeight}"`;
 
 		const extraDefs = [];
-		const layersMarkup = this.renderLayersMarkup(layers, { ...options, idPrefix, ratio, hasPerLineBoxes, vbHeight, _extraDefs: extraDefs });
+		const layersMarkup = this.renderLayersMarkup(activeLayers, { ...options, idPrefix, ratio, hasPerLineBoxes, vbHeight, _extraDefs: extraDefs });
 		if (extraDefs.length > 0) {
 			defs += '\n' + extraDefs.join('\n');
 		}
@@ -189,24 +252,99 @@ export class SvgRenderer {
 	}
 
 	/**
-	 * Render a TEXT node with per-letter COLOR_SET cycling, auto-fit boundary constraints, and outsideOnly stroke.
+	 * Measure a single text line's width in `em` units (i.e. width / fontSize) using a
+	 * cached offscreen 2D Canvas when the custom font is loaded, falling back to `getFontMetrics()`.
+	 *
+	 * @param {string} text Single line of text.
+	 * @param {string} fontFamily CSS font-family stack.
+	 * @param {number} letterSpacingEm Letter spacing in em units.
+	 * @param {string} rawFont Raw font family identifier for fallback metrics.
+	 * @return {number} Width in em units.
+	 */
+	static measureTextWidthUnits(text, fontFamily, letterSpacingEm = 0, rawFont = '') {
+		const str = String(text || '');
+		if (!str) return 0;
+
+		const spacing = Number.isFinite(letterSpacingEm) ? letterSpacingEm : 0;
+		const spacingUnits = Math.max(0, str.length - 1) * spacing;
+
+		if (typeof document !== 'undefined' && typeof document.createElement === 'function') {
+			const primaryFamily = String(fontFamily || '').split(',')[0].trim().replace(/^['"]+|['"]+$/g, '');
+			const isGeneric = /^(sans-serif|serif|monospace|cursive|fantasy|system-ui|arial|helvetica|georgia|impact)$/i.test(primaryFamily);
+			let fontReady = isGeneric;
+
+			if (!fontReady && primaryFamily && document.fonts && typeof document.fonts.check === 'function') {
+				try {
+					fontReady = document.fonts.check(`100px "${primaryFamily}"`);
+				} catch (e) {
+					fontReady = false;
+				}
+			}
+
+			if (fontReady) {
+				this._textWidthCache = this._textWidthCache || new Map();
+				const cacheKey = `${fontFamily}|${spacing.toFixed(4)}|${str}`;
+				if (this._textWidthCache.has(cacheKey)) {
+					return this._textWidthCache.get(cacheKey);
+				}
+
+				if (!this._measureCtx) {
+					const canvas = document.createElement('canvas');
+					this._measureCtx = canvas.getContext('2d');
+				}
+				if (this._measureCtx) {
+					const refPx = 100;
+					this._measureCtx.font = `${refPx}px ${fontFamily}`;
+					const measured = this._measureCtx.measureText(str).width;
+					if (measured > 0) {
+						const units = (measured / refPx) + spacingUnits;
+						if (this._textWidthCache.size >= 500) {
+							this._textWidthCache.clear();
+						}
+						this._textWidthCache.set(cacheKey, units);
+						return units;
+					}
+				}
+			}
+		}
+
+		const metrics = this.getFontMetrics(rawFont || fontFamily);
+		return (str.length * metrics.charRatio) + spacingUnits;
+	}
+
+	/**
+	 * Render a TEXT node with per-letter COLOR_SET cycling, uniform auto-fit scaling, and outsideOnly stroke.
 	 *
 	 * @param {Object} node TEXT node definition.
+	 * @param {Object} options Rendering options.
 	 * @return {string}
 	 */
 	static renderTextNode(node, options = {}) {
 		const val = String(node.value || node.text || '');
 		if (!val.trim()) return '';
 
+		const vp = this.resolveNodeViewPlacement(node, options.viewId);
+		if (vp && (vp.hidden === true || vp.visible === false)) {
+			return '';
+		}
+
 		const idPrefix = options.idPrefix ? String(options.idPrefix).replace(/[^a-zA-Z0-9_-]/g, '') : '';
 		const ratio = (options.ratio && options.ratio > 0) ? options.ratio : 1.0;
 		const hasPerLine = Boolean(options.hasPerLineBoxes);
 
-		const hasBox = (node.box_width !== undefined && node.box_height !== undefined);
-		let boxW = hasBox ? parseFloat(node.box_width) : (parseFloat(node.maxWidth) || 84.0);
-		let boxH = hasBox ? parseFloat(node.box_height) : (parseFloat(node.fontSize) ? parseFloat(node.fontSize) * 1.5 : 12.0);
-		let boxL = (node.box_left !== undefined) ? parseFloat(node.box_left) : ((parseFloat(node.x) || 50) - (boxW / 2));
-		let boxT = (node.box_top !== undefined) ? parseFloat(node.box_top) : ((parseFloat(node.y) || 50) - (boxH / 2));
+		const effBoxW = (vp && vp.box_width !== undefined) ? vp.box_width : node.box_width;
+		const effBoxH = (vp && vp.box_height !== undefined) ? vp.box_height : node.box_height;
+		const effBoxL = (vp && vp.box_left !== undefined) ? vp.box_left : node.box_left;
+		const effBoxT = (vp && vp.box_top !== undefined) ? vp.box_top : node.box_top;
+		const effRotate = (vp && vp.box_rotate !== undefined)
+			? vp.box_rotate
+			: ((vp && vp.rotate !== undefined) ? vp.rotate : (node.box_rotate !== undefined ? node.box_rotate : node.rotate));
+
+		const hasBox = (effBoxW !== undefined && effBoxH !== undefined);
+		let boxW = hasBox ? parseFloat(effBoxW) : (parseFloat(node.maxWidth) || 84.0);
+		let boxH = hasBox ? parseFloat(effBoxH) : (parseFloat(node.fontSize) ? parseFloat(node.fontSize) * 1.5 : 12.0);
+		let boxL = (effBoxL !== undefined) ? parseFloat(effBoxL) : ((parseFloat(node.x) || 50) - (boxW / 2));
+		let boxT = (effBoxT !== undefined) ? parseFloat(effBoxT) : ((parseFloat(node.y) || 50) - (boxH / 2));
 
 		if (options.cropBoundingBox && options.cropBoundingBox.spanW > 0 && options.cropBoundingBox.spanH > 0) {
 			const c = options.cropBoundingBox;
@@ -223,7 +361,7 @@ export class SvgRenderer {
 		const svgFontData = this.getSvgFontData(node.fontId || rawFont, options);
 		if (svgFontData && svgFontData.type === 'opentype_svg') {
 			return this.renderOpenTypeSvgTextNode(node, svgFontData, {
-				boxL, boxT, boxW, boxH, x, y, hasBox, hasPerLine, ratio, val
+				boxL, boxT, boxW, boxH, x, y, hasBox, hasPerLine, ratio, val, rotateAngle: parseFloat(effRotate) || 0
 			}, options);
 		}
 
@@ -265,39 +403,34 @@ export class SvgRenderer {
 				: heightTarget;
 		}
 
-		// Calculate maximum line length
-		let maxLineLength = 0;
+		// Measure real line widths in em units (uniform scaling without horizontal distortion)
+		let maxLineWidthUnits = 0;
 		for (const l of lines) {
-			if (l.length > maxLineLength) maxLineLength = l.length;
+			const units = this.measureTextWidthUnits(l, fontFamily, letterSpacingEm, rawFont);
+			if (units > maxLineWidthUnits) maxLineWidthUnits = units;
 		}
 
 		// Calculate unscaled text width & height
 		const maxWidth = hasBox ? (boxW * 0.95) : (parseFloat(node.maxWidth) || 84.0);
 		const maxHeight = hasBox ? ((hasPerLine && ratio !== 1.0) ? ((boxH * 0.92) / ratio) : (boxH * 0.92)) : (parseFloat(node.maxHeight) || 80.0);
-		const estimatedRawWidth = baseFontSize * (maxLineLength * metrics.charRatio + Math.max(0, maxLineLength - 1) * letterSpacingEm);
+		const estimatedRawWidth = baseFontSize * maxLineWidthUnits;
 
-		// Calculate width scale factor
+		// Uniform width scale factor
 		let scaleW = 1.0;
 		if (estimatedRawWidth > maxWidth && maxWidth > 0) {
 			scaleW = maxWidth / estimatedRawWidth;
 		}
 
-		// Calculate multi-line height constraint if applicable
+		// Multi-line height constraint if applicable
 		let scaleH = 1.0;
 		const rawTotalHeight = baseFontSize + ((numLines - 1) * baseFontSize * lineHeight);
 		if (rawTotalHeight > maxHeight && maxHeight > 0) {
 			scaleH = maxHeight / rawTotalHeight;
 		}
 
-		// Combined auto-fit scale factor
+		// Combined uniform auto-fit scale factor (no lengthAdjust horizontal stretching!)
 		const autoFitScale = Math.min(1.0, scaleW, scaleH);
-		const effectiveFontSize = Math.max(2.0, baseFontSize * autoFitScale);
-		const effectiveLineWidth = Math.min(maxWidth, estimatedRawWidth * autoFitScale);
-
-		// SVG Native Absolute Barrier: textLength constraint when auto-scaled
-		const textLengthAttr = (!isMultiLine && autoFitScale < 0.99)
-			? `textLength="${effectiveLineWidth.toFixed(2)}" lengthAdjust="spacingAndGlyphs"`
-			: '';
+		const effectiveFontSize = Math.max(1.5, baseFontSize * autoFitScale);
 
 		// Stroke styling (scaled proportionally to font size)
 		let baseStrokeWidth = 0;
@@ -341,12 +474,6 @@ export class SvgRenderer {
 				const lineText = lines[lineIdx];
 				const dy = lineIdx === 0 ? startYOffset : (effectiveFontSize * lineHeight);
 
-				// Line-level textLength constraint if line exceeds box width
-				const lineEstW = effectiveFontSize * (lineText.length * metrics.charRatio + Math.max(0, lineText.length - 1) * letterSpacingEm);
-				const lineLengthAttr = (lineEstW > maxWidth && maxWidth > 0)
-					? ` textLength="${maxWidth.toFixed(2)}" lengthAdjust="spacingAndGlyphs"`
-					: '';
-
 				let lineTspans = '';
 				for (let i = 0; i < lineText.length; i++) {
 					const char = lineText[i];
@@ -359,7 +486,7 @@ export class SvgRenderer {
 					}
 				}
 
-				tspans += `<tspan x="${x}" dy="${dy.toFixed(2)}"${lineLengthAttr}>${lineTspans}</tspan>`;
+				tspans += `<tspan x="${x}" dy="${dy.toFixed(2)}">${lineTspans}</tspan>`;
 			}
 		} else {
 			for (let i = 0; i < displayText.length; i++) {
@@ -374,7 +501,7 @@ export class SvgRenderer {
 			}
 		}
 
-		const rotateAngle = parseFloat(node.box_rotate !== undefined ? node.box_rotate : (node.rotate !== undefined ? node.rotate : 0)) || 0;
+		const rotateAngle = parseFloat(effRotate) || 0;
 		const transformAttr = (rotateAngle !== 0) ? `transform="rotate(${rotateAngle.toFixed(2)}, ${x.toFixed(2)}, ${y.toFixed(2)})"` : '';
 
 		return `
@@ -390,7 +517,6 @@ export class SvgRenderer {
 			stroke-width="${strokeWidth}"
 			style="${paintOrder}"
 			${transformAttr}
-			${textLengthAttr}
 			${filterAttr}
 		>${tspans}</text>`;
 	}
@@ -404,6 +530,12 @@ export class SvgRenderer {
 	static renderImageNode(node, options = {}) {
 		let url = node.url || '';
 		if (!url) return '';
+
+		const vp = this.resolveNodeViewPlacement(node, options.viewId);
+		if (vp && (vp.hidden === true || vp.visible === false)) {
+			return '';
+		}
+
 		if (!options.isExport && typeof window !== 'undefined') {
 			if (options.useThumbCache) {
 				if (window.mrTeeThumbB64Cache && window.mrTeeThumbB64Cache[url]) {
@@ -417,13 +549,22 @@ export class SvgRenderer {
 		const idPrefix = options.idPrefix ? String(options.idPrefix).replace(/[^a-zA-Z0-9_-]/g, '') : '';
 		const ratio = (options.ratio && options.ratio > 0) ? options.ratio : 1.0;
 		const hasPerLine = Boolean(options.hasPerLineBoxes);
-		const isFieldImage = Boolean(node.isFieldImage || (node.box_width !== undefined && node.box_height !== undefined));
+
+		const effBoxL = (vp && vp.box_left !== undefined) ? vp.box_left : node.box_left;
+		const effBoxT = (vp && vp.box_top !== undefined) ? vp.box_top : node.box_top;
+		const effBoxW = (vp && vp.box_width !== undefined) ? vp.box_width : node.box_width;
+		const effBoxH = (vp && vp.box_height !== undefined) ? vp.box_height : node.box_height;
+		const effRotate = (vp && vp.box_rotate !== undefined)
+			? vp.box_rotate
+			: ((vp && vp.rotate !== undefined) ? vp.rotate : (node.box_rotate !== undefined ? node.box_rotate : node.rotate));
+
+		const isFieldImage = Boolean(node.isFieldImage || (effBoxW !== undefined && effBoxH !== undefined));
 
 		if (isFieldImage) {
-			let boxL = (node.box_left !== undefined) ? parseFloat(node.box_left) : (parseFloat(node.x) || 30);
-			let boxT = (node.box_top !== undefined) ? parseFloat(node.box_top) : (parseFloat(node.y) || 30);
-			let boxW = (node.box_width !== undefined) ? parseFloat(node.box_width) : (parseFloat(node.width) || 35);
-			let boxH = (node.box_height !== undefined) ? parseFloat(node.box_height) : (parseFloat(node.height) || 30);
+			let boxL = (effBoxL !== undefined) ? parseFloat(effBoxL) : (parseFloat(node.x) || 30);
+			let boxT = (effBoxT !== undefined) ? parseFloat(effBoxT) : (parseFloat(node.y) || 30);
+			let boxW = (effBoxW !== undefined) ? parseFloat(effBoxW) : (parseFloat(node.width) || 35);
+			let boxH = (effBoxH !== undefined) ? parseFloat(effBoxH) : (parseFloat(node.height) || 30);
 
 			if (options.cropBoundingBox && options.cropBoundingBox.spanW > 0 && options.cropBoundingBox.spanH > 0) {
 				const c = options.cropBoundingBox;
@@ -440,7 +581,7 @@ export class SvgRenderer {
 
 			const cx = x + (w / 2);
 			const cy = y + (h / 2);
-			const rotateAngle = parseFloat(node.box_rotate !== undefined ? node.box_rotate : (node.rotate !== undefined ? node.rotate : 0)) || 0;
+			const rotateAngle = parseFloat(effRotate) || 0;
 			const transformAttr = (rotateAngle !== 0) ? ` transform="rotate(${rotateAngle.toFixed(2)}, ${cx.toFixed(4)}, ${cy.toFixed(4)})"` : '';
 
 			const rawId = String(node.id || node.reference || node.name || `img_${Math.round(x * 100)}_${Math.round(y * 100)}`);
@@ -546,19 +687,27 @@ export class SvgRenderer {
 		const ratio = (options.ratio && options.ratio > 0) ? options.ratio : 1.0;
 		const hasPerLine = Boolean(options.hasPerLineBoxes);
 		const firstTextChild = childItems.find(c => c && c.type === 'TEXT') || {};
+		const vp = this.resolveNodeViewPlacement(node, options.viewId) || this.resolveNodeViewPlacement(firstTextChild, options.viewId);
+		if (vp && (vp.hidden === true || vp.visible === false)) {
+			return '';
+		}
 
-		let boxL = (node.box_left !== undefined) ? parseFloat(node.box_left)
-			: (node.x !== undefined ? parseFloat(node.x)
-				: (firstTextChild.box_left !== undefined ? parseFloat(firstTextChild.box_left) : 15));
-		let boxT = (node.box_top !== undefined) ? parseFloat(node.box_top)
-			: (node.y !== undefined ? parseFloat(node.y)
-				: (firstTextChild.box_top !== undefined ? parseFloat(firstTextChild.box_top) : 20));
-		let boxW = (node.box_width !== undefined) ? parseFloat(node.box_width)
-			: (node.width !== undefined ? parseFloat(node.width)
-				: (firstTextChild.box_width !== undefined ? parseFloat(firstTextChild.box_width) : 70));
-		let boxH = (node.box_height !== undefined) ? parseFloat(node.box_height)
-			: (node.height !== undefined ? parseFloat(node.height)
-				: (firstTextChild.box_height !== undefined ? parseFloat(firstTextChild.box_height) : 60));
+		let boxL = (vp && vp.box_left !== undefined) ? parseFloat(vp.box_left)
+			: ((node.box_left !== undefined) ? parseFloat(node.box_left)
+				: (node.x !== undefined ? parseFloat(node.x)
+					: (firstTextChild.box_left !== undefined ? parseFloat(firstTextChild.box_left) : 15)));
+		let boxT = (vp && vp.box_top !== undefined) ? parseFloat(vp.box_top)
+			: ((node.box_top !== undefined) ? parseFloat(node.box_top)
+				: (node.y !== undefined ? parseFloat(node.y)
+					: (firstTextChild.box_top !== undefined ? parseFloat(firstTextChild.box_top) : 20)));
+		let boxW = (vp && vp.box_width !== undefined) ? parseFloat(vp.box_width)
+			: ((node.box_width !== undefined) ? parseFloat(node.box_width)
+				: (node.width !== undefined ? parseFloat(node.width)
+					: (firstTextChild.box_width !== undefined ? parseFloat(firstTextChild.box_width) : 70)));
+		let boxH = (vp && vp.box_height !== undefined) ? parseFloat(vp.box_height)
+			: ((node.box_height !== undefined) ? parseFloat(node.box_height)
+				: (node.height !== undefined ? parseFloat(node.height)
+					: (firstTextChild.box_height !== undefined ? parseFloat(firstTextChild.box_height) : 60)));
 
 		if (options.cropBoundingBox && options.cropBoundingBox.spanW > 0 && options.cropBoundingBox.spanH > 0) {
 			const c = options.cropBoundingBox;
@@ -575,9 +724,11 @@ export class SvgRenderer {
 
 		const cx = x + (w / 2);
 		const cy = y + (h / 2);
-		const rawRotate = node.box_rotate !== undefined ? node.box_rotate
-			: (node.rotate !== undefined ? node.rotate
-				: (firstTextChild.box_rotate !== undefined ? firstTextChild.box_rotate : firstTextChild.rotate));
+		const rawRotate = (vp && vp.box_rotate !== undefined) ? vp.box_rotate
+			: ((vp && vp.rotate !== undefined) ? vp.rotate
+				: (node.box_rotate !== undefined ? node.box_rotate
+					: (node.rotate !== undefined ? node.rotate
+						: (firstTextChild.box_rotate !== undefined ? firstTextChild.box_rotate : firstTextChild.rotate))));
 		const rotateAngle = parseFloat(rawRotate) || 0;
 		const transformAttr = (rotateAngle !== 0) ? ` transform="rotate(${rotateAngle.toFixed(2)}, ${cx.toFixed(4)}, ${cy.toFixed(4)})"` : '';
 
@@ -592,6 +743,15 @@ export class SvgRenderer {
 					strokeWidth: 0,
 					_inMask: true,
 				});
+				if (vp && (!child.placements || !child.placements[options.viewId])) {
+					maskTextNode.box_left = (vp.box_left !== undefined) ? vp.box_left : maskTextNode.box_left;
+					maskTextNode.box_top = (vp.box_top !== undefined) ? vp.box_top : maskTextNode.box_top;
+					maskTextNode.box_width = (vp.box_width !== undefined) ? vp.box_width : maskTextNode.box_width;
+					maskTextNode.box_height = (vp.box_height !== undefined) ? vp.box_height : maskTextNode.box_height;
+					if (vp.box_rotate !== undefined || vp.rotate !== undefined) {
+						maskTextNode.box_rotate = vp.box_rotate !== undefined ? vp.box_rotate : vp.rotate;
+					}
+				}
 				maskContent += this.renderTextNode(maskTextNode, options);
 			}
 		}
@@ -773,8 +933,222 @@ export class SvgRenderer {
 	}
 
 	/**
+	 * Strip redundant `id="..."` attributes (e.g. duplicate `id="Layer_1_copy_2"` emitted by
+	 * Adobe Illustrator font exporters) that are never referenced by `url(#...)` or `href="#..."`.
+	 *
+	 * @param {string} svgStr Glyph SVG markup.
+	 * @param {string} extraContext Optional font-level `<defs>` markup to scan for fragment references.
+	 * @return {string}
+	 */
+	static stripUnreferencedIds(svgStr, extraContext = '') {
+		if (!svgStr || !svgStr.includes('id=')) return svgStr || '';
+		const combined = extraContext ? `${svgStr}\n${extraContext}` : svgStr;
+		const referenced = new Set();
+
+		const urlRe = /url\(\s*['"]?#([^)'"\s]+)['"]?\s*\)/g;
+		let m;
+		while ((m = urlRe.exec(combined)) !== null) {
+			if (m[1]) referenced.add(m[1]);
+		}
+		const hrefRe = /(?:xlink:href|href)\s*=\s*["']#([^"']+)["']/g;
+		while ((m = hrefRe.exec(combined)) !== null) {
+			if (m[1]) referenced.add(m[1]);
+		}
+
+		return svgStr.replace(/\s+id=(["'])([^"']+)\1/g, (full, quote, id) => {
+			return referenced.has(id) ? full : '';
+		});
+	}
+
+	/**
+	 * Inspect ancestor `<g transform="...">` wrappers around an `<image>` glyph element to compute
+	 * its actual `[minX, maxX, minY, maxY]` bounds in font design units.
+	 *
+	 * @param {string} svgStr Glyph SVG markup.
+	 * @return {{ minX: number, maxX: number, minY: number, maxY: number }|null}
+	 */
+	static parseImageGlyphGeometry(svgStr) {
+		if (!svgStr || !svgStr.includes('<image')) return null;
+
+		const cleaned = svgStr.replace(/<g\b[^>]*>\s*<\/g>/gi, '');
+		const imgMatch = cleaned.match(/<image\b([^>]*)>/i);
+		if (!imgMatch) return null;
+
+		const attrs = imgMatch[1];
+		const hMatch = attrs.match(/\bheight\s*=\s*["']([^"']+)["']/i);
+		const wMatch = attrs.match(/\bwidth\s*=\s*["']([^"']+)["']/i);
+		const xMatch = attrs.match(/\bx\s*=\s*["']([^"']+)["']/i);
+		const yMatch = attrs.match(/\by\s*=\s*["']([^"']+)["']/i);
+
+		const imgH = hMatch ? parseFloat(hMatch[1]) : 0;
+		const imgW = wMatch ? parseFloat(wMatch[1]) : 0;
+		if (!(imgH > 0)) return null;
+		const imgX = xMatch ? (parseFloat(xMatch[1]) || 0) : 0;
+		const imgY = yMatch ? (parseFloat(yMatch[1]) || 0) : 0;
+
+		const beforeImg = cleaned.slice(0, imgMatch.index);
+		const stack = [];
+		const tagRe = /<\/?g\b[^>]*>/gi;
+		let tm;
+		while ((tm = tagRe.exec(beforeImg)) !== null) {
+			const tag = tm[0];
+			if (tag.startsWith('</')) {
+				if (stack.length) stack.pop();
+			} else if (!tag.endsWith('/>')) {
+				const trMatch = tag.match(/\btransform\s*=\s*["']([^"']+)["']/i);
+				stack.push(trMatch ? trMatch[1] : '');
+			}
+		}
+
+		let sx = 1;
+		let sy = 1;
+		let tx = 0;
+		let ty = 0;
+
+		const opRe = /(translate|scale)\(\s*([^)]+)\)/gi;
+		for (const tr of stack) {
+			if (!tr) continue;
+			opRe.lastIndex = 0;
+			let om;
+			while ((om = opRe.exec(tr)) !== null) {
+				const fn = om[1].toLowerCase();
+				const nums = om[2].trim().split(/[\s,]+/).map(parseFloat).filter(n => !isNaN(n));
+				if (fn === 'translate' && nums.length >= 1) {
+					const dx = nums[0];
+					const dy = nums.length >= 2 ? nums[1] : 0;
+					tx += sx * dx;
+					ty += sy * dy;
+				} else if (fn === 'scale' && nums.length >= 1) {
+					const nsx = nums[0];
+					const nsy = nums.length >= 2 ? nums[1] : nsx;
+					sx *= nsx;
+					sy *= nsy;
+				}
+			}
+		}
+
+		const y1 = ty + (sy * imgY);
+		const y2 = ty + (sy * (imgY + imgH));
+		const x1 = tx + (sx * imgX);
+		const x2 = tx + (sx * (imgX + imgW));
+
+		return {
+			minX: Math.min(x1, x2),
+			maxX: Math.max(x1, x2),
+			minY: Math.min(y1, y2),
+			maxY: Math.max(y1, y2),
+		};
+	}
+
+	/**
+	 * Compute horizontal `[minX, maxX]` coordinate span across vector `<path d="...">` glyph commands.
+	 *
+	 * @param {string} svgStr Glyph SVG markup.
+	 * @return {{ minX: number, maxX: number }|null}
+	 */
+	static parseVectorPathBoundsX(svgStr) {
+		if (!svgStr || !svgStr.includes('<path')) return null;
+		let minX = Infinity;
+		let maxX = -Infinity;
+		const pathRe = /\bd\s*=\s*["']([^"']+)["']/gi;
+		let pm;
+
+		while ((pm = pathRe.exec(svgStr)) !== null) {
+			const d = pm[1];
+			const tokenRe = /([MLCQSTHVZmlcqsthvz])|(-?\d*\.?\d+(?:e[-+]?\d+)?)/g;
+			let cmd = '';
+			let argIdx = 0;
+			let curX = 0;
+			let tm;
+
+			while ((tm = tokenRe.exec(d)) !== null) {
+				if (tm[1]) {
+					cmd = tm[1];
+					argIdx = 0;
+					continue;
+				}
+				const val = parseFloat(tm[2]);
+				if (isNaN(val)) continue;
+
+				if (cmd === 'M' || cmd === 'L' || cmd === 'T' || cmd === 'C' || cmd === 'Q' || cmd === 'S') {
+					if (argIdx % 2 === 0) {
+						curX = val;
+						if (val < minX) minX = val;
+						if (val > maxX) maxX = val;
+					}
+					argIdx++;
+				} else if (cmd === 'H') {
+					curX = val;
+					if (val < minX) minX = val;
+					if (val > maxX) maxX = val;
+					argIdx++;
+				} else if (cmd === 'm' || cmd === 'l' || cmd === 't') {
+					if (argIdx % 2 === 0) {
+						curX += val;
+						if (curX < minX) minX = curX;
+						if (curX > maxX) maxX = curX;
+					}
+					argIdx++;
+				} else if (cmd === 'h') {
+					curX += val;
+					if (curX < minX) minX = curX;
+					if (curX > maxX) maxX = curX;
+					argIdx++;
+				} else {
+					argIdx++;
+				}
+			}
+		}
+
+		return (minX < Infinity && maxX > -Infinity) ? { minX, maxX } : null;
+	}
+
+	/**
+	 * Calculate true optical vertical center factor (relative to `ascent`) for an OpenType-SVG font
+	 * by inspecting uppercase bitmap glyph `<g transform="..."><image height="...">` coordinates.
+	 * Falls back to `0.42` for vector OpenType-SVG fonts without `<image>`.
+	 *
+	 * @param {Object} fontData OpenType-SVG font dataset.
+	 * @return {number}
+	 */
+	static computeFontVisualCenterFactor(fontData) {
+		if (!fontData) return 0.42;
+		if (typeof fontData._visualCenterFactor === 'number' && fontData._visualCenterFactor > 0) {
+			return fontData._visualCenterFactor;
+		}
+
+		const glyphs = fontData.glyphs || {};
+		const ascent = fontData.ascent || 800;
+		const sampleChars = ['A', 'B', 'E', 'H', 'M', 'O', 'S', 'T', 'N', 'R'];
+		const factors = [];
+
+		for (const ch of sampleChars) {
+			const g = glyphs[ch] || glyphs[ch.toLowerCase()];
+			if (!g || !g.svg) continue;
+			const geom = this.parseImageGlyphGeometry(g.svg);
+			if (geom && ascent > 0) {
+				const midY = (geom.minY + geom.maxY) / 2;
+				const factor = (-midY) / ascent;
+				if (Number.isFinite(factor) && factor >= 0.15 && factor <= 0.85) {
+					factors.push(factor);
+				}
+			}
+		}
+
+		let resolved = 0.42;
+		if (factors.length > 0) {
+			const sum = factors.reduce((acc, v) => acc + v, 0);
+			resolved = Math.max(0.2, Math.min(0.75, sum / factors.length));
+		}
+
+		fontData._visualCenterFactor = resolved;
+		return resolved;
+	}
+
+	/**
 	 * Pre-compile glyph SVG templates (`liveSvg` with `decoding="sync"`, `exportSvg` with 300 DPI URLs,
-	 * `glyphKey` for in-place DOM reconciliation, and prioritized `_previewUrls`) once per font.
+	 * `glyphKey` for in-place DOM reconciliation, stripped duplicate IDs, optical vertical center factor,
+	 * per-glyph horizontal bounds, and prioritized `_previewUrls`) once per font.
 	 *
 	 * @param {Object} fontData Hydrated or server-inlined OpenType-SVG font dataset.
 	 * @param {string} fontKey Font identifier.
@@ -786,6 +1160,8 @@ export class SvgRenderer {
 		const fId = String(fontData.id || fontKey || 'ot').toLowerCase().replace(/[\s\-]+/g, '_');
 		const fullMap = fontData.fullMap || null;
 		const glyphs = fontData.glyphs || {};
+		const fontDefs = fontData.defs || '';
+		const unitsPerEm = fontData.unitsPerEm || 1000;
 		const urlSet = new Set();
 
 		const extractPreviewUrls = (svgStr) => {
@@ -811,17 +1187,17 @@ export class SvgRenderer {
 
 		for (const [ch, g] of Object.entries(glyphs)) {
 			if (!g) continue;
-			const rawSvg = g.svg || '';
-			extractPreviewUrls(rawSvg);
+			const cleanSvg = this.stripUnreferencedIds(g.svg || '', fontDefs);
+			extractPreviewUrls(cleanSvg);
 
-			let liveSvg = rawSvg;
+			let liveSvg = cleanSvg;
 			if (liveSvg.includes('decoding=')) {
 				liveSvg = liveSvg.replace(/decoding="async"/g, 'decoding="sync"');
 			} else {
 				liveSvg = liveSvg.replace(/<image /g, '<image decoding="sync" ');
 			}
 
-			let exportSvg = rawSvg;
+			let exportSvg = cleanSvg;
 			if (fullMap) {
 				exportSvg = exportSvg.replace(/(xlink:href|href)="([^"]+)"/g, (m, attr, url) => {
 					const fullUrl = fullMap[url] || url;
@@ -829,11 +1205,32 @@ export class SvgRenderer {
 				});
 			}
 
+			// Precompute horizontal visual span (detects vector & bitmap overhang past advance width)
+			const adv = (g.adv && g.adv > 0) ? g.adv : (fontData.defaultAdv || 500);
+			let visualMinX = 0;
+			let visualMaxX = adv;
+			if (cleanSvg.includes('<image')) {
+				const geom = this.parseImageGlyphGeometry(cleanSvg);
+				if (geom) {
+					visualMinX = Math.max(-unitsPerEm * 0.25, Math.min(0, geom.minX));
+					visualMaxX = Math.max(adv, Math.min(adv + unitsPerEm * 0.6, geom.maxX));
+				}
+			} else if (cleanSvg.includes('<path')) {
+				const bounds = this.parseVectorPathBoundsX(cleanSvg);
+				if (bounds) {
+					visualMinX = Math.max(-unitsPerEm * 0.25, Math.min(adv * 0.4, bounds.minX));
+					visualMaxX = Math.max(adv, Math.min(adv + unitsPerEm * 0.65, bounds.maxX));
+				}
+			}
+
 			g.liveSvg = liveSvg;
 			g.exportSvg = exportSvg;
 			g.glyphKey = `${fId}:${g.gid !== undefined ? g.gid : ch}`;
+			g._visualMinX = visualMinX;
+			g._visualMaxX = visualMaxX;
 		}
 
+		this.computeFontVisualCenterFactor(fontData);
 		fontData._previewUrls = Array.from(urlSet);
 		fontData._prepared = true;
 		return fontData;
@@ -1232,7 +1629,7 @@ export class SvgRenderer {
 
 		const unitsPerEm = fontData.unitsPerEm || 1000;
 		const ascent = fontData.ascent || 800;
-		const descent = fontData.descent || -200;
+		const visualCenterFactor = this.computeFontVisualCenterFactor(fontData);
 		const letterSpacingEm = node.letterSpacing !== undefined ? parseFloat(node.letterSpacing) : (fontData.letter_spacing || 0.05);
 		const letterSpacingUnits = letterSpacingEm * unitsPerEm;
 
@@ -1251,14 +1648,32 @@ export class SvgRenderer {
 
 		let maxLineDesignWidth = 0;
 		const lineMetrics = lines.map(lineText => {
-			let widthUnits = 0;
+			let penX = 0;
+			let minVisualX = Infinity;
+			let maxVisualX = -Infinity;
+
 			for (let i = 0; i < lineText.length; i++) {
 				const ch = lineText[i];
 				const eff = this.getEffectiveOpenTypeGlyph(fontData, ch, unitsPerEm);
-				widthUnits += eff.adv + (i < lineText.length - 1 ? letterSpacingUnits : 0);
+				const g = eff.g;
+				if (!eff.isSpace) {
+					const gMinX = (eff.hasSvg && g && typeof g._visualMinX === 'number') ? g._visualMinX : 0;
+					const gMaxX = (eff.hasSvg && g && typeof g._visualMaxX === 'number') ? g._visualMaxX : eff.adv;
+					const leftEdge = penX + gMinX;
+					const rightEdge = penX + gMaxX;
+					if (leftEdge < minVisualX) minVisualX = leftEdge;
+					if (rightEdge > maxVisualX) maxVisualX = rightEdge;
+				}
+				penX += eff.adv + (i < lineText.length - 1 ? letterSpacingUnits : 0);
 			}
-			if (widthUnits > maxLineDesignWidth) maxLineDesignWidth = widthUnits;
-			return { text: lineText, widthUnits };
+
+			if (minVisualX === Infinity || maxVisualX === -Infinity) {
+				minVisualX = 0;
+				maxVisualX = penX;
+			}
+			const visualWidthUnits = Math.max(penX, maxVisualX - minVisualX);
+			if (visualWidthUnits > maxLineDesignWidth) maxLineDesignWidth = visualWidthUnits;
+			return { text: lineText, widthUnits: penX, minVisualX, maxVisualX, visualWidthUnits };
 		});
 
 		const estimatedRawWidth = (maxLineDesignWidth / unitsPerEm) * baseFontSize;
@@ -1274,7 +1689,7 @@ export class SvgRenderer {
 		}
 
 		const autoFitScale = Math.min(1.0, scaleW, scaleH);
-		const effectiveFontSize = Math.max(2.0, baseFontSize * autoFitScale);
+		const effectiveFontSize = Math.max(1.5, baseFontSize * autoFitScale);
 		const scale = effectiveFontSize / unitsPerEm;
 
 		const totalHeight = effectiveFontSize + (numLines - 1) * effectiveFontSize * lineHeight;
@@ -1287,17 +1702,17 @@ export class SvgRenderer {
 
 		let glyphsMarkup = '';
 		lineMetrics.forEach((lm, lineIdx) => {
-			const lineW = (lm.widthUnits / unitsPerEm) * effectiveFontSize;
+			const visualSpanW = (lm.maxVisualX - lm.minVisualX) * scale;
 			const lineCenterY = firstLineCenterY + (lineIdx * effectiveFontSize * lineHeight);
-			// Baseline position relative to center:
-			const baselineY = lineCenterY + (ascent * 0.35 * scale);
+			// True optical baseline position derived from glyph image geometry (0.42 fallback for vector fonts)
+			const baselineY = lineCenterY + (ascent * visualCenterFactor * scale);
 
 			const anchor = node.textAnchor || 'middle';
-			let cursorX = x - (lineW / 2);
+			let cursorX = x - (visualSpanW / 2) - (lm.minVisualX * scale);
 			if (anchor === 'start' || anchor === 'left') {
-				cursorX = boxL + (boxW * 0.025);
+				cursorX = boxL + (boxW * 0.025) - (lm.minVisualX * scale);
 			} else if (anchor === 'end' || anchor === 'right') {
-				cursorX = (boxL + boxW * 0.975) - lineW;
+				cursorX = (boxL + boxW * 0.975) - (lm.maxVisualX * scale);
 			}
 
 			for (let i = 0; i < lm.text.length; i++) {
@@ -1320,7 +1735,9 @@ export class SvgRenderer {
 			}
 		});
 
-		const rotateAngle = parseFloat(node.box_rotate !== undefined ? node.box_rotate : (node.rotate !== undefined ? node.rotate : 0)) || 0;
+		const rotateAngle = (layout.rotateAngle !== undefined)
+			? (parseFloat(layout.rotateAngle) || 0)
+			: (parseFloat(node.box_rotate !== undefined ? node.box_rotate : (node.rotate !== undefined ? node.rotate : 0)) || 0);
 		const transformAttr = (rotateAngle !== 0) ? ` transform="rotate(${rotateAngle.toFixed(2)}, ${x.toFixed(2)}, ${y.toFixed(2)})"` : '';
 		const rawNodeId = node.id || node.name || node.reference;
 		const nodeIdAttr = rawNodeId ? ` data-node-id="${String(rawNodeId).replace(/"/g, '&quot;')}"` : '';

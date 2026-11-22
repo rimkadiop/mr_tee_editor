@@ -48,6 +48,7 @@ class ProductPageRenderer {
 	 * Register hooks.
 	 */
 	public static function init() {
+		ProductGalleryRenderer::init();
 		add_action( 'wp', array( __CLASS__, 'suppress_nbd_frontend_hooks' ), 120 );
 		add_action( 'wp_head', array( __CLASS__, 'render_performance_hints' ), 2 );
 		add_action( 'wp_enqueue_scripts', array( __CLASS__, 'enqueue_assets' ) );
@@ -280,7 +281,7 @@ class ProductPageRenderer {
 		$same_orig   = ! $url_host || $url_host === $site_host || ( $http_host && $url_host === $http_host );
 		$base_path   = ( $same_orig && ! empty( $base_parsed['path'] ) ) ? trailingslashit( $base_parsed['path'] ) : trailingslashit( MR_TEE_EDITOR_URL );
 		$entry_ver   = self::get_asset_version( 'assets/js/mr-tee-frontend.js' );
-		$mod_ver     = MR_TEE_EDITOR_VERSION . '.2';
+		$mod_ver     = MR_TEE_EDITOR_VERSION;
 
 		printf(
 			"<link rel=\"modulepreload\" href=\"%s\" />\n",
@@ -291,6 +292,7 @@ class ProductPageRenderer {
 			'state-store.js',
 			'scene-graph-engine.js',
 			'svg-renderer.js',
+			'dedicated-gallery.js',
 			'gallery-stage.js',
 			'form-controller.js',
 			'print-exporter.js',
@@ -423,6 +425,14 @@ class ProductPageRenderer {
 			self::get_asset_version( 'assets/css/mr-tee-frontend.css' )
 		);
 
+		// Dedicated lightweight storefront gallery styles (loads after mr-tee-frontend-style)
+		wp_enqueue_style(
+			'mr-tee-gallery-style',
+			MR_TEE_EDITOR_URL . 'assets/css/mr-tee-gallery.css',
+			array( 'mr-tee-frontend-style' ),
+			self::get_asset_version( 'assets/css/mr-tee-gallery.css' )
+		);
+
 		// Dynamic @font-face CSS for ONLY allowed standard vector fonts (skips OpenType-SVG .otf binaries)
 		$font_face_css = FontRegistry::get_font_face_css( array_keys( $filtered_fonts ) );
 		wp_add_inline_style( 'mr-tee-frontend-style', $font_face_css );
@@ -477,7 +487,8 @@ class ProductPageRenderer {
 		if ( ! empty( $product_image_url ) && ! is_ssl() ) {
 			$product_image_url = set_url_scheme( $product_image_url, 'http' );
 		}
-		$cart_url = function_exists( 'wc_get_cart_url' ) ? wc_get_cart_url() : '';
+		$cart_url       = function_exists( 'wc_get_cart_url' ) ? wc_get_cart_url() : '';
+		$gallery_slides = ProductGalleryRenderer::get_gallery_slides( $product_id, $config );
 
 		wp_localize_script(
 			'mr-tee-frontend-js',
@@ -485,6 +496,7 @@ class ProductPageRenderer {
 			array(
 				'productId'       => $product_id,
 				'config'          => $config,
+				'gallerySlides'   => $gallery_slides,
 				'fonts'           => $filtered_fonts,
 				'svgFonts'        => $preloaded_svg_fonts,
 				'ajaxUrl'         => admin_url( 'admin-ajax.php', $proto ),
@@ -508,6 +520,15 @@ class ProductPageRenderer {
 					'imageUploadError' => __( 'Erreur lors du chargement de l\'image.', 'mr-tee-editor' ),
 					'preparingOrder'   => __( 'Préparation...', 'mr-tee-editor' ),
 					'exportUploadError'=> __( 'Impossible d\'envoyer votre personnalisation. Veuillez réessayer.', 'mr-tee-editor' ),
+					'prevView'         => __( 'Vue précédente', 'mr-tee-editor' ),
+					'nextView'         => __( 'Vue suivante', 'mr-tee-editor' ),
+					'zoomIn'           => __( 'Zoom +', 'mr-tee-editor' ),
+					'zoomOut'          => __( 'Zoom −', 'mr-tee-editor' ),
+					'fullscreen'       => __( 'Agrandir l\'aperçu', 'mr-tee-editor' ),
+					'close'            => __( 'Fermer', 'mr-tee-editor' ),
+					'previewBtn'       => __( 'Aperçu', 'mr-tee-editor' ),
+					'viewsLabel'       => __( 'Vues du produit', 'mr-tee-editor' ),
+					'thumbsLabel'      => __( 'Miniatures des vues', 'mr-tee-editor' ),
 				),
 			)
 		);
@@ -576,6 +597,22 @@ class ProductPageRenderer {
 		$def_count  = isset( $rep['default_count'] ) ? intval( $rep['default_count'] ) : 2;
 		$max_items  = isset( $rep['max_items'] ) ? intval( $rep['max_items'] ) : 6;
 
+		$side_labels = array(
+			'front' => __( 'Recto', 'mr-tee-editor' ),
+			'back'  => __( 'Verso', 'mr-tee-editor' ),
+		);
+		$has_multiple_sides = ! empty( $config['print_sides'] ) && is_array( $config['print_sides'] ) && count( $config['print_sides'] ) > 1;
+		if ( ! empty( $config['print_sides'] ) && is_array( $config['print_sides'] ) ) {
+			foreach ( $config['print_sides'] as $s_key => $s_def ) {
+				if ( is_array( $s_def ) ) {
+					$sid = ! empty( $s_def['id'] ) ? sanitize_key( $s_def['id'] ) : sanitize_key( (string) $s_key );
+					if ( '' !== $sid && ! empty( $s_def['label'] ) ) {
+						$side_labels[ $sid ] = (string) $s_def['label'];
+					}
+				}
+			}
+		}
+
 		?>
 		<div id="mr-tee-editor-container" class="mr-tee-editor-container" data-product-id="<?php echo esc_attr( $product_id ); ?>">
 			<!-- Header Card: PERSONNALISER -->
@@ -592,13 +629,15 @@ class ProductPageRenderer {
 					<?php foreach ( $config['text_lines'] as $idx => $line ) : ?>
 						<?php
 						$field_id       = 'mr_tee_line_' . $idx;
+						$line_side_id   = ! empty( $line['side_id'] ) ? sanitize_key( $line['side_id'] ) : 'front';
+						$side_label     = isset( $side_labels[ $line_side_id ] ) ? $side_labels[ $line_side_id ] : ucfirst( $line_side_id );
 						$is_image_field = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] );
 						if ( $is_image_field ) :
 							$default_img  = ! empty( $line['default_image'] ) ? $line['default_image'] : '';
 							$allow_upload = ! isset( $line['allow_image_upload'] ) || ! empty( $line['allow_image_upload'] );
 							$img_status   = $default_img ? __( 'Image par défaut', 'mr-tee-editor' ) : __( 'Aucune image sélectionnée', 'mr-tee-editor' );
 							?>
-							<div class="mr-tee-field-group mr-tee-field-group-image" data-line-index="<?php echo esc_attr( $idx ); ?>" data-line-id="<?php echo esc_attr( $line['id'] ); ?>" data-field-type="image">
+							<div class="mr-tee-field-group mr-tee-field-group-image" data-line-index="<?php echo esc_attr( $idx ); ?>" data-line-id="<?php echo esc_attr( $line['id'] ); ?>" data-field-type="image" data-side-id="<?php echo esc_attr( $line_side_id ); ?>">
 								<div class="mr-tee-image-field-card" data-default-image="<?php echo esc_attr( $default_img ); ?>" data-warning="<?php echo ! empty( $line['warning_unedited'] ) ? '1' : '0'; ?>">
 									<div class="mr-tee-image-field-main">
 										<div class="mr-tee-img-field-thumb <?php echo $default_img ? '' : 'is-empty'; ?>">
@@ -609,7 +648,12 @@ class ProductPageRenderer {
 											<?php endif; ?>
 										</div>
 										<div class="mr-tee-img-field-info">
-											<div class="mr-tee-img-field-label"><?php echo esc_html( $line['label'] ); ?></div>
+											<div class="mr-tee-img-field-label">
+												<?php echo esc_html( $line['label'] ); ?>
+												<?php if ( $has_multiple_sides ) : ?>
+													<span class="mr-tee-side-badge" data-side-id="<?php echo esc_attr( $line_side_id ); ?>"><?php echo esc_html( $side_label ); ?></span>
+												<?php endif; ?>
+											</div>
 											<div class="mr-tee-img-field-status"><?php echo esc_html( $img_status ); ?></div>
 										</div>
 										<?php if ( $allow_upload ) : ?>
@@ -641,7 +685,7 @@ class ProductPageRenderer {
 						endif;
 						$is_multiline = ! empty( $line['multiline'] );
 						?>
-						<div class="mr-tee-field-group" data-line-index="<?php echo esc_attr( $idx ); ?>" data-line-id="<?php echo esc_attr( $line['id'] ); ?>">
+						<div class="mr-tee-field-group" data-line-index="<?php echo esc_attr( $idx ); ?>" data-line-id="<?php echo esc_attr( $line['id'] ); ?>" data-side-id="<?php echo esc_attr( $line_side_id ); ?>">
 							<div class="mr-tee-input-row">
 								<div class="mr-tee-floating-label-wrap <?php echo $is_multiline ? 'mr-tee-floating-label-wrap--textarea' : ''; ?>">
 									<?php if ( $is_multiline ) : ?>
@@ -673,6 +717,9 @@ class ProductPageRenderer {
 									<?php endif; ?>
 									<label for="<?php echo esc_attr( $field_id ); ?>" class="mr-tee-floating-label">
 										<?php echo esc_html( $line['label'] ); ?>
+										<?php if ( $has_multiple_sides ) : ?>
+											<span class="mr-tee-side-badge" data-side-id="<?php echo esc_attr( $line_side_id ); ?>"><?php echo esc_html( $side_label ); ?></span>
+										<?php endif; ?>
 									</label>
 									<span class="mr-tee-char-counter">
 										<span class="mr-tee-char-count"><?php echo esc_html( (string) self::strlen_utf8( $line['default_text'] ) ); ?></span>/<?php echo esc_attr( $line['max_chars'] ); ?>
@@ -897,6 +944,7 @@ class ProductPageRenderer {
 			<input type="hidden" name="mr_tee_design_key" id="mr_tee_design_key" value="" />
 			<input type="hidden" name="mr_tee_editor_payload" id="mr_tee_editor_payload" value="" />
 			<input type="hidden" name="mr_tee_preview_png" id="mr_tee_preview_png" value="" />
+			<input type="hidden" name="mr_tee_previews_json" id="mr_tee_previews_json" value="" />
 		</div>
 		<?php
 	}

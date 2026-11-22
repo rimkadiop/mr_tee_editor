@@ -348,6 +348,8 @@ export class StateStore {
 		const textLines = (this.config.text_lines || []).map(line => {
 			const ref = this.getReference(line.ref_id);
 			const fieldType = line.field_type === 'image' ? 'image' : 'text';
+			const sideId = line.side_id || line.sideId || 'front';
+			const placements = (line.placements && typeof line.placements === 'object') ? line.placements : {};
 			if (fieldType === 'image') {
 				const props = (ref && Array.isArray(ref.customProperties)) ? ref.customProperties : [];
 				const fileProp = props.find(p => p.key === 'fileName');
@@ -362,6 +364,8 @@ export class StateStore {
 					id: line.id,
 					label: line.label,
 					fieldType: 'image',
+					sideId,
+					placements,
 					value: displaySummary,
 					imageUrl: imageUrl,
 					fileName: fileName,
@@ -374,6 +378,8 @@ export class StateStore {
 				id: line.id,
 				label: line.label,
 				fieldType: 'text',
+				sideId,
+				placements,
 				value: ref ? ref.value : line.default_text,
 				fontId: ref ? ref.fontId : line.font,
 				rotate: parseFloat(line.box_rotate !== undefined ? line.box_rotate : (line.rotate !== undefined ? line.rotate : 0.0)) || 0.0,
@@ -397,6 +403,8 @@ export class StateStore {
 			productId: this.state.productId,
 			templatePreset: this.config.template_preset || 'super_mushroom_24987',
 			activeGarmentColor: this.state.garmentColor,
+			print_sides: Array.isArray(this.config.print_sides) ? this.config.print_sides : [],
+			preview_views: Array.isArray(this.config.preview_views) ? this.config.preview_views : [],
 			text_lines: textLines,
 			repeater_count: (this.config.repeater && this.config.repeater.enabled) ? this.state.activeCount : 0,
 			repeater_items: repeaterItems,

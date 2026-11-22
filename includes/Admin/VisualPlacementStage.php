@@ -107,15 +107,78 @@ class VisualPlacementStage {
 		$dpi         = isset( $config['dpi'] ) ? intval( $config['dpi'] ) : 300;
 		$prod_type   = ! empty( $config['product_type'] ) ? $config['product_type'] : 'garment';
 		$lock_ratio  = isset( $config['lock_aspect_ratio'] ) ? ! empty( $config['lock_aspect_ratio'] ) : ( 'flat_object' === $prod_type );
-		$ratio       = isset( $config['print_aspect_ratio'] ) ? floatval( $config['print_aspect_ratio'] ) : ( ( $real_h > 0 ) ? round( $real_w / $real_h, 4 ) : 0.75 );
+
+		$print_sides = ( ! empty( $config['print_sides'] ) && is_array( $config['print_sides'] ) )
+			? array_values( $config['print_sides'] )
+			: SceneGraphSchema::normalize_print_sides(
+				array(),
+				array(
+					'print_real_width'  => $real_w,
+					'print_real_height' => $real_h,
+					'print_unit'        => $unit,
+					'dpi'               => $dpi,
+					'product_type'      => $prod_type,
+					'lock_aspect_ratio' => $lock_ratio,
+				)
+			);
+
+		$sides_by_id = array();
+		foreach ( $print_sides as $s ) {
+			if ( ! empty( $s['id'] ) ) {
+				$sides_by_id[ $s['id'] ] = $s;
+			}
+		}
+		$default_side_id = $print_sides[0]['id'];
+		$has_back_side   = isset( $sides_by_id['back'] );
+
+		$preview_views = ( ! empty( $config['preview_views'] ) && is_array( $config['preview_views'] ) )
+			? array_values( $config['preview_views'] )
+			: SceneGraphSchema::normalize_preview_views( array(), $print_sides, 0, $thumb_url );
+
+		$first_view         = $preview_views[0];
+		$first_view_id      = ! empty( $first_view['id'] ) ? $first_view['id'] : 'view_1';
+		$first_view_side_id = ! empty( $first_view['side_id'] ) && isset( $sides_by_id[ $first_view['side_id'] ] ) ? $first_view['side_id'] : $default_side_id;
+		$first_view_img     = ! empty( $first_view['image_url'] ) ? $first_view['image_url'] : $thumb_url;
+		$first_view_blend   = ! empty( $first_view['blend_mode'] ) ? $first_view['blend_mode'] : 'normal';
+		$include_wc_gallery = isset( $config['include_wc_gallery_slides'] ) ? (bool) $config['include_wc_gallery_slides'] : true;
+
+		// Use the active view's printable side dimensions for the physical toolbar & badge
+		if ( isset( $sides_by_id[ $first_view_side_id ] ) ) {
+			$active_side = $sides_by_id[ $first_view_side_id ];
+			$unit        = ! empty( $active_side['print_unit'] ) ? $active_side['print_unit'] : $unit;
+			$real_w      = isset( $active_side['print_real_width'] ) ? floatval( $active_side['print_real_width'] ) : $real_w;
+			$real_h      = isset( $active_side['print_real_height'] ) ? floatval( $active_side['print_real_height'] ) : $real_h;
+			$dpi         = isset( $active_side['dpi'] ) ? intval( $active_side['dpi'] ) : $dpi;
+			$prod_type   = ! empty( $active_side['product_type'] ) ? $active_side['product_type'] : $prod_type;
+			$lock_ratio  = isset( $active_side['lock_aspect_ratio'] ) ? (bool) $active_side['lock_aspect_ratio'] : $lock_ratio;
+		}
+
+		$ratio       = ( $real_h > 0 ) ? round( $real_w / $real_h, 4 ) : 0.75;
 		$simplified  = SceneGraphSchema::calculate_simplified_ratio( $real_w, $real_h );
 		$print_w_px  = isset( $config['print_width_px'] ) ? intval( $config['print_width_px'] ) : 2400;
-		$cumulative  = SceneGraphSchema::compute_cumulative_design_area( $config );
+		$cumulative  = ( ! empty( $config['side_export_metrics'][ $first_view_side_id ] ) && is_array( $config['side_export_metrics'][ $first_view_side_id ] ) )
+			? $config['side_export_metrics'][ $first_view_side_id ]
+			: SceneGraphSchema::compute_cumulative_design_area( $config );
 		$cum_w       = $cumulative['print_real_width'];
 		$cum_h       = $cumulative['print_real_height'];
 		$cum_w_px    = $cumulative['width_px'];
 		$cum_h_px    = $cumulative['height_px'];
 		$cum_simple  = $cumulative['simplified_ratio'];
+
+		$role_labels = array(
+			'full'    => __( 'Complet', 'mr-tee-editor' ),
+			'closeup' => __( 'Zoom', 'mr-tee-editor' ),
+			'detail'  => __( 'Détail', 'mr-tee-editor' ),
+		);
+
+		$initial_active_idx = 0;
+		foreach ( $text_lines as $ti => $tl ) {
+			$tl_side = ! empty( $tl['side_id'] ) ? $tl['side_id'] : $default_side_id;
+			if ( $tl_side === $first_view_side_id ) {
+				$initial_active_idx = $ti;
+				break;
+			}
+		}
 		?>
 		<div class="mr-tee-stage-wrapper">
 			<!-- Physical Dimensions & Automatic Aspect Ratio Toolbar -->
@@ -290,22 +353,211 @@ class VisualPlacementStage {
 				</div>
 			</div>
 
+			<!-- Multi-Side & Multi-View Preview Manager -->
+			<div class="mr-tee-multiview-manager" id="mr-tee-multiview-manager">
+				<!-- A. Printable Sides Strip -->
+				<div class="mr-tee-sides-bar" id="mr-tee-sides-bar">
+					<span class="mr-tee-mv-section-label"><?php esc_html_e( 'Faces imprimables :', 'mr-tee-editor' ); ?></span>
+					<div class="mr-tee-sides-list" id="mr-tee-sides-list">
+						<?php foreach ( $print_sides as $side ) : ?>
+							<?php
+							$s_id     = $side['id'];
+							$s_active = ( $s_id === $first_view_side_id );
+							?>
+							<button
+								type="button"
+								class="mr-tee-side-pill <?php echo $s_active ? 'is-active' : ''; ?>"
+								data-side-id="<?php echo esc_attr( $s_id ); ?>"
+							>
+								<span class="mr-tee-side-pill-dot" aria-hidden="true"></span>
+								<span class="mr-tee-side-pill-label"><?php echo esc_html( $side['label'] ); ?></span>
+								<span class="mr-tee-side-pill-dims"><?php echo esc_html( $side['print_real_width'] . '×' . $side['print_real_height'] . ' ' . $side['print_unit'] ); ?></span>
+							</button>
+						<?php endforeach; ?>
+					</div>
+					<div class="mr-tee-sides-actions">
+						<button
+							type="button"
+							class="button button-small mr-tee-btn-add-back-side"
+							id="mr-tee-btn-add-back-side"
+							<?php echo $has_back_side ? 'style="display:none;"' : ''; ?>
+						>
+							<?php esc_html_e( '+ Ajouter Verso (Dos)', 'mr-tee-editor' ); ?>
+						</button>
+						<button type="button" class="button button-small mr-tee-btn-add-side" id="mr-tee-btn-add-side">
+							<?php esc_html_e( '+ Nouvelle Face', 'mr-tee-editor' ); ?>
+						</button>
+					</div>
+				</div>
+
+				<!-- B. Preview Views Tab Strip -->
+				<div class="mr-tee-views-bar" id="mr-tee-views-bar">
+					<div class="mr-tee-views-list" id="mr-tee-views-list">
+						<?php foreach ( $preview_views as $v_idx => $view ) : ?>
+							<?php
+							$v_id         = ! empty( $view['id'] ) ? $view['id'] : 'view_' . ( $v_idx + 1 );
+							$v_side_id    = ! empty( $view['side_id'] ) && isset( $sides_by_id[ $view['side_id'] ] ) ? $view['side_id'] : $default_side_id;
+							$v_side_label = isset( $sides_by_id[ $v_side_id ]['label'] ) ? $sides_by_id[ $v_side_id ]['label'] : $v_side_id;
+							$v_role       = ! empty( $view['view_role'] ) ? $view['view_role'] : 'full';
+							$v_role_label = isset( $role_labels[ $v_role ] ) ? $role_labels[ $v_role ] : $role_labels['full'];
+							$v_img        = ! empty( $view['image_url'] ) ? $view['image_url'] : $thumb_url;
+							?>
+							<button
+								type="button"
+								class="mr-tee-view-tab <?php echo 0 === $v_idx ? 'is-active' : ''; ?>"
+								data-view-id="<?php echo esc_attr( $v_id ); ?>"
+								data-side-id="<?php echo esc_attr( $v_side_id ); ?>"
+								data-view-role="<?php echo esc_attr( $v_role ); ?>"
+							>
+								<span class="mr-tee-view-tab-thumb">
+									<?php if ( ! empty( $v_img ) ) : ?>
+										<img src="<?php echo esc_url( $v_img ); ?>" alt="" />
+									<?php else : ?>
+										<span class="dashicons dashicons-format-image"></span>
+									<?php endif; ?>
+								</span>
+								<span class="mr-tee-view-tab-meta">
+									<span class="mr-tee-view-tab-label"><?php echo esc_html( $view['label'] ); ?></span>
+									<span class="mr-tee-view-tab-badges">
+										<span class="mr-tee-view-side-badge"><?php echo esc_html( $v_side_label ); ?></span>
+										<span class="mr-tee-view-role-badge is-role-<?php echo esc_attr( $v_role ); ?>"><?php echo esc_html( $v_role_label ); ?></span>
+									</span>
+								</span>
+							</button>
+						<?php endforeach; ?>
+					</div>
+					<div class="mr-tee-views-actions">
+						<button type="button" class="button button-secondary button-small mr-tee-btn-add-view" id="mr-tee-btn-add-view">
+							<?php esc_html_e( '+ Ajouter une Vue Aperçu', 'mr-tee-editor' ); ?>
+						</button>
+						<label class="mr-tee-wc-gallery-toggle" for="mr_tee_include_wc_gallery">
+							<input type="hidden" name="mr_tee_config[include_wc_gallery_slides]" value="0" />
+							<input
+								type="checkbox"
+								id="mr_tee_include_wc_gallery"
+								name="mr_tee_config[include_wc_gallery_slides]"
+								value="1"
+								<?php checked( $include_wc_gallery ); ?>
+							/>
+							<span><?php esc_html_e( 'Inclure la galerie WooCommerce', 'mr-tee-editor' ); ?></span>
+						</label>
+					</div>
+				</div>
+
+				<!-- C. Active View Settings Mini-Bar -->
+				<div class="mr-tee-active-view-bar" id="mr-tee-active-view-bar" data-active-view-id="<?php echo esc_attr( $first_view_id ); ?>">
+					<div class="mr-tee-view-setting-group">
+						<label for="mr_tee_view_label"><?php esc_html_e( 'Nom de la vue', 'mr-tee-editor' ); ?></label>
+						<input
+							type="text"
+							id="mr_tee_view_label"
+							class="mr-tee-view-input"
+							value="<?php echo esc_attr( $first_view['label'] ); ?>"
+							placeholder="<?php esc_attr_e( 'Zoom Poitrine, T-Shirt Entier, Dos...', 'mr-tee-editor' ); ?>"
+						/>
+					</div>
+
+					<div class="mr-tee-view-setting-group">
+						<label for="mr_tee_view_side_id"><?php esc_html_e( 'Face', 'mr-tee-editor' ); ?></label>
+						<select id="mr_tee_view_side_id" class="mr-tee-view-select">
+							<?php foreach ( $print_sides as $s ) : ?>
+								<option value="<?php echo esc_attr( $s['id'] ); ?>" <?php selected( $first_view_side_id, $s['id'] ); ?>>
+									<?php echo esc_html( $s['label'] ); ?>
+								</option>
+							<?php endforeach; ?>
+						</select>
+					</div>
+
+					<div class="mr-tee-view-setting-group">
+						<label for="mr_tee_view_role"><?php esc_html_e( 'Rôle', 'mr-tee-editor' ); ?></label>
+						<select id="mr_tee_view_role" class="mr-tee-view-select">
+							<option value="full" <?php selected( $first_view['view_role'], 'full' ); ?>><?php esc_html_e( 'Vue Complète', 'mr-tee-editor' ); ?></option>
+							<option value="closeup" <?php selected( $first_view['view_role'], 'closeup' ); ?>><?php esc_html_e( 'Zoom / Zone Agrandie', 'mr-tee-editor' ); ?></option>
+							<option value="detail" <?php selected( $first_view['view_role'], 'detail' ); ?>><?php esc_html_e( 'Détail', 'mr-tee-editor' ); ?></option>
+						</select>
+					</div>
+
+					<div class="mr-tee-view-setting-group">
+						<label for="mr_tee_view_blend_mode"><?php esc_html_e( 'Fusion', 'mr-tee-editor' ); ?></label>
+						<select id="mr_tee_view_blend_mode" class="mr-tee-view-select">
+							<option value="normal" <?php selected( $first_view_blend, 'normal' ); ?>><?php esc_html_e( 'Normal (Standard)', 'mr-tee-editor' ); ?></option>
+							<option value="multiply" <?php selected( $first_view_blend, 'multiply' ); ?>><?php esc_html_e( 'Fusion Tissu Clair (Multiply)', 'mr-tee-editor' ); ?></option>
+							<option value="soft_ink" <?php selected( $first_view_blend, 'soft_ink' ); ?>><?php esc_html_e( 'Encre Douce (92%)', 'mr-tee-editor' ); ?></option>
+						</select>
+					</div>
+
+					<div class="mr-tee-view-setting-group mr-tee-view-setting-checkbox">
+						<label for="mr_tee_view_is_cart_preview">
+							<input
+								type="checkbox"
+								id="mr_tee_view_is_cart_preview"
+								value="1"
+								<?php checked( ! empty( $first_view['is_cart_preview'] ) ); ?>
+							/>
+							<span><?php esc_html_e( 'Afficher dans le Panier / Lightbox', 'mr-tee-editor' ); ?></span>
+						</label>
+					</div>
+
+					<div class="mr-tee-view-setting-actions">
+						<button type="button" id="mr_tee_view_image_btn" class="button button-small">
+							📁 <?php esc_html_e( 'Image WP', 'mr-tee-editor' ); ?>
+						</button>
+						<label class="button button-small mr-tee-view-upload-label" style="cursor:pointer; display:inline-flex; align-items:center; gap:4px;">
+							<span>⬆️ <?php esc_html_e( 'Importer', 'mr-tee-editor' ); ?></span>
+							<input type="file" id="mr_tee_view_image_upload" accept="image/*" style="display:none;" />
+						</label>
+						<button
+							type="button"
+							id="mr_tee_view_move_left"
+							class="button button-small"
+							title="<?php esc_attr_e( 'Déplacer vers la gauche', 'mr-tee-editor' ); ?>"
+							<?php echo count( $preview_views ) <= 1 ? 'disabled' : ''; ?>
+						>◀</button>
+						<button
+							type="button"
+							id="mr_tee_view_move_right"
+							class="button button-small"
+							title="<?php esc_attr_e( 'Déplacer vers la droite', 'mr-tee-editor' ); ?>"
+							<?php echo count( $preview_views ) <= 1 ? 'disabled' : ''; ?>
+						>▶</button>
+						<button
+							type="button"
+							id="mr_tee_view_delete_btn"
+							class="button button-small button-link-delete"
+							<?php echo count( $preview_views ) <= 1 ? 'disabled' : ''; ?>
+						>
+							✕ <?php esc_html_e( 'Supprimer Vue', 'mr-tee-editor' ); ?>
+						</button>
+						<span id="mr-tee-view-upload-status" class="mr-tee-view-upload-status"></span>
+					</div>
+				</div>
+
+				<!-- Hidden JSON Payloads for Printable Sides & Preview Views -->
+				<input type="hidden" id="mr_tee_print_sides_json" name="mr_tee_config[print_sides]" value="<?php echo esc_attr( wp_json_encode( array_values( $print_sides ) ) ); ?>" />
+				<input type="hidden" id="mr_tee_preview_views_json" name="mr_tee_config[preview_views]" value="<?php echo esc_attr( wp_json_encode( array_values( $preview_views ) ) ); ?>" />
+			</div>
+
 			<!-- Header Field Pills Bar -->
 			<div class="mr-tee-stage-pills-bar" id="mr-tee-stage-pills-bar">
 				<div class="mr-tee-pills-scroll" id="mr-tee-pills-list">
 					<?php foreach ( $text_lines as $idx => $line ) : ?>
 						<?php
-						$color      = self::$field_colors[ $idx % count( self::$field_colors ) ];
-						$field_type = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) ? 'image' : 'text';
-						$is_image   = ( 'image' === $field_type );
-						$bw         = isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : 40.0;
-						$bh         = isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : ( $is_image ? 30.0 : 8.5 );
+						$color          = self::$field_colors[ $idx % count( self::$field_colors ) ];
+						$field_type     = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) ? 'image' : 'text';
+						$is_image       = ( 'image' === $field_type );
+						$line_side_id   = ! empty( $line['side_id'] ) && isset( $sides_by_id[ $line['side_id'] ] ) ? $line['side_id'] : $default_side_id;
+						$view_placement = ( $line_side_id === $first_view_side_id && ! empty( $line['placements'][ $first_view_id ] ) && is_array( $line['placements'][ $first_view_id ] ) )
+							? $line['placements'][ $first_view_id ]
+							: null;
+						$bw             = ( $view_placement && isset( $view_placement['box_width'] ) ) ? floatval( $view_placement['box_width'] ) : ( isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : 40.0 );
+						$bh             = ( $view_placement && isset( $view_placement['box_height'] ) ) ? floatval( $view_placement['box_height'] ) : ( isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : ( $is_image ? 30.0 : 8.5 ) );
 						?>
 						<button
 							type="button"
-							class="mr-tee-field-pill <?php echo 0 === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-pill' : ''; ?>"
+							class="mr-tee-field-pill <?php echo $initial_active_idx === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-pill' : ''; ?>"
 							data-field-index="<?php echo esc_attr( $idx ); ?>"
 							data-field-type="<?php echo esc_attr( $field_type ); ?>"
+							data-side-id="<?php echo esc_attr( $line_side_id ); ?>"
 							style="--pill-color: <?php echo esc_attr( $color ); ?>;"
 						>
 							<span class="mr-tee-pill-badge" style="background: <?php echo esc_attr( $color ); ?>;"><?php echo esc_html( $idx + 1 ); ?></span>
@@ -330,28 +582,41 @@ class VisualPlacementStage {
 			<div class="mr-tee-stage-container">
 				<!-- Stage Canvas Column -->
 				<div class="mr-tee-stage-col-preview">
-					<div class="mr-tee-stage-canvas-wrap <?php echo ( ! empty( $lock_ratio ) || 'flat_object' === $prod_type ) ? 'is-aspect-locked' : ''; ?>" id="mr-tee-stage-canvas-wrap" style="<?php echo ( ! empty( $lock_ratio ) || 'flat_object' === $prod_type ) ? 'aspect-ratio: ' . esc_attr( $ratio ) . ';' : ''; ?>">
-						<img src="<?php echo esc_url( $thumb_url ); ?>" alt="Garment Preview" class="mr-tee-stage-garment-img" id="mr-tee-stage-garment-img" />
+					<div
+						class="mr-tee-stage-canvas-wrap <?php echo ( ! empty( $lock_ratio ) || 'flat_object' === $prod_type ) ? 'is-aspect-locked' : ''; ?>"
+						id="mr-tee-stage-canvas-wrap"
+						data-active-view-id="<?php echo esc_attr( $first_view_id ); ?>"
+						data-active-side-id="<?php echo esc_attr( $first_view_side_id ); ?>"
+						data-blend-mode="<?php echo esc_attr( $first_view_blend ); ?>"
+						style="<?php echo ( ! empty( $lock_ratio ) || 'flat_object' === $prod_type ) ? 'aspect-ratio: ' . esc_attr( $ratio ) . ';' : ''; ?>"
+					>
+						<img src="<?php echo esc_url( $first_view_img ); ?>" alt="Garment Preview" class="mr-tee-stage-garment-img" id="mr-tee-stage-garment-img" />
 
 						<!-- Multi-Rectangle Design Area Boxes -->
 						<div id="mr-tee-boxes-container">
 							<?php foreach ( $text_lines as $idx => $line ) : ?>
 								<?php
-								$color      = self::$field_colors[ $idx % count( self::$field_colors ) ];
-								$field_type = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) ? 'image' : 'text';
-								$is_image   = ( 'image' === $field_type );
-								$bl         = isset( $line['box_left'] ) ? floatval( $line['box_left'] ) : 30.0;
-								$bt         = isset( $line['box_top'] ) ? floatval( $line['box_top'] ) : ( 25.0 + $idx * 12.0 );
-								$bw         = isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : 40.0;
-								$bh         = isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : ( $is_image ? 30.0 : 8.5 );
-								$br         = isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0;
+								$color             = self::$field_colors[ $idx % count( self::$field_colors ) ];
+								$field_type        = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) ? 'image' : 'text';
+								$is_image          = ( 'image' === $field_type );
+								$line_side_id      = ! empty( $line['side_id'] ) && isset( $sides_by_id[ $line['side_id'] ] ) ? $line['side_id'] : $default_side_id;
+								$is_on_active_side = ( $line_side_id === $first_view_side_id );
+								$view_placement    = ( $is_on_active_side && ! empty( $line['placements'][ $first_view_id ] ) && is_array( $line['placements'][ $first_view_id ] ) )
+									? $line['placements'][ $first_view_id ]
+									: null;
+								$bl                = ( $view_placement && isset( $view_placement['box_left'] ) ) ? floatval( $view_placement['box_left'] ) : ( isset( $line['box_left'] ) ? floatval( $line['box_left'] ) : 30.0 );
+								$bt                = ( $view_placement && isset( $view_placement['box_top'] ) ) ? floatval( $view_placement['box_top'] ) : ( isset( $line['box_top'] ) ? floatval( $line['box_top'] ) : ( 25.0 + $idx * 12.0 ) );
+								$bw                = ( $view_placement && isset( $view_placement['box_width'] ) ) ? floatval( $view_placement['box_width'] ) : ( isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : 40.0 );
+								$bh                = ( $view_placement && isset( $view_placement['box_height'] ) ) ? floatval( $view_placement['box_height'] ) : ( isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : ( $is_image ? 30.0 : 8.5 ) );
+								$br                = ( $view_placement && isset( $view_placement['box_rotate'] ) ) ? floatval( $view_placement['box_rotate'] ) : ( isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0 );
 								?>
 								<div
 									id="mr-tee-field-box-<?php echo esc_attr( $idx ); ?>"
-									class="mr-tee-field-box <?php echo 0 === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-field' : ''; ?>"
+									class="mr-tee-field-box <?php echo $initial_active_idx === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-field' : ''; ?>"
 									data-field-index="<?php echo esc_attr( $idx ); ?>"
 									data-field-type="<?php echo esc_attr( $field_type ); ?>"
-									style="left: <?php echo esc_attr( $bl ); ?>%; top: <?php echo esc_attr( $bt ); ?>%; width: <?php echo esc_attr( $bw ); ?>%; height: <?php echo esc_attr( $bh ); ?>%; transform: rotate(<?php echo esc_attr( $br ); ?>deg); transform-origin: center center; --field-color: <?php echo esc_attr( $color ); ?>;"
+									data-side-id="<?php echo esc_attr( $line_side_id ); ?>"
+									style="<?php echo $is_on_active_side ? '' : 'display:none; '; ?>left: <?php echo esc_attr( $bl ); ?>%; top: <?php echo esc_attr( $bt ); ?>%; width: <?php echo esc_attr( $bw ); ?>%; height: <?php echo esc_attr( $bh ); ?>%; transform: rotate(<?php echo esc_attr( $br ); ?>deg); transform-origin: center center; --field-color: <?php echo esc_attr( $color ); ?>;"
 								>
 									<span class="mr-tee-box-badge" style="background: <?php echo esc_attr( $color ); ?>;">
 										<?php echo esc_html( ( $idx + 1 ) . '. ' . ( $is_image ? '🖼️ ' : '' ) . $line['label'] ); ?>
@@ -388,33 +653,58 @@ class VisualPlacementStage {
 					<div id="mr-tee-field-panels-container">
 						<?php foreach ( $text_lines as $idx => $line ) : ?>
 							<?php
-							$color        = self::$field_colors[ $idx % count( self::$field_colors ) ];
-							$field_type   = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) ? 'image' : 'text';
-							$is_image     = ( 'image' === $field_type );
-							$bl           = isset( $line['box_left'] ) ? floatval( $line['box_left'] ) : 30.0;
-							$bt           = isset( $line['box_top'] ) ? floatval( $line['box_top'] ) : ( 25.0 + $idx * 12.0 );
-							$bw           = isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : 40.0;
-							$bh           = isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : ( $is_image ? 30.0 : 8.5 );
-							$br           = isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0;
-							$def_img_url  = ! empty( $line['default_image'] ) ? $line['default_image'] : '';
-							$def_img_id   = ! empty( $line['default_image_id'] ) ? absint( $line['default_image_id'] ) : 0;
-							$image_fit    = ( isset( $line['image_fit'] ) && 'cover' === $line['image_fit'] ) ? 'cover' : 'contain';
-							$allow_upload = ! isset( $line['allow_image_upload'] ) || ! empty( $line['allow_image_upload'] );
+							$color             = self::$field_colors[ $idx % count( self::$field_colors ) ];
+							$field_type        = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) ? 'image' : 'text';
+							$is_image          = ( 'image' === $field_type );
+							$line_side_id      = ! empty( $line['side_id'] ) && isset( $sides_by_id[ $line['side_id'] ] ) ? $line['side_id'] : $default_side_id;
+							$is_on_active_side = ( $line_side_id === $first_view_side_id );
+							$base_box          = array(
+								'box_left'   => isset( $line['box_left'] ) ? floatval( $line['box_left'] ) : 30.0,
+								'box_top'    => isset( $line['box_top'] ) ? floatval( $line['box_top'] ) : ( 25.0 + $idx * 12.0 ),
+								'box_width'  => isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : 40.0,
+								'box_height' => isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : ( $is_image ? 30.0 : 8.5 ),
+								'box_rotate' => isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0,
+							);
+							$line_placements   = ( ! empty( $line['placements'] ) && is_array( $line['placements'] ) )
+								? $line['placements']
+								: SceneGraphSchema::normalize_field_placements( array(), $base_box, $preview_views, $line_side_id );
+							$view_placement    = ( $is_on_active_side && ! empty( $line_placements[ $first_view_id ] ) && is_array( $line_placements[ $first_view_id ] ) )
+								? $line_placements[ $first_view_id ]
+								: null;
+							$bl                = ( $view_placement && isset( $view_placement['box_left'] ) ) ? floatval( $view_placement['box_left'] ) : $base_box['box_left'];
+							$bt                = ( $view_placement && isset( $view_placement['box_top'] ) ) ? floatval( $view_placement['box_top'] ) : $base_box['box_top'];
+							$bw                = ( $view_placement && isset( $view_placement['box_width'] ) ) ? floatval( $view_placement['box_width'] ) : $base_box['box_width'];
+							$bh                = ( $view_placement && isset( $view_placement['box_height'] ) ) ? floatval( $view_placement['box_height'] ) : $base_box['box_height'];
+							$br                = ( $view_placement && isset( $view_placement['box_rotate'] ) ) ? floatval( $view_placement['box_rotate'] ) : $base_box['box_rotate'];
+							$def_img_url       = ! empty( $line['default_image'] ) ? $line['default_image'] : '';
+							$def_img_id        = ! empty( $line['default_image_id'] ) ? absint( $line['default_image_id'] ) : 0;
+							$image_fit         = ( isset( $line['image_fit'] ) && 'cover' === $line['image_fit'] ) ? 'cover' : 'contain';
+							$allow_upload      = ! isset( $line['allow_image_upload'] ) || ! empty( $line['allow_image_upload'] );
 							?>
 							<?php
-							$field_uid       = ! empty( $line['id'] ) ? $line['id'] : 'line_' . ( $idx + 1 );
-							$field_ref_id    = ! empty( $line['ref_id'] ) ? $line['ref_id'] : ( 'id-ref-' . ( $is_image ? 'image' : 'text' ) . '-line-' . ( $idx + 1 ) );
-							$field_color_ref = ! empty( $line['color_ref_id'] ) ? $line['color_ref_id'] : 'id-ref-color-line-' . ( $idx + 1 );
+							$field_uid           = ! empty( $line['id'] ) ? $line['id'] : 'line_' . ( $idx + 1 );
+							$field_ref_id        = ! empty( $line['ref_id'] ) ? $line['ref_id'] : ( 'id-ref-' . ( $is_image ? 'image' : 'text' ) . '-line-' . ( $idx + 1 ) );
+							$field_color_ref     = ! empty( $line['color_ref_id'] ) ? $line['color_ref_id'] : 'id-ref-color-line-' . ( $idx + 1 );
+							$placements_json_val = empty( $line_placements ) ? '{}' : wp_json_encode( $line_placements );
 							?>
 							<div
-								class="mr-tee-field-panel <?php echo 0 === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-panel' : ''; ?>"
+								class="mr-tee-field-panel <?php echo $initial_active_idx === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-panel' : ''; ?>"
 								id="mr-tee-field-panel-<?php echo esc_attr( $idx ); ?>"
 								data-field-index="<?php echo esc_attr( $idx ); ?>"
 								data-field-type="<?php echo esc_attr( $field_type ); ?>"
+								data-side-id="<?php echo esc_attr( $line_side_id ); ?>"
 							>
 								<input type="hidden" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][id]" value="<?php echo esc_attr( $field_uid ); ?>" class="mr-tee-field-id" data-field-index="<?php echo esc_attr( $idx ); ?>" />
 								<input type="hidden" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][ref_id]" value="<?php echo esc_attr( $field_ref_id ); ?>" class="mr-tee-field-ref-id" data-field-index="<?php echo esc_attr( $idx ); ?>" />
 								<input type="hidden" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][color_ref_id]" value="<?php echo esc_attr( $field_color_ref ); ?>" class="mr-tee-field-color-ref-id" data-field-index="<?php echo esc_attr( $idx ); ?>" />
+								<input
+									type="hidden"
+									id="mr_tee_field_placements_<?php echo esc_attr( $idx ); ?>"
+									class="mr-tee-field-placements-json"
+									name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][placements]"
+									value="<?php echo esc_attr( $placements_json_val ); ?>"
+									data-field-index="<?php echo esc_attr( $idx ); ?>"
+								/>
 								<div class="mr-tee-panel-badge-row">
 									<span class="mr-tee-panel-indicator" style="background: <?php echo esc_attr( $color ); ?>;"></span>
 									<strong class="mr-tee-panel-title"><?php echo esc_html( sprintf( __( 'Champ #%d : %s', 'mr-tee-editor' ), $idx + 1, $line['label'] ) ); ?></strong>
@@ -443,6 +733,22 @@ class VisualPlacementStage {
 											>
 												<option value="text" <?php selected( $field_type, 'text' ); ?>><?php esc_html_e( '📝 Champ Texte', 'mr-tee-editor' ); ?></option>
 												<option value="image" <?php selected( $field_type, 'image' ); ?>><?php esc_html_e( '🖼️ Champ Image (Strictement dans le rectangle)', 'mr-tee-editor' ); ?></option>
+											</select>
+										</td>
+									</tr>
+									<tr>
+										<th><label><?php esc_html_e( 'Face / Zone d\'impression', 'mr-tee-editor' ); ?></label></th>
+										<td>
+											<select
+												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][side_id]"
+												class="mr-tee-field-side-select"
+												data-field-index="<?php echo esc_attr( $idx ); ?>"
+											>
+												<?php foreach ( $print_sides as $s ) : ?>
+													<option value="<?php echo esc_attr( $s['id'] ); ?>" <?php selected( $line_side_id, $s['id'] ); ?>>
+														<?php echo esc_html( $s['label'] ); ?>
+													</option>
+												<?php endforeach; ?>
 											</select>
 										</td>
 									</tr>

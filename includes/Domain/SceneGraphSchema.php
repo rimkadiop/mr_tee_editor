@@ -468,108 +468,199 @@ class SceneGraphSchema {
 			$config['allowed_fonts'] = null;
 		}
 
+		// Resolve base physical print dimensions first (used as fallback when synthesizing default print_sides)
+		$print_unit   = ! empty( $config['print_unit'] ) ? sanitize_key( $config['print_unit'] ) : 'cm';
+		if ( ! in_array( $print_unit, array( 'cm', 'mm', 'in' ), true ) ) {
+			$print_unit = 'cm';
+		}
+		$real_w       = isset( $config['print_real_width'] ) ? floatval( $config['print_real_width'] ) : ( isset( $defaults['print_real_width'] ) ? floatval( $defaults['print_real_width'] ) : 30.0 );
+		if ( $real_w <= 0 ) {
+			$real_w = 30.0;
+		}
+		$real_h       = isset( $config['print_real_height'] ) ? floatval( $config['print_real_height'] ) : ( isset( $defaults['print_real_height'] ) ? floatval( $defaults['print_real_height'] ) : 40.0 );
+		if ( $real_h <= 0 ) {
+			$real_h = 40.0;
+		}
+		$dpi          = isset( $config['dpi'] ) ? max( 72, intval( $config['dpi'] ) ) : 300;
+		$product_type = ! empty( $config['product_type'] ) ? sanitize_key( $config['product_type'] ) : 'garment';
+		if ( ! in_array( $product_type, array( 'garment', 'flat_object' ), true ) ) {
+			$product_type = 'garment';
+		}
+		$lock_ratio   = isset( $config['lock_aspect_ratio'] ) ? ! empty( $config['lock_aspect_ratio'] ) : ( 'flat_object' === $product_type );
+
+		// Normalize multi-side printable zones (`print_sides`) with 100% backward compatibility
+		$fallback_side_dims = array(
+			'print_real_width'  => $real_w,
+			'print_real_height' => $real_h,
+			'print_unit'        => $print_unit,
+			'dpi'               => $dpi,
+			'product_type'      => $product_type,
+			'lock_aspect_ratio' => $lock_ratio,
+		);
+		$print_sides     = self::normalize_print_sides( isset( $config['print_sides'] ) ? $config['print_sides'] : array(), $fallback_side_dims );
+		$valid_side_ids  = array_column( $print_sides, 'id' );
+		$default_side_id = $print_sides[0]['id'];
+
+		// Keep top-level physical dimensions synchronized with side 0
+		$real_w       = $print_sides[0]['print_real_width'];
+		$real_h       = $print_sides[0]['print_real_height'];
+		$print_unit   = $print_sides[0]['print_unit'];
+		$dpi          = $print_sides[0]['dpi'];
+		$product_type = $print_sides[0]['product_type'];
+		$lock_ratio   = $print_sides[0]['lock_aspect_ratio'];
+
+		// Resolve product featured image URL once for default/fallback preview views
+		$thumb_id     = $product_id ? (int) get_post_thumbnail_id( $product_id ) : 0;
+		$featured_url = $thumb_id ? ( wp_get_attachment_image_url( $thumb_id, 'large' ) ?: wp_get_attachment_image_url( $thumb_id, 'full' ) ) : '';
+		if ( ! is_string( $featured_url ) ) {
+			$featured_url = '';
+		}
+
+		// Normalize multi-view preview slides (`preview_views`)
+		$preview_views             = self::normalize_preview_views( isset( $config['preview_views'] ) ? $config['preview_views'] : array(), $print_sides, $thumb_id, $featured_url );
+		$include_wc_gallery_slides = isset( $config['include_wc_gallery_slides'] ) ? (bool) $config['include_wc_gallery_slides'] : true;
+
 		// Dynamic fields parsing supporting arbitrary number of custom text & image fields
-		if ( empty( $config['text_lines'] ) || ! is_array( $config['text_lines'] ) ) {
-			$config['text_lines'] = $defaults['text_lines'];
-		} else {
-			$normalized_lines = array();
-			$line_index = 0;
-			foreach ( $config['text_lines'] as $idx => $line_data ) {
-				$line_num   = $line_index + 1;
-				$field_type = ( isset( $line_data['field_type'] ) && 'image' === $line_data['field_type'] ) ? 'image' : 'text';
+		$raw_text_lines             = ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) ? $config['text_lines'] : $defaults['text_lines'];
+		$has_explicit_allowed_fonts = ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] );
+		$first_line_allowed_fonts   = null;
+		$normalized_lines           = array();
+		$line_index                 = 0;
 
-				if ( 'image' === $field_type ) {
-					$def_line = array(
-						'id'                 => 'custom_line_' . $line_num,
-						'ref_id'             => 'id-ref-image-line-' . $line_num,
-						'color_ref_id'       => 'id-ref-color-line-' . $line_num,
-						'field_type'         => 'image',
-						'label'              => sprintf( __( 'Image %d', 'mr-tee-editor' ), $line_num ),
-						'default_text'       => '',
-						'default_image'      => '',
-						'default_image_id'   => 0,
-						'image_fit'          => 'contain',
-						'allow_image_upload' => true,
-						'box_left'           => 30.0,
-						'box_top'            => 25.0 + ( $line_index * 12.0 ),
-						'box_width'          => 40.0,
-						'box_height'         => 30.0,
-						'warning_unedited'   => false,
-					);
+		foreach ( $raw_text_lines as $idx => $line_data ) {
+			if ( ! is_array( $line_data ) ) {
+				continue;
+			}
+			$line_num   = $line_index + 1;
+			$field_type = ( isset( $line_data['field_type'] ) && 'image' === $line_data['field_type'] ) ? 'image' : 'text';
+
+			if ( 'image' === $field_type ) {
+				$def_line = array(
+					'id'                 => 'custom_line_' . $line_num,
+					'ref_id'             => 'id-ref-image-line-' . $line_num,
+					'color_ref_id'       => 'id-ref-color-line-' . $line_num,
+					'field_type'         => 'image',
+					'label'              => sprintf( __( 'Image %d', 'mr-tee-editor' ), $line_num ),
+					'default_text'       => '',
+					'default_image'      => '',
+					'default_image_id'   => 0,
+					'image_fit'          => 'contain',
+					'allow_image_upload' => true,
+					'box_left'           => 30.0,
+					'box_top'            => 25.0 + ( $line_index * 12.0 ),
+					'box_width'          => 40.0,
+					'box_height'         => 30.0,
+					'warning_unedited'   => false,
+				);
+			} else {
+				$def_line = isset( $defaults['text_lines'][ $line_index ] ) ? $defaults['text_lines'][ $line_index ] : array(
+					'id'               => 'custom_line_' . $line_num,
+					'ref_id'           => 'id-ref-text-line-' . $line_num,
+					'color_ref_id'     => 'id-ref-color-line-' . $line_num,
+					'field_type'       => 'text',
+					'label'            => sprintf( __( 'Champ %d', 'mr-tee-editor' ), $line_num ),
+					'default_text'     => sprintf( __( 'Texte %d', 'mr-tee-editor' ), $line_num ),
+					'box_left'         => 25.0,
+					'box_top'          => 20.0 + ( $line_index * 12.0 ),
+					'box_width'        => 50.0,
+					'box_height'       => 10.0,
+					'max_chars'        => 30,
+					'font'             => 'bebas',
+					'allowed_fonts'    => array_keys( FontRegistry::get_fonts() ),
+					'allow_font_pick'  => true,
+					'allow_color_pick' => true,
+					'color_mode'       => 'solid',
+					'color_hex'        => '#111827',
+				);
+			}
+
+			$merged               = wp_parse_args( $line_data, $def_line );
+			$merged['field_type'] = $field_type;
+
+			if ( 'image' === $field_type ) {
+				$merged['default_image']      = ! empty( $merged['default_image'] ) ? esc_url_raw( $merged['default_image'] ) : '';
+				$merged['default_image_id']   = ! empty( $merged['default_image_id'] ) ? absint( $merged['default_image_id'] ) : 0;
+				$merged['image_fit']          = ( isset( $merged['image_fit'] ) && 'cover' === $merged['image_fit'] ) ? 'cover' : 'contain';
+				$merged['allow_image_upload'] = isset( $merged['allow_image_upload'] ) ? (bool) $merged['allow_image_upload'] : true;
+			} else {
+				// Enforce product-level allowed_fonts if explicitly specified
+				if ( $has_explicit_allowed_fonts ) {
+					$merged['allowed_fonts'] = $config['allowed_fonts'];
+					// First font in allowed_fonts is the primary / default font
+					if ( empty( $merged['font'] ) || ! in_array( $merged['font'], $config['allowed_fonts'], true ) ) {
+						$merged['font'] = $config['allowed_fonts'][0];
+					}
 				} else {
-					$def_line = isset( $defaults['text_lines'][ $line_index ] ) ? $defaults['text_lines'][ $line_index ] : array(
-						'id'               => 'custom_line_' . $line_num,
-						'ref_id'           => 'id-ref-text-line-' . $line_num,
-						'color_ref_id'     => 'id-ref-color-line-' . $line_num,
-						'field_type'       => 'text',
-						'label'            => sprintf( __( 'Champ %d', 'mr-tee-editor' ), $line_num ),
-						'default_text'     => sprintf( __( 'Texte %d', 'mr-tee-editor' ), $line_num ),
-						'box_left'         => 25.0,
-						'box_top'          => 20.0 + ( $line_index * 12.0 ),
-						'box_width'        => 50.0,
-						'box_height'       => 10.0,
-						'max_chars'        => 30,
-						'font'             => 'bebas',
-						'allowed_fonts'    => array_keys( FontRegistry::get_fonts() ),
-						'allow_font_pick'  => true,
-						'allow_color_pick' => true,
-						'color_mode'       => 'solid',
-						'color_hex'        => '#111827',
-					);
-				}
-
-				$merged               = wp_parse_args( $line_data, $def_line );
-				$merged['field_type'] = $field_type;
-
-				if ( 'image' === $field_type ) {
-					$merged['default_image']      = ! empty( $merged['default_image'] ) ? esc_url_raw( $merged['default_image'] ) : '';
-					$merged['default_image_id']   = ! empty( $merged['default_image_id'] ) ? absint( $merged['default_image_id'] ) : 0;
-					$merged['image_fit']          = ( isset( $merged['image_fit'] ) && 'cover' === $merged['image_fit'] ) ? 'cover' : 'contain';
-					$merged['allow_image_upload'] = isset( $merged['allow_image_upload'] ) ? (bool) $merged['allow_image_upload'] : true;
-				} else {
-					// Enforce product-level allowed_fonts if specified
-					if ( ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
-						$merged['allowed_fonts'] = $config['allowed_fonts'];
-						// First font in allowed_fonts is the primary / default font
-						if ( empty( $merged['font'] ) || ! in_array( $merged['font'], $config['allowed_fonts'], true ) ) {
-							$merged['font'] = $config['allowed_fonts'][0];
-						}
-					} else {
-						if ( empty( $merged['allowed_fonts'] ) || ! is_array( $merged['allowed_fonts'] ) ) {
-							$merged['allowed_fonts'] = array_keys( FontRegistry::get_fonts() );
-						}
-						if ( ! empty( $merged['font'] ) && ! in_array( $merged['font'], $merged['allowed_fonts'], true ) ) {
-							array_unshift( $merged['allowed_fonts'], $merged['font'] );
-						}
-						if ( empty( $config['allowed_fonts'] ) ) {
-							$config['allowed_fonts'] = $merged['allowed_fonts'];
-						}
+					if ( empty( $merged['allowed_fonts'] ) || ! is_array( $merged['allowed_fonts'] ) ) {
+						$merged['allowed_fonts'] = array_keys( FontRegistry::get_fonts() );
+					}
+					if ( ! empty( $merged['font'] ) && ! in_array( $merged['font'], $merged['allowed_fonts'], true ) ) {
+						array_unshift( $merged['allowed_fonts'], $merged['font'] );
+					}
+					if ( null === $first_line_allowed_fonts ) {
+						$first_line_allowed_fonts = $merged['allowed_fonts'];
 					}
 				}
-
-				// Ensure per-line box coordinates exist
-				if ( ! isset( $merged['box_width'] ) || ! isset( $merged['box_height'] ) || ! isset( $merged['box_left'] ) || ! isset( $merged['box_top'] ) ) {
-					$box_w = isset( $merged['max_width'] ) ? floatval( $merged['max_width'] ) : 40.0;
-					$box_h = isset( $merged['font_size'] ) ? floatval( $merged['font_size'] ) * 1.5 : 8.5;
-					$box_l = 50.0 - ( $box_w / 2.0 );
-					$box_t = isset( $merged['y_pct'] ) ? floatval( $merged['y_pct'] ) - ( $box_h / 2.0 ) : ( 25.0 + $line_index * 12.0 );
-					$merged['box_left']   = isset( $merged['box_left'] ) ? floatval( $merged['box_left'] ) : $box_l;
-					$merged['box_top']    = isset( $merged['box_top'] ) ? floatval( $merged['box_top'] ) : $box_t;
-					$merged['box_width']  = isset( $merged['box_width'] ) ? floatval( $merged['box_width'] ) : $box_w;
-					$merged['box_height'] = isset( $merged['box_height'] ) ? floatval( $merged['box_height'] ) : $box_h;
-				} else {
-					$merged['box_left']   = floatval( $merged['box_left'] );
-					$merged['box_top']    = floatval( $merged['box_top'] );
-					$merged['box_width']  = floatval( $merged['box_width'] );
-					$merged['box_height'] = floatval( $merged['box_height'] );
-				}
-				$merged['box_rotate'] = isset( $merged['box_rotate'] ) ? floatval( $merged['box_rotate'] ) : 0.0;
-
-				$normalized_lines[] = $merged;
-				$line_index++;
 			}
-			$config['text_lines'] = $normalized_lines;
+
+			// Ensure per-line box coordinates exist
+			if ( ! isset( $merged['box_width'] ) || ! isset( $merged['box_height'] ) || ! isset( $merged['box_left'] ) || ! isset( $merged['box_top'] ) ) {
+				$box_w = isset( $merged['max_width'] ) ? floatval( $merged['max_width'] ) : 40.0;
+				$box_h = isset( $merged['font_size'] ) ? floatval( $merged['font_size'] ) * 1.5 : 8.5;
+				$box_l = 50.0 - ( $box_w / 2.0 );
+				$box_t = isset( $merged['y_pct'] ) ? floatval( $merged['y_pct'] ) - ( $box_h / 2.0 ) : ( 25.0 + $line_index * 12.0 );
+				$merged['box_left']   = isset( $merged['box_left'] ) ? floatval( $merged['box_left'] ) : $box_l;
+				$merged['box_top']    = isset( $merged['box_top'] ) ? floatval( $merged['box_top'] ) : $box_t;
+				$merged['box_width']  = isset( $merged['box_width'] ) ? floatval( $merged['box_width'] ) : $box_w;
+				$merged['box_height'] = isset( $merged['box_height'] ) ? floatval( $merged['box_height'] ) : $box_h;
+			} else {
+				$merged['box_left']   = floatval( $merged['box_left'] );
+				$merged['box_top']    = floatval( $merged['box_top'] );
+				$merged['box_width']  = floatval( $merged['box_width'] );
+				$merged['box_height'] = floatval( $merged['box_height'] );
+			}
+			$merged['box_rotate'] = isset( $merged['box_rotate'] ) ? floatval( $merged['box_rotate'] ) : 0.0;
+
+			// Normalize side assignment & per-view placements
+			$raw_side_id   = ! empty( $merged['side_id'] ) ? sanitize_key( $merged['side_id'] ) : $default_side_id;
+			$field_side_id = in_array( $raw_side_id, $valid_side_ids, true ) ? $raw_side_id : $default_side_id;
+			$merged['side_id'] = $field_side_id;
+
+			$base_box = array(
+				'box_left'   => $merged['box_left'],
+				'box_top'    => $merged['box_top'],
+				'box_width'  => $merged['box_width'],
+				'box_height' => $merged['box_height'],
+				'box_rotate' => $merged['box_rotate'],
+			);
+
+			$normalized_placements = self::normalize_field_placements(
+				isset( $merged['placements'] ) ? $merged['placements'] : array(),
+				$base_box,
+				$preview_views,
+				$field_side_id
+			);
+			$merged['placements']  = $normalized_placements;
+
+			// Keep top-level box coordinates synchronized to the side's reference view (`full` preferred, else first view of that side)
+			$ref_view = self::get_side_reference_view( $preview_views, $field_side_id );
+			if ( $ref_view && isset( $normalized_placements[ $ref_view['id'] ] ) ) {
+				$ref_p                = $normalized_placements[ $ref_view['id'] ];
+				$merged['box_left']   = $ref_p['box_left'];
+				$merged['box_top']    = $ref_p['box_top'];
+				$merged['box_width']  = $ref_p['box_width'];
+				$merged['box_height'] = $ref_p['box_height'];
+				$merged['box_rotate'] = $ref_p['box_rotate'];
+			}
+
+			$normalized_lines[] = $merged;
+			$line_index++;
 		}
+
+		if ( ! $has_explicit_allowed_fonts && ! empty( $first_line_allowed_fonts ) ) {
+			$config['allowed_fonts'] = $first_line_allowed_fonts;
+		}
+		$config['text_lines'] = $normalized_lines;
 
 		// Clipart layer passthrough
 		if ( isset( $defaults['vector_clipart'] ) && ! isset( $config['vector_clipart'] ) ) {
@@ -589,35 +680,41 @@ class SceneGraphSchema {
 			$config['garment_colors'] = $defaults['garment_colors'];
 		}
 
-		// Physical print dimensions & responsive aspect ratio normalization
-		$print_unit   = ! empty( $config['print_unit'] ) ? sanitize_key( $config['print_unit'] ) : 'cm';
-		$real_w       = isset( $config['print_real_width'] ) ? floatval( $config['print_real_width'] ) : ( isset( $defaults['print_real_width'] ) ? floatval( $defaults['print_real_width'] ) : 30.0 );
-		$real_h       = isset( $config['print_real_height'] ) ? floatval( $config['print_real_height'] ) : ( isset( $defaults['print_real_height'] ) ? floatval( $defaults['print_real_height'] ) : 40.0 );
-		$dpi          = isset( $config['dpi'] ) ? max( 72, intval( $config['dpi'] ) ) : 300;
-		$product_type = ! empty( $config['product_type'] ) ? sanitize_key( $config['product_type'] ) : 'garment';
-		$lock_ratio   = isset( $config['lock_aspect_ratio'] ) ? ! empty( $config['lock_aspect_ratio'] ) : ( 'flat_object' === $product_type );
+		// Store normalized multi-side, multi-view & physical dimension properties
+		$computed_dims = self::compute_print_dimensions( $real_w, $real_h, $print_unit, $dpi );
 
-		$computed_dims   = self::compute_print_dimensions( $real_w, $real_h, $print_unit, $dpi );
-		$cumulative_dims = self::compute_cumulative_design_area( $config );
+		$config['print_unit']                = $print_unit;
+		$config['print_real_width']          = $real_w;
+		$config['print_real_height']         = $real_h;
+		$config['dpi']                       = $dpi;
+		$config['product_type']              = $product_type;
+		$config['lock_aspect_ratio']         = $lock_ratio;
+		$config['print_aspect_ratio']        = $computed_dims['aspect_ratio'];
+		$config['print_ratio_str']           = $computed_dims['ratio_str'];
+		$config['print_sides']               = $print_sides;
+		$config['preview_views']             = $preview_views;
+		$config['include_wc_gallery_slides'] = $include_wc_gallery_slides;
 
-		$config['print_unit']              = $print_unit;
-		$config['print_real_width']        = $real_w;
-		$config['print_real_height']       = $real_h;
-		$config['dpi']                     = $dpi;
-		$config['product_type']            = $product_type;
-		$config['lock_aspect_ratio']       = $lock_ratio;
-		$config['print_aspect_ratio']      = $computed_dims['aspect_ratio'];
-		$config['print_ratio_str']         = $computed_dims['ratio_str'];
-		$config['cumulative_design_area']  = $cumulative_dims;
+		// Compute per-side export metrics keyed by side ID
+		$side_export_metrics = array();
+		foreach ( $print_sides as $side ) {
+			$side_export_metrics[ $side['id'] ] = self::compute_side_export_metrics( $config, $side['id'] );
+		}
+		$config['side_export_metrics'] = $side_export_metrics;
+
+		$cumulative_dims                  = isset( $side_export_metrics[ $default_side_id ] )
+			? $side_export_metrics[ $default_side_id ]
+			: self::compute_cumulative_design_area( $config );
+		$config['cumulative_design_area'] = $cumulative_dims;
 
 		// The actual print-ready file dimensions are governed by the cumulative design area
-		$config['print_width_px']          = $cumulative_dims['width_px'];
-		$config['print_height_px']         = $cumulative_dims['height_px'];
-		$config['crop_print_width']        = $cumulative_dims['print_real_width'];
-		$config['crop_print_height']       = $cumulative_dims['print_real_height'];
-		$config['crop_aspect_ratio']       = $cumulative_dims['aspect_ratio'];
-		$config['crop_ratio_str']          = $cumulative_dims['ratio_str'];
-		$config['crop_simplified_ratio']   = $cumulative_dims['simplified_ratio'];
+		$config['print_width_px']        = $cumulative_dims['width_px'];
+		$config['print_height_px']       = $cumulative_dims['height_px'];
+		$config['crop_print_width']      = $cumulative_dims['print_real_width'];
+		$config['crop_print_height']     = $cumulative_dims['print_real_height'];
+		$config['crop_aspect_ratio']     = $cumulative_dims['aspect_ratio'];
+		$config['crop_ratio_str']        = $cumulative_dims['ratio_str'];
+		$config['crop_simplified_ratio'] = $cumulative_dims['simplified_ratio'];
 
 		$config['icons']        = IconSetRegistry::get_mushroom_icons();
 		$config['fonts']        = FontRegistry::get_fonts();
@@ -626,6 +723,330 @@ class SceneGraphSchema {
 		$config['perso_visual'] = self::compile_scene_graph( $config );
 
 		return $config;
+	}
+
+	/**
+	 * Normalize and validate printable sides (`print_sides`) array.
+	 *
+	 * @param mixed                $raw_sides     Raw sides array or JSON string.
+	 * @param array<string, mixed> $fallback_dims Fallback physical dimensions for synthesized/missing fields.
+	 * @return array<int, array<string, mixed>>
+	 */
+	public static function normalize_print_sides( $raw_sides, array $fallback_dims = array() ) {
+		$fb_unit = ! empty( $fallback_dims['print_unit'] ) ? sanitize_key( $fallback_dims['print_unit'] ) : 'cm';
+		if ( ! in_array( $fb_unit, array( 'cm', 'mm', 'in' ), true ) ) {
+			$fb_unit = 'cm';
+		}
+		$fb_w = isset( $fallback_dims['print_real_width'] ) ? floatval( $fallback_dims['print_real_width'] ) : 30.0;
+		if ( $fb_w <= 0 ) {
+			$fb_w = 30.0;
+		}
+		$fb_h = isset( $fallback_dims['print_real_height'] ) ? floatval( $fallback_dims['print_real_height'] ) : 40.0;
+		if ( $fb_h <= 0 ) {
+			$fb_h = 40.0;
+		}
+		$fb_dpi  = isset( $fallback_dims['dpi'] ) ? max( 72, intval( $fallback_dims['dpi'] ) ) : 300;
+		$fb_type = ! empty( $fallback_dims['product_type'] ) ? sanitize_key( $fallback_dims['product_type'] ) : 'garment';
+		if ( ! in_array( $fb_type, array( 'garment', 'flat_object' ), true ) ) {
+			$fb_type = 'garment';
+		}
+		$fb_lock = isset( $fallback_dims['lock_aspect_ratio'] ) ? (bool) $fallback_dims['lock_aspect_ratio'] : ( 'flat_object' === $fb_type );
+
+		if ( is_string( $raw_sides ) ) {
+			$decoded   = json_decode( $raw_sides, true );
+			$raw_sides = is_array( $decoded ) ? $decoded : array();
+		}
+
+		$sides    = array();
+		$used_ids = array();
+
+		if ( is_array( $raw_sides ) ) {
+			$idx = 0;
+			foreach ( $raw_sides as $raw_side ) {
+				if ( ! is_array( $raw_side ) ) {
+					continue;
+				}
+				$sid = ! empty( $raw_side['id'] ) ? sanitize_key( $raw_side['id'] ) : ( 0 === $idx ? 'front' : 'side_' . ( $idx + 1 ) );
+				if ( '' === $sid ) {
+					$sid = ( 0 === $idx ) ? 'front' : 'side_' . ( $idx + 1 );
+				}
+				$base_sid = $sid;
+				$suffix   = 2;
+				while ( isset( $used_ids[ $sid ] ) ) {
+					$sid = $base_sid . '_' . $suffix;
+					$suffix++;
+				}
+				$used_ids[ $sid ] = true;
+
+				$default_label = ( 'front' === $sid )
+					? 'Recto'
+					: ( ( 'back' === $sid ) ? __( 'Verso (Dos)', 'mr-tee-editor' ) : ucfirst( str_replace( array( '_', '-' ), ' ', $sid ) ) );
+				$label         = ( isset( $raw_side['label'] ) && '' !== trim( (string) $raw_side['label'] ) )
+					? sanitize_text_field( $raw_side['label'] )
+					: $default_label;
+
+				$s_unit = ! empty( $raw_side['print_unit'] ) ? sanitize_key( $raw_side['print_unit'] ) : $fb_unit;
+				if ( ! in_array( $s_unit, array( 'cm', 'mm', 'in' ), true ) ) {
+					$s_unit = $fb_unit;
+				}
+				$s_w = isset( $raw_side['print_real_width'] ) ? floatval( $raw_side['print_real_width'] ) : $fb_w;
+				if ( $s_w <= 0 ) {
+					$s_w = $fb_w;
+				}
+				$s_h = isset( $raw_side['print_real_height'] ) ? floatval( $raw_side['print_real_height'] ) : $fb_h;
+				if ( $s_h <= 0 ) {
+					$s_h = $fb_h;
+				}
+				$s_dpi  = isset( $raw_side['dpi'] ) ? max( 72, intval( $raw_side['dpi'] ) ) : $fb_dpi;
+				$s_type = ! empty( $raw_side['product_type'] ) ? sanitize_key( $raw_side['product_type'] ) : $fb_type;
+				if ( ! in_array( $s_type, array( 'garment', 'flat_object' ), true ) ) {
+					$s_type = $fb_type;
+				}
+				$s_lock = isset( $raw_side['lock_aspect_ratio'] )
+					? (bool) $raw_side['lock_aspect_ratio']
+					: ( 'flat_object' === $s_type ? true : $fb_lock );
+
+				$sides[] = array(
+					'id'                => $sid,
+					'label'             => $label,
+					'print_real_width'  => $s_w,
+					'print_real_height' => $s_h,
+					'print_unit'        => $s_unit,
+					'dpi'               => $s_dpi,
+					'product_type'      => $s_type,
+					'lock_aspect_ratio' => $s_lock,
+				);
+				$idx++;
+			}
+		}
+
+		if ( empty( $sides ) ) {
+			$sides[] = array(
+				'id'                => 'front',
+				'label'             => 'Recto',
+				'print_real_width'  => $fb_w,
+				'print_real_height' => $fb_h,
+				'print_unit'        => $fb_unit,
+				'dpi'               => $fb_dpi,
+				'product_type'      => $fb_type,
+				'lock_aspect_ratio' => $fb_lock,
+			);
+		}
+
+		return $sides;
+	}
+
+	/**
+	 * Normalize and validate preview views (`preview_views`) array.
+	 *
+	 * @param mixed                             $raw_views    Raw views array or JSON string.
+	 * @param array<int, array<string, mixed>>  $print_sides  Normalized printable sides.
+	 * @param int                               $thumb_id     Product featured image attachment ID.
+	 * @param string                            $featured_url Product featured image URL.
+	 * @return array<int, array<string, mixed>>
+	 */
+	public static function normalize_preview_views( $raw_views, array $print_sides, $thumb_id = 0, $featured_url = '' ) {
+		if ( is_string( $raw_views ) ) {
+			$decoded   = json_decode( $raw_views, true );
+			$raw_views = is_array( $decoded ) ? $decoded : array();
+		}
+
+		$valid_side_ids  = ! empty( $print_sides ) ? array_column( $print_sides, 'id' ) : array( 'front' );
+		$default_side_id = ! empty( $valid_side_ids[0] ) ? $valid_side_ids[0] : 'front';
+		$allowed_roles   = array( 'full', 'closeup', 'detail' );
+		$allowed_blends  = array( 'normal', 'multiply', 'soft_ink' );
+		$thumb_id        = (int) $thumb_id;
+		$featured_url    = is_string( $featured_url ) ? $featured_url : '';
+
+		$views    = array();
+		$used_ids = array();
+
+		if ( is_array( $raw_views ) ) {
+			$idx = 0;
+			foreach ( $raw_views as $raw_view ) {
+				if ( ! is_array( $raw_view ) ) {
+					continue;
+				}
+				$vid = ! empty( $raw_view['id'] ) ? sanitize_key( $raw_view['id'] ) : 'view_' . ( $idx + 1 );
+				if ( '' === $vid ) {
+					$vid = 'view_' . ( $idx + 1 );
+				}
+				$base_vid = $vid;
+				$suffix   = 2;
+				while ( isset( $used_ids[ $vid ] ) ) {
+					$vid = $base_vid . '_' . $suffix;
+					$suffix++;
+				}
+				$used_ids[ $vid ] = true;
+
+				$v_label = ( isset( $raw_view['label'] ) && '' !== trim( (string) $raw_view['label'] ) )
+					? sanitize_text_field( $raw_view['label'] )
+					: ( 0 === $idx ? __( 'Aperçu', 'mr-tee-editor' ) : sprintf( __( 'Aperçu %d', 'mr-tee-editor' ), $idx + 1 ) );
+
+				$v_side = ! empty( $raw_view['side_id'] ) ? sanitize_key( $raw_view['side_id'] ) : $default_side_id;
+				if ( ! in_array( $v_side, $valid_side_ids, true ) ) {
+					$v_side = $default_side_id;
+				}
+
+				$v_role = ! empty( $raw_view['view_role'] ) ? sanitize_key( $raw_view['view_role'] ) : 'full';
+				if ( ! in_array( $v_role, $allowed_roles, true ) ) {
+					$v_role = 'full';
+				}
+
+				$v_blend = ! empty( $raw_view['blend_mode'] ) ? sanitize_key( $raw_view['blend_mode'] ) : 'normal';
+				if ( ! in_array( $v_blend, $allowed_blends, true ) ) {
+					$v_blend = 'normal';
+				}
+
+				$v_img_id  = isset( $raw_view['image_id'] ) ? absint( $raw_view['image_id'] ) : 0;
+				$v_img_url = isset( $raw_view['image_url'] ) ? esc_url_raw( trim( (string) $raw_view['image_url'] ) ) : '';
+
+				if ( $v_img_id > 0 && '' === $v_img_url && function_exists( 'wp_get_attachment_image_url' ) ) {
+					$resolved  = wp_get_attachment_image_url( $v_img_id, 'large' ) ?: wp_get_attachment_image_url( $v_img_id, 'full' );
+					$v_img_url = is_string( $resolved ) ? esc_url_raw( $resolved ) : '';
+				}
+
+				if ( 0 === $v_img_id && '' === $v_img_url ) {
+					$v_img_id  = $thumb_id;
+					$v_img_url = $featured_url;
+				}
+
+				$v_cart = ! empty( $raw_view['is_cart_preview'] );
+
+				$views[] = array(
+					'id'              => $vid,
+					'label'           => $v_label,
+					'side_id'         => $v_side,
+					'view_role'       => $v_role,
+					'image_id'        => $v_img_id,
+					'image_url'       => $v_img_url,
+					'blend_mode'      => $v_blend,
+					'is_cart_preview' => $v_cart,
+				);
+				$idx++;
+			}
+		}
+
+		if ( empty( $views ) ) {
+			$views[] = array(
+				'id'              => 'view_1',
+				'label'           => __( 'Aperçu', 'mr-tee-editor' ),
+				'side_id'         => $default_side_id,
+				'view_role'       => 'full',
+				'image_id'        => $thumb_id,
+				'image_url'       => $featured_url,
+				'blend_mode'      => 'normal',
+				'is_cart_preview' => true,
+			);
+		}
+
+		// Ensure at least one view per active side (or first view overall) has is_cart_preview => true if none marked
+		$has_any_cart_preview = false;
+		foreach ( $views as $v ) {
+			if ( ! empty( $v['is_cart_preview'] ) ) {
+				$has_any_cart_preview = true;
+				break;
+			}
+		}
+		if ( ! $has_any_cart_preview ) {
+			$marked_any = false;
+			foreach ( $valid_side_ids as $sid ) {
+				$ref_idx = self::find_side_reference_view_index( $views, $sid );
+				if ( null !== $ref_idx ) {
+					$views[ $ref_idx ]['is_cart_preview'] = true;
+					$marked_any                           = true;
+				}
+			}
+			if ( ! $marked_any && isset( $views[0] ) ) {
+				$views[0]['is_cart_preview'] = true;
+			}
+		}
+
+		return $views;
+	}
+
+	/**
+	 * Find the index of the reference view for a given printable side (`full` view preferred, else first view of that side).
+	 *
+	 * @param array<int, array<string, mixed>> $preview_views Normalized preview views.
+	 * @param string                           $side_id       Printable side ID.
+	 * @return int|null
+	 */
+	public static function find_side_reference_view_index( array $preview_views, $side_id ) {
+		$first_for_side = null;
+		foreach ( $preview_views as $idx => $view ) {
+			if ( ! is_array( $view ) || empty( $view['side_id'] ) || $view['side_id'] !== $side_id ) {
+				continue;
+			}
+			if ( isset( $view['view_role'] ) && 'full' === $view['view_role'] ) {
+				return (int) $idx;
+			}
+			if ( null === $first_for_side ) {
+				$first_for_side = (int) $idx;
+			}
+		}
+		return $first_for_side;
+	}
+
+	/**
+	 * Retrieve the reference view for a given printable side (`full` view preferred, else first view of that side).
+	 *
+	 * @param array<int, array<string, mixed>> $preview_views Normalized preview views.
+	 * @param string                           $side_id       Printable side ID.
+	 * @return array<string, mixed>|null
+	 */
+	public static function get_side_reference_view( array $preview_views, $side_id ) {
+		$idx = self::find_side_reference_view_index( $preview_views, $side_id );
+		return ( null !== $idx && isset( $preview_views[ $idx ] ) ) ? $preview_views[ $idx ] : null;
+	}
+
+	/**
+	 * Normalize a field's per-view `placements` map for all preview views belonging to its `side_id`.
+	 *
+	 * @param mixed                            $raw_placements Raw placements map or JSON string.
+	 * @param array<string, float>             $base_box       Default box coordinates `{box_left, box_top, box_width, box_height, box_rotate}`.
+	 * @param array<int, array<string, mixed>> $preview_views  Normalized preview views.
+	 * @param string                           $side_id        Field's printable side ID.
+	 * @return array<string, array<string, float>>
+	 */
+	public static function normalize_field_placements( $raw_placements, array $base_box, array $preview_views, $side_id ) {
+		if ( is_string( $raw_placements ) ) {
+			$decoded        = json_decode( $raw_placements, true );
+			$raw_placements = is_array( $decoded ) ? $decoded : array();
+		}
+		if ( ! is_array( $raw_placements ) ) {
+			$raw_placements = array();
+		}
+
+		$seed = array(
+			'box_left'   => isset( $base_box['box_left'] ) ? floatval( $base_box['box_left'] ) : 30.0,
+			'box_top'    => isset( $base_box['box_top'] ) ? floatval( $base_box['box_top'] ) : 25.0,
+			'box_width'  => isset( $base_box['box_width'] ) ? floatval( $base_box['box_width'] ) : 40.0,
+			'box_height' => isset( $base_box['box_height'] ) ? floatval( $base_box['box_height'] ) : 8.5,
+			'box_rotate' => isset( $base_box['box_rotate'] ) ? floatval( $base_box['box_rotate'] ) : 0.0,
+		);
+
+		$normalized = array();
+		foreach ( $preview_views as $view ) {
+			if ( ! is_array( $view ) || empty( $view['id'] ) || empty( $view['side_id'] ) || $view['side_id'] !== $side_id ) {
+				continue;
+			}
+			$vid = (string) $view['id'];
+			if ( isset( $raw_placements[ $vid ] ) && is_array( $raw_placements[ $vid ] ) ) {
+				$p                  = $raw_placements[ $vid ];
+				$normalized[ $vid ] = array(
+					'box_left'   => isset( $p['box_left'] ) ? floatval( $p['box_left'] ) : $seed['box_left'],
+					'box_top'    => isset( $p['box_top'] ) ? floatval( $p['box_top'] ) : $seed['box_top'],
+					'box_width'  => isset( $p['box_width'] ) ? floatval( $p['box_width'] ) : $seed['box_width'],
+					'box_height' => isset( $p['box_height'] ) ? floatval( $p['box_height'] ) : $seed['box_height'],
+					'box_rotate' => isset( $p['box_rotate'] ) ? floatval( $p['box_rotate'] ) : $seed['box_rotate'],
+				);
+			} else {
+				$normalized[ $vid ] = $seed;
+			}
+		}
+
+		return $normalized;
 	}
 
 	/**
@@ -844,6 +1265,136 @@ class SceneGraphSchema {
 	}
 
 	/**
+	 * Compute cumulative bounding box & physical/300-DPI export metrics for a specific printable side.
+	 *
+	 * Uses the side's own physical dimensions (`print_real_width`, `print_real_height`, `print_unit`, `dpi`, `product_type`)
+	 * and its reference preview view's field placements (`full` view preferred, else first view of that side).
+	 * Falls back cleanly to `compute_cumulative_design_area()` for legacy single-side configs.
+	 *
+	 * @param array<string, mixed> $config  Normalized product configuration.
+	 * @param string               $side_id Printable side ID (default 'front').
+	 * @return array<string, mixed>
+	 */
+	public static function compute_side_export_metrics( array $config, $side_id = 'front' ) {
+		$print_sides = ( ! empty( $config['print_sides'] ) && is_array( $config['print_sides'] ) ) ? $config['print_sides'] : array();
+		if ( empty( $print_sides ) ) {
+			$fallback = self::compute_cumulative_design_area( $config );
+			return array_merge(
+				$fallback,
+				array(
+					'side_id'             => sanitize_key( $side_id ) ?: 'front',
+					'side_label'          => 'Recto',
+					'reference_view_id'   => '',
+					'field_count'         => ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) ? count( $config['text_lines'] ) : 0,
+					'print_unit'          => ! empty( $config['print_unit'] ) ? $config['print_unit'] : 'cm',
+					'dpi'                 => isset( $config['dpi'] ) ? max( 72, intval( $config['dpi'] ) ) : 300,
+					'product_type'        => ! empty( $config['product_type'] ) ? $config['product_type'] : 'garment',
+					'surface_real_width'  => isset( $config['print_real_width'] ) ? floatval( $config['print_real_width'] ) : 30.0,
+					'surface_real_height' => isset( $config['print_real_height'] ) ? floatval( $config['print_real_height'] ) : 40.0,
+				)
+			);
+		}
+
+		$target_side_id  = sanitize_key( $side_id );
+		$default_side    = $print_sides[0];
+		$default_side_id = ! empty( $default_side['id'] ) ? sanitize_key( $default_side['id'] ) : 'front';
+		$matched_side    = null;
+
+		foreach ( $print_sides as $s ) {
+			if ( is_array( $s ) && ! empty( $s['id'] ) && sanitize_key( $s['id'] ) === $target_side_id ) {
+				$matched_side = $s;
+				break;
+			}
+		}
+		if ( null === $matched_side ) {
+			$matched_side = $default_side;
+		}
+
+		$resolved_side_id = ! empty( $matched_side['id'] ) ? sanitize_key( $matched_side['id'] ) : $default_side_id;
+		$preview_views    = ( ! empty( $config['preview_views'] ) && is_array( $config['preview_views'] ) ) ? $config['preview_views'] : array();
+		$ref_view         = self::get_side_reference_view( $preview_views, $resolved_side_id );
+		$ref_view_id      = ( $ref_view && ! empty( $ref_view['id'] ) ) ? (string) $ref_view['id'] : '';
+
+		$side_lines = array();
+		if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
+			foreach ( $config['text_lines'] as $line ) {
+				if ( ! is_array( $line ) ) {
+					continue;
+				}
+				$line_side = ! empty( $line['side_id'] ) ? sanitize_key( $line['side_id'] ) : $default_side_id;
+				if ( $line_side !== $resolved_side_id ) {
+					continue;
+				}
+
+				$box = array(
+					'box_left'   => isset( $line['box_left'] ) ? floatval( $line['box_left'] ) : 30.0,
+					'box_top'    => isset( $line['box_top'] ) ? floatval( $line['box_top'] ) : 25.0,
+					'box_width'  => isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : 40.0,
+					'box_height' => isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : 10.0,
+					'box_rotate' => isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0,
+				);
+
+				if ( '' !== $ref_view_id && ! empty( $line['placements'][ $ref_view_id ] ) && is_array( $line['placements'][ $ref_view_id ] ) ) {
+					$rp = $line['placements'][ $ref_view_id ];
+					if ( isset( $rp['box_left'] ) ) {
+						$box['box_left'] = floatval( $rp['box_left'] );
+					}
+					if ( isset( $rp['box_top'] ) ) {
+						$box['box_top'] = floatval( $rp['box_top'] );
+					}
+					if ( isset( $rp['box_width'] ) ) {
+						$box['box_width'] = floatval( $rp['box_width'] );
+					}
+					if ( isset( $rp['box_height'] ) ) {
+						$box['box_height'] = floatval( $rp['box_height'] );
+					}
+					if ( isset( $rp['box_rotate'] ) ) {
+						$box['box_rotate'] = floatval( $rp['box_rotate'] );
+					}
+				}
+
+				$side_lines[] = $box;
+			}
+		}
+
+		$side_prod_type = ! empty( $matched_side['product_type'] ) ? $matched_side['product_type'] : ( ! empty( $config['product_type'] ) ? $config['product_type'] : 'garment' );
+		$side_real_w    = isset( $matched_side['print_real_width'] ) ? floatval( $matched_side['print_real_width'] ) : ( isset( $config['print_real_width'] ) ? floatval( $config['print_real_width'] ) : 30.0 );
+		$side_real_h    = isset( $matched_side['print_real_height'] ) ? floatval( $matched_side['print_real_height'] ) : ( isset( $config['print_real_height'] ) ? floatval( $config['print_real_height'] ) : 40.0 );
+		$side_unit      = ! empty( $matched_side['print_unit'] ) ? $matched_side['print_unit'] : ( ! empty( $config['print_unit'] ) ? $config['print_unit'] : 'cm' );
+		$side_dpi       = isset( $matched_side['dpi'] ) ? max( 72, intval( $matched_side['dpi'] ) ) : ( isset( $config['dpi'] ) ? max( 72, intval( $config['dpi'] ) ) : 300 );
+
+		$side_config = array(
+			'product_type'      => $side_prod_type,
+			'print_real_width'  => $side_real_w,
+			'print_real_height' => $side_real_h,
+			'print_unit'        => $side_unit,
+			'dpi'               => $side_dpi,
+			'box_left'          => isset( $config['box_left'] ) ? floatval( $config['box_left'] ) : 28.0,
+			'box_top'           => isset( $config['box_top'] ) ? floatval( $config['box_top'] ) : 28.0,
+			'box_width'         => isset( $config['box_width'] ) ? floatval( $config['box_width'] ) : 44.0,
+			'box_height'        => isset( $config['box_height'] ) ? floatval( $config['box_height'] ) : 48.0,
+			'text_lines'        => $side_lines,
+		);
+
+		$metrics = self::compute_cumulative_design_area( $side_config );
+
+		return array_merge(
+			$metrics,
+			array(
+				'side_id'             => $resolved_side_id,
+				'side_label'          => ! empty( $matched_side['label'] ) ? (string) $matched_side['label'] : $resolved_side_id,
+				'reference_view_id'   => $ref_view_id,
+				'field_count'         => count( $side_lines ),
+				'print_unit'          => $side_unit,
+				'dpi'                 => $side_dpi,
+				'product_type'        => $side_prod_type,
+				'surface_real_width'  => $side_real_w,
+				'surface_real_height' => $side_real_h,
+			)
+		);
+	}
+
+	/**
 	 * Return standard physical product presets for POD items.
 	 *
 	 * @return array<string, array<string, mixed>>
@@ -982,12 +1533,14 @@ class SceneGraphSchema {
 	 * @return array<string, mixed>
 	 */
 	public static function compile_scene_graph( array $config ) {
-		$fonts      = FontRegistry::get_fonts();
-		$color_sets = ColorPaletteRegistry::get_color_sets();
-		$icons      = IconSetRegistry::get_mushroom_icons();
-		$rep        = isset( $config['repeater'] ) ? $config['repeater'] : array( 'enabled' => false );
-		$def_count  = isset( $rep['default_count'] ) ? intval( $rep['default_count'] ) : 2;
-		$max_items  = isset( $rep['max_items'] ) ? intval( $rep['max_items'] ) : 6;
+		$fonts           = FontRegistry::get_fonts();
+		$color_sets      = ColorPaletteRegistry::get_color_sets();
+		$icons           = IconSetRegistry::get_mushroom_icons();
+		$rep             = isset( $config['repeater'] ) ? $config['repeater'] : array( 'enabled' => false );
+		$def_count       = isset( $rep['default_count'] ) ? intval( $rep['default_count'] ) : 2;
+		$max_items       = isset( $rep['max_items'] ) ? intval( $rep['max_items'] ) : 6;
+		$print_sides     = ( ! empty( $config['print_sides'] ) && is_array( $config['print_sides'] ) ) ? $config['print_sides'] : array();
+		$default_side_id = ! empty( $print_sides[0]['id'] ) ? sanitize_key( $print_sides[0]['id'] ) : 'front';
 
 		$layers     = array();
 		$references = array();
@@ -1002,6 +1555,8 @@ class SceneGraphSchema {
 			$box_l      = isset( $line['box_left'] ) ? floatval( $line['box_left'] ) : ( 50.0 - ( $box_w / 2.0 ) );
 			$box_t      = isset( $line['box_top'] ) ? floatval( $line['box_top'] ) : ( isset( $line['y_pct'] ) ? floatval( $line['y_pct'] ) - ( $box_h / 2.0 ) : 30.0 );
 			$box_r      = isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0;
+			$side_id    = ! empty( $line['side_id'] ) ? sanitize_key( $line['side_id'] ) : $default_side_id;
+			$placements = ( ! empty( $line['placements'] ) && is_array( $line['placements'] ) ) ? $line['placements'] : array();
 
 			if ( 'image' === $field_type ) {
 				$img_ref_id      = ! empty( $line['ref_id'] ) ? $line['ref_id'] : 'id-ref-image-line-' . $line_num;
@@ -1012,6 +1567,7 @@ class SceneGraphSchema {
 					'id'               => $img_ref_id,
 					'type'             => 'IMAGE',
 					'name'             => $line['label'],
+					'sideId'           => $side_id,
 					'url'              => $default_img_url,
 					'defaultUrl'       => $default_img_url,
 					'imageFit'         => $image_fit,
@@ -1029,6 +1585,8 @@ class SceneGraphSchema {
 					'id'           => ! empty( $line['id'] ) ? $line['id'] : 'line_' . $line_num,
 					'name'         => $line['label'],
 					'reference'    => $img_ref_id,
+					'side_id'      => $side_id,
+					'placements'   => $placements,
 					'isFieldImage' => true,
 					'url'          => $default_img_url,
 					'imageFit'     => $image_fit,
@@ -1045,9 +1603,10 @@ class SceneGraphSchema {
 				);
 
 				$layers[] = array(
-					'type'  => 'GROUP',
-					'name'  => $line['label'],
-					'items' => array( $image_layer ),
+					'type'    => 'GROUP',
+					'name'    => $line['label'],
+					'side_id' => $side_id,
+					'items'   => array( $image_layer ),
 				);
 				continue;
 			}
@@ -1062,6 +1621,7 @@ class SceneGraphSchema {
 				'id'               => $text_ref_id,
 				'type'             => 'TEXT',
 				'name'             => $line['label'],
+				'sideId'           => $side_id,
 				'value'            => $line['default_text'],
 				'editable'         => true,
 				'multiLine'        => ! empty( $line['multiline'] ),
@@ -1111,6 +1671,8 @@ class SceneGraphSchema {
 				'name'               => $line['label'],
 				'reference'          => $text_ref_id,
 				'colorReference'     => $color_ref_id,
+				'side_id'            => $side_id,
+				'placements'         => $placements,
 				'fontId'             => $font_id,
 				'fontFamily'         => $font_def['family'],
 				'x'                  => $center_x,
@@ -1142,6 +1704,8 @@ class SceneGraphSchema {
 				$layers[] = array(
 					'type'       => 'MASK',
 					'name'       => 'Masque ' . $line['label'],
+					'side_id'    => $side_id,
+					'placements' => $placements,
 					'textureUrl' => ! empty( $line['texture_url'] ) ? $line['texture_url'] : MR_TEE_EDITOR_URL . 'assets/images/leopard-pattern.png',
 					'x'          => $box_l,
 					'y'          => $box_t,
@@ -1156,9 +1720,10 @@ class SceneGraphSchema {
 				);
 			} else {
 				$layers[] = array(
-					'type'  => 'GROUP',
-					'name'  => $line['label'],
-					'items' => array( $text_layer ),
+					'type'    => 'GROUP',
+					'name'    => $line['label'],
+					'side_id' => $side_id,
+					'items'   => array( $text_layer ),
 				);
 			}
 		}
@@ -1169,6 +1734,7 @@ class SceneGraphSchema {
 			$layers[] = array(
 				'type'           => 'PATH',
 				'name'           => ! empty( $clip['name'] ) ? $clip['name'] : 'Clipart',
+				'side_id'        => $default_side_id,
 				'path'           => $clip['path'],
 				'fill'           => array( 'color' => array( 'hex' => ! empty( $clip['color_hex'] ) ? $clip['color_hex'] : '#000000' ) ),
 				'transform'      => isset( $clip['transform'] ) ? $clip['transform'] : '',
@@ -1241,6 +1807,7 @@ class SceneGraphSchema {
 							'id'               => $text_ref_id,
 							'type'             => 'TEXT',
 							'name'             => 'Prénom ' . $item_num,
+							'sideId'           => $default_side_id,
 							'value'            => $def_item['name'],
 							'editable'         => true,
 							'multiLine'        => false,
@@ -1256,6 +1823,7 @@ class SceneGraphSchema {
 							'id'               => $img_ref_id,
 							'type'             => 'IMAGE',
 							'name'             => 'Visuel',
+							'sideId'           => $default_side_id,
 							'iconKey'          => $icon_key,
 							'url'              => $icons[ $icon_key ]['url'],
 							'editable'         => true,
@@ -1277,6 +1845,7 @@ class SceneGraphSchema {
 				$champ_group = array(
 					'type'       => 'GROUP',
 					'name'       => $rep['item_label'] . ' ' . $item_num,
+					'side_id'    => $default_side_id,
 					'slotIndex'  => $i,
 					'rowIndex'   => $row_index,
 					'colIndex'   => $col_index,
@@ -1286,6 +1855,8 @@ class SceneGraphSchema {
 							'type'               => 'TEXT',
 							'name'               => 'Prénom ' . $item_num,
 							'reference'          => $text_ref_id,
+							'side_id'            => $default_side_id,
+							'placements'         => array(),
 							'x'                  => $center_x,
 							'y'                  => $text_y,
 							'fontSize'           => $name_size,
@@ -1296,15 +1867,17 @@ class SceneGraphSchema {
 							'fill'               => '#111827',
 						),
 						array(
-							'type'      => 'IMAGE',
-							'name'      => 'Visuel ' . $item_num,
-							'reference' => $img_ref_id,
-							'x'         => $center_x - ( $icon_w / 2.0 ),
-							'y'         => $icon_y - ( $icon_h / 2.0 ),
-							'centerX'   => $center_x,
-							'centerY'   => $icon_y,
-							'width'     => $icon_w,
-							'height'    => $icon_h,
+							'type'       => 'IMAGE',
+							'name'       => 'Visuel ' . $item_num,
+							'reference'  => $img_ref_id,
+							'side_id'    => $default_side_id,
+							'placements' => array(),
+							'x'          => $center_x - ( $icon_w / 2.0 ),
+							'y'          => $icon_y - ( $icon_h / 2.0 ),
+							'centerX'    => $center_x,
+							'centerY'    => $icon_y,
+							'width'      => $icon_w,
+							'height'     => $icon_h,
 						),
 					),
 				);
@@ -1319,6 +1892,7 @@ class SceneGraphSchema {
 			$layers[] = array(
 				'type'          => 'GROUP',
 				'name'          => 'Ligne 1',
+				'side_id'       => $default_side_id,
 				'rowNumber'     => 1,
 				'itemAnchorsId' => 'ancre-ligne-1',
 				'visibility'    => array( 'reference' => $vis_row1_id ),
@@ -1328,6 +1902,7 @@ class SceneGraphSchema {
 			$layers[] = array(
 				'type'          => 'GROUP',
 				'name'          => 'Ligne 2',
+				'side_id'       => $default_side_id,
 				'rowNumber'     => 2,
 				'itemAnchorsId' => 'ancre-ligne-2',
 				'visibility'    => array( 'reference' => $vis_row2_id ),
@@ -1343,10 +1918,10 @@ class SceneGraphSchema {
 				'title'    => 'Personnaliser',
 				'sections' => array(
 					array(
-						'id_perso_visual_cfg_section' => intval( $rep['section_id'] ),
-						'title'                       => $rep['label'],
-						'subtitle'                    => $rep['subtitle'],
-						'min'                         => intval( $rep['min_items'] ),
+						'id_perso_visual_cfg_section' => isset( $rep['section_id'] ) ? intval( $rep['section_id'] ) : 0,
+						'title'                       => isset( $rep['label'] ) ? $rep['label'] : '',
+						'subtitle'                    => isset( $rep['subtitle'] ) ? $rep['subtitle'] : '',
+						'min'                         => isset( $rep['min_items'] ) ? intval( $rep['min_items'] ) : 0,
 						'max'                         => $max_items,
 						'default_count'               => $def_count,
 						'row1_vis_ref_id'             => 'id-ref-vis-ligne-1',

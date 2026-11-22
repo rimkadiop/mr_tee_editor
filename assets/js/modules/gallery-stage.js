@@ -12,6 +12,8 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
+import { DedicatedGallery } from './dedicated-gallery.js?v=2.4.0';
+
 export class GalleryStage {
 	constructor(config, options = {}) {
 		this.config = config || {};
@@ -19,6 +21,17 @@ export class GalleryStage {
 		this.renderSvgWithPrefix = typeof this.options.renderSvgWithPrefix === 'function'
 			? this.options.renderSvgWithPrefix
 			: null;
+		this.onViewChange = typeof this.options.onViewChange === 'function'
+			? this.options.onViewChange
+			: null;
+		this.onSlideImageChanged = typeof this.options.onSlideImageChanged === 'function'
+			? this.options.onSlideImageChanged
+			: null;
+
+		this.dedicatedGallery = null;
+		this.isDedicated = false;
+		this.viewSvgMarkup = new Map();
+
 		this.overlayElem = null;
 		this.svgHolder = null;
 		this.attachedImage = null;
@@ -71,29 +84,143 @@ export class GalleryStage {
 	}
 
 	/**
-	 * Build or scope lightbox SVG markup with a dedicated DOM ID prefix (`pswp-` or `mfp-`).
+	 * Build or scope lightbox SVG markup with a dedicated DOM ID prefix (`fs-`, `pswp-`, or `mfp-`).
 	 *
 	 * @param {string} prefix Prefix to apply to lightbox SVG IDs.
+	 * @param {string} viewId Optional view ID for multi-view galleries.
 	 * @return {string}
 	 */
-	getLightboxSvgMarkup(prefix) {
+	getLightboxSvgMarkup(prefix, viewId = '') {
+		const targetViewId = viewId || this.getActiveViewId();
 		if (this.renderSvgWithPrefix) {
-			const rendered = this.renderSvgWithPrefix(prefix);
+			const rendered = this.renderSvgWithPrefix(prefix, targetViewId);
 			if (typeof rendered === 'string') {
 				return rendered;
 			}
 		}
-		return GalleryStage.scopeSvgMarkup(this.currentSvgMarkup, prefix);
+		const baseMarkup = (targetViewId && this.viewSvgMarkup.has(targetViewId))
+			? this.viewSvgMarkup.get(targetViewId)
+			: this.currentSvgMarkup;
+		return GalleryStage.scopeSvgMarkup(baseMarkup, prefix);
 	}
 
 	/**
-	 * Mount overlay on the active WooCommerce gallery slide.
+	 * Initialize DedicatedGallery when present (or mountable via fallback), otherwise
+	 * fall back cleanly to the legacy single-overlay WooCommerce gallery path.
 	 */
 	init() {
+		this.dedicatedGallery = new DedicatedGallery(this.config, {
+			onViewChange: (viewId, slideIdx, slideMeta) => {
+				if (this.onViewChange) {
+					this.onViewChange(viewId, slideIdx, slideMeta);
+				}
+			},
+			onSlideImageChanged: (viewId, imgEl) => {
+				if (this.onSlideImageChanged) {
+					this.onSlideImageChanged(viewId, imgEl);
+				}
+			},
+			getFullscreenSvg: (viewId) => this.getLightboxSvgMarkup('fs-', viewId),
+			patchSvgFn: (existingSvg, markup) => this.patchSvgInPlace(existingSvg, markup),
+		});
+
+		if (this.dedicatedGallery.isMounted) {
+			this.isDedicated = true;
+			return;
+		}
+
 		this.mountOverlay();
 		this.bindGalleryEvents();
 		this.suppressZoom();
 		this.initPhotoSwipeSync();
+	}
+
+	/**
+	 * Focus a garment side (e.g. 'front', 'back') in the dedicated multi-view gallery.
+	 *
+	 * @param {string} sideId Target print side identifier.
+	 */
+	focusSide(sideId) {
+		if (this.isDedicated && this.dedicatedGallery) {
+			this.dedicatedGallery.focusSide(sideId);
+		}
+	}
+
+	/**
+	 * Navigate directly to a specific preview view ID.
+	 *
+	 * @param {string} viewId Target view ID.
+	 * @param {Object} opts Optional navigation flags.
+	 */
+	goToView(viewId, opts = {}) {
+		if (this.isDedicated && this.dedicatedGallery) {
+			this.dedicatedGallery.goToView(viewId, opts);
+		}
+	}
+
+	/**
+	 * Return currently active view ID (empty string in legacy single-overlay mode).
+	 *
+	 * @return {string}
+	 */
+	getActiveViewId() {
+		if (this.isDedicated && this.dedicatedGallery) {
+			return this.dedicatedGallery.getActiveViewId();
+		}
+		return '';
+	}
+
+	/**
+	 * Return active slide metadata object when running in dedicated gallery mode.
+	 *
+	 * @return {Object|null}
+	 */
+	getActiveSlide() {
+		if (this.isDedicated && this.dedicatedGallery) {
+			return this.dedicatedGallery.getActiveSlide();
+		}
+		return null;
+	}
+
+	/**
+	 * Return customizable slide metadata list when running in dedicated gallery mode.
+	 *
+	 * @return {Array<Object>}
+	 */
+	getCustomizableViews() {
+		if (this.isDedicated && this.dedicatedGallery) {
+			return this.dedicatedGallery.getCustomizableViews();
+		}
+		return [];
+	}
+
+	/**
+	 * Return the garment `<img>` element associated with `viewId`.
+	 *
+	 * @param {string} viewId Optional view ID.
+	 * @return {HTMLImageElement|null}
+	 */
+	getViewImageElement(viewId = '') {
+		if (this.isDedicated && this.dedicatedGallery) {
+			return this.dedicatedGallery.getViewImageElement(viewId);
+		}
+		if (this.attachedImage && this.attachedImage.isConnected) {
+			return this.attachedImage;
+		}
+		return this.findMainGalleryImage(this.findMainSlideContainer());
+	}
+
+	/**
+	 * Return the `.mr-tee-live-svg-container` element associated with `viewId`.
+	 *
+	 * @param {string} viewId Optional view ID.
+	 * @return {HTMLElement|null}
+	 */
+	getViewOverlayContainer(viewId = '') {
+		if (this.isDedicated && this.dedicatedGallery) {
+			return this.dedicatedGallery.getViewOverlayContainer(viewId);
+		}
+		return this.svgHolder;
 	}
 
 	/**
@@ -943,11 +1070,62 @@ export class GalleryStage {
 	}
 
 	/**
+	 * Update the live SVG markup for a specific preview view using keyed in-place DOM reconciliation,
+	 * and synchronize the built-in fullscreen lightbox if currently open on that view.
+	 *
+	 * @param {string} viewId Target view ID.
+	 * @param {string} svgMarkup Raw SVG markup string.
+	 */
+	updateViewSvg(viewId, svgMarkup) {
+		if (!this.isDedicated || !this.dedicatedGallery) {
+			this.updateSvg(svgMarkup);
+			return;
+		}
+
+		const targetViewId = viewId || this.getActiveViewId();
+		if (!targetViewId) return;
+
+		const markup = svgMarkup || '';
+		this.viewSvgMarkup.set(targetViewId, markup);
+		if (targetViewId === this.getActiveViewId()) {
+			this.currentSvgMarkup = markup;
+		}
+
+		const holder = this.dedicatedGallery.getViewOverlayContainer(targetViewId);
+		if (holder) {
+			const existingSvg = holder.querySelector('svg.mr-tee-live-svg') || holder.querySelector('svg');
+			if (!existingSvg || !markup) {
+				holder.innerHTML = markup;
+				const mountedDefs = holder.querySelector('defs.mr-tee-svg-defs, defs');
+				const mountedSvg = holder.querySelector('svg.mr-tee-live-svg') || holder.querySelector('svg');
+				if (mountedSvg && mountedDefs) {
+					mountedSvg._lastDefsHtml = mountedDefs.innerHTML;
+				}
+			} else {
+				this.patchSvgInPlace(existingSvg, markup);
+			}
+		}
+
+		// Sync built-in fullscreen lightbox if open on this view
+		if (this.dedicatedGallery.isLightboxOpen && targetViewId === this.getActiveViewId()) {
+			const fsMarkup = this.getLightboxSvgMarkup('fs-', targetViewId);
+			this.dedicatedGallery.syncFullscreenSvg(fsMarkup, (existingSvg, nextMarkup) => {
+				this.patchSvgInPlace(existingSvg, nextMarkup);
+			});
+		}
+	}
+
+	/**
 	 * Update the live SVG preview content immediately with zero lag using keyed in-place DOM reconciliation.
 	 *
 	 * @param {string} svgMarkup Raw SVG markup string.
 	 */
 	updateSvg(svgMarkup) {
+		if (this.isDedicated && this.dedicatedGallery) {
+			this.updateViewSvg(this.getActiveViewId(), svgMarkup);
+			return;
+		}
+
 		this.currentSvgMarkup = svgMarkup || '';
 
 		if (!this.svgHolder || !this.svgHolder.isConnected) {

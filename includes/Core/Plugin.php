@@ -81,6 +81,9 @@ final class Plugin {
 	private function init_services() {
 		EngineSelectorMetabox::init();
 		ProductPageRenderer::init();
+		if ( class_exists( '\MrTeeEditor\Frontend\ProductGalleryRenderer' ) ) {
+			\MrTeeEditor\Frontend\ProductGalleryRenderer::init();
+		}
 		CartIntegration::init();
 		OrderAdminPanel::init();
 		\MrTeeEditor\Registry\FontRegistry::register_hooks();
@@ -290,13 +293,29 @@ final class Plugin {
 			);
 		}
 
-		$target_names = array(
+		$raw_suffix = isset( $_POST['suffix'] ) ? wp_unslash( $_POST['suffix'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.NonceVerification.Missing
+		$suffix     = substr( preg_replace( '/[^a-zA-Z0-9_-]/', '', (string) $raw_suffix ), 0, 32 );
+		$is_primary = isset( $_POST['is_primary'] ) && '1' === (string) wp_unslash( $_POST['is_primary'] ); // phpcs:ignore WordPress.Security.NonceVerification.Missing
+
+		$canonical_names = array(
 			'preview_jpg' => 'design_preview.jpg',
 			'preview_png' => 'design_preview.png',
 			'svg'         => 'design.svg',
 			'print_png'   => 'print_300dpi.png',
 		);
-		$target_name = $target_names[ $artifact ];
+		$canonical_name = $canonical_names[ $artifact ];
+
+		if ( '' !== $suffix ) {
+			$suffixed_names = array(
+				'preview_jpg' => 'design_preview_' . $suffix . '.jpg',
+				'preview_png' => 'design_preview_' . $suffix . '.png',
+				'svg'         => 'design_' . $suffix . '.svg',
+				'print_png'   => 'print_300dpi_' . $suffix . '.png',
+			);
+			$target_name = $suffixed_names[ $artifact ];
+		} else {
+			$target_name = $canonical_name;
+		}
 
 		if ( 'svg' === $artifact ) {
 			$svg_raw = @file_get_contents( $part_file );
@@ -322,12 +341,19 @@ final class Plugin {
 			wp_send_json_error( array( 'message' => __( 'Erreur lors de la finalisation du fichier.', 'mr-tee-editor' ) ), 500 );
 		}
 
+		if ( $is_primary && '' !== $suffix ) {
+			$canonical_file = trailingslashit( $paths['dir'] ) . $canonical_name;
+			@copy( $dest_file, $canonical_file );
+		}
+
 		wp_send_json_success(
 			array(
-				'done'     => true,
-				'artifact' => $artifact,
-				'url'      => $dest_url,
-				'bytes'    => @filesize( $dest_file ),
+				'done'      => true,
+				'artifact'  => $artifact,
+				'suffix'    => $suffix,
+				'file_name' => $target_name,
+				'url'       => $dest_url,
+				'bytes'     => @filesize( $dest_file ),
 			)
 		);
 	}
@@ -531,14 +557,81 @@ final class Plugin {
 			wp_send_json_error( array( 'message' => __( 'Clé de création incohérente.', 'mr-tee-editor' ) ), 400 );
 		}
 
-		$paths      = \MrTeeEditor\Export\PrintAssetGenerator::get_upload_dir( 'designs/' . $design_key );
-		$svg_file   = trailingslashit( $paths['dir'] ) . 'design.svg';
-		$svg_url    = trailingslashit( $paths['url'] ) . 'design.svg';
-		$print_file = trailingslashit( $paths['dir'] ) . 'print_300dpi.png';
-		$print_url  = trailingslashit( $paths['url'] ) . 'print_300dpi.png';
+		$paths         = \MrTeeEditor\Export\PrintAssetGenerator::get_upload_dir( 'designs/' . $design_key );
+		$raw_sides     = isset( $_POST['sides_json'] ) ? wp_unslash( $_POST['sides_json'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.NonceVerification.Missing
+		$decoded_sides = ! empty( $raw_sides ) ? json_decode( $raw_sides, true ) : null;
+		$side_exports  = array();
 
-		if ( ! file_exists( $svg_file ) || ! filesize( $svg_file ) || ! file_exists( $print_file ) || ! filesize( $print_file ) ) {
-			wp_send_json_error( array( 'message' => __( 'Les fichiers générés (SVG ou PNG 300 DPI) sont introuvables sur le disque.', 'mr-tee-editor' ) ), 400 );
+		if ( is_array( $decoded_sides ) && ! empty( $decoded_sides ) ) {
+			foreach ( $decoded_sides as $idx => $entry ) {
+				if ( ! is_array( $entry ) ) {
+					continue;
+				}
+				$raw_side_id = isset( $entry['side_id'] ) ? (string) $entry['side_id'] : '';
+				$side_id     = substr( preg_replace( '/[^a-zA-Z0-9_-]/', '', $raw_side_id ), 0, 32 );
+				if ( '' === $side_id ) {
+					$side_id = ( 0 === $idx ) ? 'front' : 'side_' . $idx;
+				}
+				$label      = ! empty( $entry['label'] ) ? sanitize_text_field( (string) $entry['label'] ) : ucfirst( $side_id );
+				$raw_suffix = isset( $entry['suffix'] ) ? (string) $entry['suffix'] : '';
+				$suffix     = substr( preg_replace( '/[^a-zA-Z0-9_-]/', '', $raw_suffix ), 0, 32 );
+
+				$svg_fn = ! empty( $entry['svg_file_name'] ) ? sanitize_file_name( basename( (string) $entry['svg_file_name'] ) ) : '';
+				if ( ! preg_match( '/^design(?:_[a-zA-Z0-9_-]{1,32})?\.svg$/', $svg_fn ) ) {
+					$svg_fn = ( '' !== $suffix ) ? 'design_' . $suffix . '.svg' : 'design.svg';
+				}
+
+				$print_fn = ! empty( $entry['print_file_name'] ) ? sanitize_file_name( basename( (string) $entry['print_file_name'] ) ) : '';
+				if ( ! preg_match( '/^print_300dpi(?:_[a-zA-Z0-9_-]{1,32})?\.png$/', $print_fn ) ) {
+					$print_fn = ( '' !== $suffix ) ? 'print_300dpi_' . $suffix . '.png' : 'print_300dpi.png';
+				}
+
+				$s_svg_file   = trailingslashit( $paths['dir'] ) . $svg_fn;
+				$s_svg_url    = trailingslashit( $paths['url'] ) . $svg_fn;
+				$s_print_file = trailingslashit( $paths['dir'] ) . $print_fn;
+				$s_print_url  = trailingslashit( $paths['url'] ) . $print_fn;
+
+				if ( ! file_exists( $s_svg_file ) || ! filesize( $s_svg_file ) || ! file_exists( $s_print_file ) || ! filesize( $s_print_file ) ) {
+					wp_send_json_error(
+						array(
+							'message' => sprintf(
+								/* translators: %s: side label */
+								__( 'Les fichiers générés (SVG ou PNG 300 DPI) pour la face « %s » sont introuvables sur le disque.', 'mr-tee-editor' ),
+								$label
+							),
+						),
+						400
+					);
+				}
+
+				$side_exports[ $side_id ] = array(
+					'side_id'          => $side_id,
+					'label'            => $label,
+					'svg_file'         => $s_svg_file,
+					'svg_url'          => $s_svg_url,
+					'print_file'       => $s_print_file,
+					'print_url'        => $s_print_url,
+					'print_dimensions' => ! empty( $entry['print_dimensions'] ) ? sanitize_text_field( (string) $entry['print_dimensions'] ) : '',
+				);
+			}
+		}
+
+		if ( ! empty( $side_exports ) ) {
+			$primary_side = reset( $side_exports );
+			$svg_file     = $primary_side['svg_file'];
+			$svg_url      = $primary_side['svg_url'];
+			$print_file   = $primary_side['print_file'];
+			$print_url    = $primary_side['print_url'];
+			$data['side_exports'] = $side_exports;
+		} else {
+			$svg_file   = trailingslashit( $paths['dir'] ) . 'design.svg';
+			$svg_url    = trailingslashit( $paths['url'] ) . 'design.svg';
+			$print_file = trailingslashit( $paths['dir'] ) . 'print_300dpi.png';
+			$print_url  = trailingslashit( $paths['url'] ) . 'print_300dpi.png';
+
+			if ( ! file_exists( $svg_file ) || ! filesize( $svg_file ) || ! file_exists( $print_file ) || ! filesize( $print_file ) ) {
+				wp_send_json_error( array( 'message' => __( 'Les fichiers générés (SVG ou PNG 300 DPI) sont introuvables sur le disque.', 'mr-tee-editor' ) ), 400 );
+			}
 		}
 
 		$data['key']        = $design_key;
@@ -549,7 +642,11 @@ final class Plugin {
 
 		$nbd_key = ! empty( $data['nbd']['key'] ) ? $data['nbd']['key'] : $item->get_meta( '_nbd', true );
 		if ( ! empty( $nbd_key ) ) {
-			$synced = \MrTeeEditor\Export\NBDesignerBridge::sync_print_artifacts( $nbd_key, $svg_file, $print_file );
+			if ( ! empty( $side_exports ) && method_exists( '\MrTeeEditor\Export\NBDesignerBridge', 'sync_multi_side_artifacts' ) ) {
+				$synced = \MrTeeEditor\Export\NBDesignerBridge::sync_multi_side_artifacts( $nbd_key, $side_exports );
+			} else {
+				$synced = \MrTeeEditor\Export\NBDesignerBridge::sync_print_artifacts( $nbd_key, $svg_file, $print_file );
+			}
 			if ( empty( $data['nbd'] ) || ! is_array( $data['nbd'] ) ) {
 				$data['nbd'] = array(
 					'key'      => $nbd_key,
@@ -561,6 +658,9 @@ final class Plugin {
 			}
 			$data['nbd']['nbd_data']['svg']        = $synced['svg'];
 			$data['nbd']['nbd_data']['print_file'] = $synced['print_file'];
+			if ( ! empty( $synced['sides'] ) ) {
+				$data['nbd']['nbd_data']['sides'] = $synced['sides'];
+			}
 			$item->update_meta_data( '_nbdesigner_data', $data['nbd']['nbd_data'] );
 		}
 
@@ -569,14 +669,26 @@ final class Plugin {
 		$item->update_meta_data( '_mr_tee_print_url', $print_url );
 		$item->save();
 
+		$response_sides = array();
+		foreach ( $side_exports as $s_id => $s_exp ) {
+			$response_sides[ $s_id ] = array(
+				'side_id'          => $s_exp['side_id'],
+				'label'            => $s_exp['label'],
+				'svg_url'          => $this->normalize_same_site_url( $s_exp['svg_url'] ),
+				'print_url'        => $this->normalize_same_site_url( $s_exp['print_url'] ),
+				'print_dimensions' => $s_exp['print_dimensions'],
+			);
+		}
+
 		wp_send_json_success(
 			array(
-				'order_id'   => $order_id,
-				'item_id'    => $item_id,
-				'design_key' => $design_key,
-				'nbd_key'    => $nbd_key ? $nbd_key : '',
-				'svg_url'    => $this->normalize_same_site_url( $svg_url ),
-				'print_url'  => $this->normalize_same_site_url( $print_url ),
+				'order_id'     => $order_id,
+				'item_id'      => $item_id,
+				'design_key'   => $design_key,
+				'nbd_key'      => $nbd_key ? $nbd_key : '',
+				'svg_url'      => $this->normalize_same_site_url( $svg_url ),
+				'print_url'    => $this->normalize_same_site_url( $print_url ),
+				'side_exports' => $response_sides,
 			)
 		);
 	}

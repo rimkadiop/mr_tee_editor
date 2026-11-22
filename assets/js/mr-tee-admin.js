@@ -27,10 +27,18 @@
 			this.data = window.mrTeeAdminData || {};
 			this.config = this.data.config || {};
 			this.$canvasWrap = $('#mr-tee-stage-canvas-wrap');
+			this.defaultThumbUrl = $('.mr-tee-admin-wrap').attr('data-thumb-url')
+				|| $('#mr-tee-stage-garment-img').attr('src')
+				|| '';
 			this.activeFieldIndex = 0;
 			this._pendingSvgFetches = {};
 			this._loadedTtfFonts = new Set();
+			this._syncingSideDims = false;
+			this._multiviewInitialized = false;
 			this.allowedFonts = this.readInitialAllowedFonts();
+			this.printSides = this.readInitialPrintSides();
+			this.previewViews = this.readInitialPreviewViews();
+			this.activeViewId = this.previewViews.length ? this.previewViews[0].id : 'view_1';
 
 			// Track TTF fonts already rendered in @font-face CSS by Plugin::enqueue_admin_assets()
 			this.seedInitiallyLoadedTtfFonts();
@@ -48,6 +56,7 @@
 			this.bindDeleteField();
 			this.bindPresetReset();
 			this.bindDimensionControls();
+			this.bindMultiViewManager();
 			this.bindFontUploader();
 			this.bindProductAllowedFonts();
 			this.bindStagePreviewRefreshes();
@@ -244,10 +253,20 @@
 		bindFieldSwitcher() {
 			const self = this;
 
-			// Click on pill
+			// Click on pill (auto-switches view if field belongs to another printable side)
 			$(document).on('click', '.mr-tee-field-pill', function() {
 				const idx = parseInt($(this).attr('data-field-index'), 10);
-				if (!Number.isNaN(idx)) self.setActiveField(idx);
+				if (Number.isNaN(idx)) return;
+				const fieldSide = self.getFieldSideId(idx);
+				const activeView = self.getActiveView();
+				if (activeView && fieldSide && activeView.side_id !== fieldSide) {
+					const targetView = self.getPrimaryViewForSide(fieldSide, true);
+					if (targetView) {
+						self.setActiveView(targetView.id, { preferredFieldIndex: idx });
+						return;
+					}
+				}
+				self.setActiveField(idx);
 			});
 
 			// Direct click on box in stage
@@ -455,6 +474,7 @@
 			$(`#mr_tee_field_left_${idx}`).val(left);
 			$(`#mr_tee_field_top_${idx}`).val(top);
 			$(`#mr-tee-field-box-${idx}`).css({ left: left + '%', top: top + '%' });
+			this.saveFieldPlacementForActiveView(idx);
 			this.recalculateDimensions();
 		}
 
@@ -470,6 +490,7 @@
 			const rotTxt = deg !== 0 ? ` (${deg}°)` : '';
 			$(`.mr-tee-field-pill[data-field-index="${idx}"] .mr-tee-pill-dims`).text(`${curW}×${curH}%${rotTxt}`);
 
+			this.saveFieldPlacementForActiveView(idx);
 			this.recalculateDimensions();
 		}
 
@@ -490,6 +511,8 @@
 			const r = parseFloat($(`#mr_tee_field_rotate_${idx}`).val()) || 0;
 			const rotTxt = r !== 0 ? ` (${r}°)` : '';
 			$(`.mr-tee-field-pill[data-field-index="${idx}"] .mr-tee-pill-dims`).text(`${width}×${height}%${rotTxt}`);
+
+			this.saveFieldPlacementForActiveView(idx);
 
 			// Re-render preview text inside this box
 			this.renderBoxPreview(idx);
@@ -525,6 +548,7 @@
 				});
 
 				$(`.mr-tee-field-pill[data-field-index="${idx}"] .mr-tee-pill-dims`).text(`${w}×${h}%${rotTxt}`);
+				self.saveFieldPlacementForActiveView(idx);
 				self.renderBoxPreview(idx);
 				self.recalculateDimensions();
 			});
@@ -779,7 +803,8 @@
 			const isImage = fieldType === 'image';
 			const newIdx = $('.mr-tee-field-box').length;
 			const color = FIELD_COLORS[newIdx % FIELD_COLORS.length];
-			const prevIdx = newIdx - 1;
+			const activeSideId = this.getActiveSideId();
+			const safeSideId = this.escapeXml(activeSideId);
 
 			this._uidCounter = (this._uidCounter || 0) + 1;
 			const uid = 'f' + Date.now().toString(36) + '_' + this._uidCounter + '_' + Math.random().toString(36).slice(2, 5);
@@ -787,24 +812,52 @@
 			const refId = `id-ref-${isImage ? 'image' : 'text'}-${uid}`;
 			const colorRefId = `id-ref-color-${uid}`;
 
-			let prevTop = 25.0;
-			let prevHeight = 8.5;
-			if (prevIdx >= 0) {
-				prevTop = parseFloat($(`#mr_tee_field_top_${prevIdx}`).val()) || 25.0;
-				prevHeight = parseFloat($(`#mr_tee_field_height_${prevIdx}`).val()) || 8.5;
+			// Stack below the last field on the SAME printable side (or start at 25% on a fresh side)
+			let lastSameSideIdx = -1;
+			for (let i = newIdx - 1; i >= 0; i--) {
+				if (this.getFieldSideId(i) === activeSideId) {
+					lastSameSideIdx = i;
+					break;
+				}
 			}
 
 			const newWidth = isImage ? 35.0 : 40.0;
 			const newHeight = isImage ? 30.0 : 8.5;
 			const newLeft = isImage ? 32.5 : 30.0;
 			const maxTop = isImage ? Math.max(5.0, 96.0 - newHeight) : 88.0;
-			const newTop = Math.min(maxTop, Math.round((prevTop + prevHeight + 2.0) * 10) / 10);
+			let newTop = 25.0;
+			if (lastSameSideIdx >= 0) {
+				const prevTop = parseFloat($(`#mr_tee_field_top_${lastSameSideIdx}`).val()) || 25.0;
+				const prevHeight = parseFloat($(`#mr_tee_field_height_${lastSameSideIdx}`).val()) || 8.5;
+				newTop = Math.min(maxTop, Math.round((prevTop + prevHeight + 2.0) * 10) / 10);
+			}
+
 			const fieldLabel = isImage ? `Image ${newIdx + 1}` : `Texte ${newIdx + 1}`;
 			const defaultText = isImage ? '' : `Ligne ${newIdx + 1}`;
 
 			const allowedFonts = this.getAllowedFonts();
 			const defaultFontId = allowedFonts[0] || '';
 			const fontSelectOptions = this.generateFontSelectOptions(defaultFontId, allowedFonts);
+			const sideSelectOptions = this.generateSideSelectOptions(activeSideId);
+
+			// Seed placements for all views belonging to activeSideId
+			const initialPlacements = {};
+			const seedCoords = {
+				box_left: newLeft,
+				box_top: newTop,
+				box_width: newWidth,
+				box_height: newHeight,
+				box_rotate: 0,
+			};
+			this.previewViews.forEach(v => {
+				if (v && v.side_id === activeSideId) {
+					initialPlacements[v.id] = { ...seedCoords };
+				}
+			});
+			if (this.activeViewId && !initialPlacements[this.activeViewId]) {
+				initialPlacements[this.activeViewId] = { ...seedCoords };
+			}
+			const placementsJsonAttr = this.escapeXml(JSON.stringify(initialPlacements));
 
 			// 1. Add Pill
 			const pillHtml = `
@@ -813,6 +866,7 @@
 					class="mr-tee-field-pill ${isImage ? 'is-image-pill' : ''}"
 					data-field-index="${newIdx}"
 					data-field-type="${fieldType}"
+					data-side-id="${safeSideId}"
 					style="--pill-color: ${color};"
 				>
 					<span class="mr-tee-pill-badge" style="background: ${color};">${newIdx + 1}</span>
@@ -830,6 +884,7 @@
 					class="mr-tee-field-box ${isImage ? 'is-image-field' : ''}"
 					data-field-index="${newIdx}"
 					data-field-type="${fieldType}"
+					data-side-id="${safeSideId}"
 					style="left: ${newLeft}%; top: ${newTop}%; width: ${newWidth}%; height: ${newHeight}%; transform: rotate(0deg); transform-origin: center center; --field-color: ${color};"
 				>
 					<span class="mr-tee-box-badge" style="background: ${color};">
@@ -853,10 +908,12 @@
 					id="mr-tee-field-panel-${newIdx}"
 					data-field-index="${newIdx}"
 					data-field-type="${fieldType}"
+					data-side-id="${safeSideId}"
 				>
 					<input type="hidden" name="mr_tee_config[text_lines][${newIdx}][id]" value="${fieldId}" class="mr-tee-field-id" data-field-index="${newIdx}" />
 					<input type="hidden" name="mr_tee_config[text_lines][${newIdx}][ref_id]" value="${refId}" class="mr-tee-field-ref-id" data-field-index="${newIdx}" />
 					<input type="hidden" name="mr_tee_config[text_lines][${newIdx}][color_ref_id]" value="${colorRefId}" class="mr-tee-field-color-ref-id" data-field-index="${newIdx}" />
+					<input type="hidden" id="mr_tee_field_placements_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][placements]" value="${placementsJsonAttr}" class="mr-tee-field-placements-json" data-field-index="${newIdx}" />
 					<div class="mr-tee-panel-badge-row">
 						<span class="mr-tee-panel-indicator" style="background: ${color};"></span>
 						<strong class="mr-tee-panel-title">Champ #${newIdx + 1} : ${fieldLabel}</strong>
@@ -866,6 +923,14 @@
 							<th><label>Nom du Champ</label></th>
 							<td>
 								<input type="text" name="mr_tee_config[text_lines][${newIdx}][label]" value="${fieldLabel}" class="regular-text mr-tee-field-label-input" data-field-index="${newIdx}" />
+							</td>
+						</tr>
+						<tr>
+							<th><label>Face d'Impression</label></th>
+							<td>
+								<select name="mr_tee_config[text_lines][${newIdx}][side_id]" class="mr-tee-field-side-select" data-field-index="${newIdx}">
+									${sideSelectOptions}
+								</select>
 							</td>
 						</tr>
 						<tr>
@@ -1013,7 +1078,9 @@
 			// Show delete buttons
 			$('.mr-tee-btn-delete-field').show();
 
-			// Activate new field
+			// Activate new field & refresh side counters
+			this.updateEmptySideNotice(activeSideId, false);
+			this.renderSidesBar();
 			this.setActiveField(newIdx);
 			this.renderBoxPreview(newIdx);
 			this.recalculateDimensions();
@@ -1041,13 +1108,29 @@
 				// Re-index remaining elements
 				self.reindexFields();
 				const remaining = $('.mr-tee-field-box').length;
-				self.setActiveField(Math.max(0, Math.min(idx, remaining - 1)));
+				const activeSideId = self.getActiveSideId();
+				let nextActiveIdx = -1;
+				for (let i = 0; i < remaining; i++) {
+					if (self.getFieldSideId(i) === activeSideId) {
+						nextActiveIdx = i;
+						if (i >= idx) break;
+					}
+				}
+				self.renderSidesBar();
+				if (nextActiveIdx !== -1) {
+					self.updateEmptySideNotice(activeSideId, false);
+					self.setActiveField(nextActiveIdx);
+				} else {
+					self.updateEmptySideNotice(activeSideId, true);
+					$('.mr-tee-field-box, .mr-tee-field-pill, .mr-tee-field-panel').removeClass('is-active');
+				}
 				self.renderAllBoxesPreviews();
 				self.recalculateDimensions();
 			});
 		}
 
 		reindexFields() {
+			const self = this;
 			const $pills = $('.mr-tee-field-pill');
 			const $boxes = $('.mr-tee-field-box');
 			const $panels = $('.mr-tee-field-panel');
@@ -1055,11 +1138,22 @@
 			$panels.each(function(i) {
 				const color = FIELD_COLORS[i % FIELD_COLORS.length];
 				const labelVal = $(this).find('.mr-tee-field-label-input').val() || `Champ ${i + 1}`;
+				const sideVal = $(this).find('.mr-tee-field-side-select').val()
+					|| $(this).attr('data-side-id')
+					|| (self.printSides[0] ? self.printSides[0].id : 'front');
 				$(this).attr('id', `mr-tee-field-panel-${i}`);
 				$(this).attr('data-field-index', i);
+				$(this).attr('data-side-id', sideVal);
 				$(this).find('.mr-tee-field-id').attr('name', `mr_tee_config[text_lines][${i}][id]`).attr('data-field-index', i);
 				$(this).find('.mr-tee-field-ref-id').attr('name', `mr_tee_config[text_lines][${i}][ref_id]`).attr('data-field-index', i);
 				$(this).find('.mr-tee-field-color-ref-id').attr('name', `mr_tee_config[text_lines][${i}][color_ref_id]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-placements-json')
+					.attr('id', `mr_tee_field_placements_${i}`)
+					.attr('name', `mr_tee_config[text_lines][${i}][placements]`)
+					.attr('data-field-index', i);
+				$(this).find('.mr-tee-field-side-select')
+					.attr('name', `mr_tee_config[text_lines][${i}][side_id]`)
+					.attr('data-field-index', i);
 				$(this).find('.mr-tee-panel-indicator').css('background', color);
 				$(this).find('.mr-tee-panel-title').text(`Champ #${i + 1} : ${labelVal}`);
 				$(this).find('.mr-tee-field-label-input').attr('name', `mr_tee_config[text_lines][${i}][label]`).attr('data-field-index', i);
@@ -1092,7 +1186,9 @@
 
 			$pills.each(function(i) {
 				const color = FIELD_COLORS[i % FIELD_COLORS.length];
+				const sideVal = $(`#mr-tee-field-panel-${i}`).attr('data-side-id') || $(this).attr('data-side-id') || 'front';
 				$(this).attr('data-field-index', i);
+				$(this).attr('data-side-id', sideVal);
 				$(this).css('--pill-color', color);
 				$(this).find('.mr-tee-pill-badge').text(i + 1).css('background', color);
 			});
@@ -1102,8 +1198,10 @@
 				const $panel = $(`#mr-tee-field-panel-${i}`);
 				const isImg = $panel.find('.mr-tee-field-type-select').val() === 'image' || $panel.attr('data-field-type') === 'image';
 				const labelVal = $panel.find('.mr-tee-field-label-input').val() || `Champ ${i + 1}`;
+				const sideVal = $panel.attr('data-side-id') || $(this).attr('data-side-id') || 'front';
 				$(this).attr('id', `mr-tee-field-box-${i}`);
 				$(this).attr('data-field-index', i);
+				$(this).attr('data-side-id', sideVal);
 				$(this).css('--field-color', color);
 				$(this).find('.mr-tee-box-badge').text(`${i + 1}. ${isImg ? '🖼️ ' : ''}${labelVal}`).css('background', color);
 				$(this).find('.mr-tee-box-svg-holder').attr('id', `mr-tee-box-svg-${i}`);
@@ -1120,11 +1218,13 @@
 		}
 
 		/**
-		 * Render live SVG inside each rectangle box.
+		 * Render live SVG inside each rectangle box visible on the active side.
 		 */
 		renderAllBoxesPreviews() {
 			const count = $('.mr-tee-field-box').length;
 			for (let i = 0; i < count; i++) {
+				const $box = $(`#mr-tee-field-box-${i}`);
+				if ($box.hasClass('is-other-side')) continue;
 				this.renderBoxPreview(i);
 			}
 		}
@@ -1279,6 +1379,7 @@
 					const startCenterY = (vbH / 2) - (((numLines - 1) * lineStepY) / 2);
 					const fbFontSize = Math.round(unitsPerEm * 0.78);
 					const fbStrokeWidth = Math.round(unitsPerEm * 0.11);
+					const baselineOffsetUnits = this.getOpenTypeSvgBaselineOffset(svgData);
 
 					let glyphsMarkup = '';
 					for (let li = 0; li < lines.length; li++) {
@@ -1286,7 +1387,7 @@
 						const lineW = (lineWidths[li] / unitsPerEm) * effectiveFontSize;
 						let cursorX = (vbW / 2) - (lineW / 2);
 						const lineCenterY = startCenterY + (li * lineStepY);
-						const baselineY = lineCenterY + (ascent * 0.35 * scale);
+						const baselineY = lineCenterY + (baselineOffsetUnits * scale);
 
 						for (let i = 0; i < lineStr.length; i++) {
 							const ch = lineStr[i];
@@ -1404,6 +1505,131 @@
 			`;
 
 			$holder.html(svg);
+		}
+
+		/**
+		 * Extract the transformed vertical [minY, maxY] bounds (in font design units)
+		 * of the primary <image> inside an OpenType-SVG glyph markup string.
+		 */
+		extractGlyphImageYBounds(svgStr) {
+			if (!svgStr || !svgStr.includes('<image')) return null;
+			const stack = [];
+			const tagRe = /<(\/?)(g|image)\b([^>]*?)(\/?)>/gi;
+			let m;
+			let best = null;
+
+			while ((m = tagRe.exec(svgStr)) !== null) {
+				const isClose = m[1] === '/';
+				const tag = m[2].toLowerCase();
+				const attrs = m[3] || '';
+				const isSelfClose = m[4] === '/';
+
+				if (tag === 'g') {
+					if (isClose) {
+						if (stack.length) stack.pop();
+					} else if (!isSelfClose) {
+						const tm = attrs.match(/transform\s*=\s*(?:"([^"]*)"|'([^']*)')/i);
+						stack.push(tm ? (tm[1] || tm[2] || '') : '');
+					}
+				} else if (tag === 'image' && !isClose) {
+					const hm = attrs.match(/\bheight\s*=\s*(?:"([+-]?[\d.]+)"|'([+-]?[\d.]+)')/i);
+					const h = hm ? parseFloat(hm[1] || hm[2]) : NaN;
+					if (!Number.isFinite(h) || h <= 0) continue;
+
+					const ym = attrs.match(/\by\s*=\s*(?:"([+-]?[\d.]+)"|'([+-]?[\d.]+)')/i);
+					let y0 = ym ? parseFloat(ym[1] || ym[2]) : 0;
+					if (!Number.isFinite(y0)) y0 = 0;
+					let y1 = y0 + h;
+
+					// Apply ancestor <g> transforms innermost -> outermost, right-to-left per SVG spec
+					for (let si = stack.length - 1; si >= 0; si--) {
+						const tStr = stack[si];
+						if (!tStr) continue;
+						const ops = [];
+						const opRe = /(translate|scale|matrix)\s*\(([^)]+)\)/gi;
+						let om;
+						while ((om = opRe.exec(tStr)) !== null) {
+							const fn = om[1].toLowerCase();
+							const nums = om[2].trim().split(/[\s,]+/).map(Number).filter(Number.isFinite);
+							ops.push({ fn, nums });
+						}
+						for (let oi = ops.length - 1; oi >= 0; oi--) {
+							const { fn, nums } = ops[oi];
+							if (fn === 'translate' && nums.length >= 2) {
+								y0 += nums[1];
+								y1 += nums[1];
+							} else if (fn === 'scale' && nums.length >= 1) {
+								const sy = nums.length >= 2 ? nums[1] : nums[0];
+								y0 *= sy;
+								y1 *= sy;
+							} else if (fn === 'matrix' && nums.length >= 6) {
+								y0 = nums[3] * y0 + nums[5];
+								y1 = nums[3] * y1 + nums[5];
+							}
+						}
+					}
+
+					const minY = Math.min(y0, y1);
+					const maxY = Math.max(y0, y1);
+					if (!best || (maxY - minY) > (best.maxY - best.minY)) {
+						best = { minY, maxY };
+					}
+				}
+			}
+
+			return best;
+		}
+
+		/**
+		 * Compute the optical baseline offset (in positive font units below box vertical center)
+		 * for an OpenType-SVG font, matching frontend optical centering.
+		 */
+		getOpenTypeSvgBaselineOffset(svgData) {
+			if (!svgData) return 800 * 0.42;
+			if (typeof svgData._opticalBaselineOffset === 'number' && Number.isFinite(svgData._opticalBaselineOffset)) {
+				return svgData._opticalBaselineOffset;
+			}
+
+			const unitsPerEm = svgData.unitsPerEm || 1000;
+			const ascent = svgData.ascent || 800;
+			const glyphs = svgData.glyphs || {};
+			const refChars = ['H', 'E', 'A', 'M', 'O', 'T', 'B', 'R', 'S', 'N', 'D', 'P'];
+			const offsets = [];
+
+			for (let i = 0; i < refChars.length; i++) {
+				const ch = refChars[i];
+				const g = glyphs[ch] || glyphs[ch.toLowerCase()];
+				if (g && g.svg) {
+					const bounds = this.extractGlyphImageYBounds(g.svg);
+					if (bounds) {
+						offsets.push(-((bounds.minY + bounds.maxY) / 2));
+					}
+				}
+			}
+
+			if (!offsets.length) {
+				const keys = Object.keys(glyphs);
+				for (let i = 0; i < keys.length && offsets.length < 10; i++) {
+					const g = glyphs[keys[i]];
+					if (g && g.svg) {
+						const bounds = this.extractGlyphImageYBounds(g.svg);
+						if (bounds) {
+							offsets.push(-((bounds.minY + bounds.maxY) / 2));
+						}
+					}
+				}
+			}
+
+			let computed = ascent * 0.42;
+			if (offsets.length) {
+				const avg = offsets.reduce((sum, val) => sum + val, 0) / offsets.length;
+				if (Number.isFinite(avg) && avg > 0 && avg < unitsPerEm * 1.5) {
+					computed = avg;
+				}
+			}
+
+			svgData._opticalBaselineOffset = computed;
+			return computed;
 		}
 
 		fetchSvgFontData(fontId, callback) {
@@ -1884,6 +2110,8 @@
 
 			// Listen to dimension inputs on Stage Toolbar
 			$(document).on('input change', '#mr_tee_real_width, #mr_tee_real_height, #mr_tee_print_unit, #mr_tee_dpi, #mr_tee_product_type, #mr_tee_lock_aspect_ratio', function() {
+				if (self._syncingSideDims) return;
+
 				// Sync to TAB 4
 				$('#mr_tee_tab4_product_type').val($('#mr_tee_product_type').val());
 				$('#mr_tee_tab4_real_width').val($('#mr_tee_real_width').val());
@@ -1892,12 +2120,15 @@
 				$('#mr_tee_tab4_dpi').val($('#mr_tee_dpi').val());
 				$('#mr_tee_tab4_lock_ratio').prop('checked', $('#mr_tee_lock_aspect_ratio').is(':checked'));
 
+				self.updateActiveSideDimensionsFromToolbar();
 				self.recalculateDimensions();
 				requestAnimationFrame(() => self.renderAllBoxesPreviews());
 			});
 
 			// Listen to dimension inputs on TAB 4
 			$(document).on('input change', '#mr_tee_tab4_real_width, #mr_tee_tab4_real_height, #mr_tee_tab4_print_unit, #mr_tee_tab4_dpi, #mr_tee_tab4_product_type, #mr_tee_tab4_lock_ratio', function() {
+				if (self._syncingSideDims) return;
+
 				// Sync to Stage Toolbar
 				$('#mr_tee_product_type').val($('#mr_tee_tab4_product_type').val());
 				$('#mr_tee_real_width').val($('#mr_tee_tab4_real_width').val());
@@ -1906,6 +2137,7 @@
 				$('#mr_tee_dpi').val($('#mr_tee_tab4_dpi').val());
 				$('#mr_tee_lock_aspect_ratio').prop('checked', $('#mr_tee_tab4_lock_ratio').is(':checked'));
 
+				self.updateActiveSideDimensionsFromToolbar();
 				self.recalculateDimensions();
 				requestAnimationFrame(() => self.renderAllBoxesPreviews());
 			});
@@ -1932,6 +2164,7 @@
 				$('#mr_tee_tab4_real_height').val(pH);
 				$('#mr_tee_tab4_lock_ratio').prop('checked', pLock);
 
+				self.updateActiveSideDimensionsFromToolbar();
 				self.recalculateDimensions();
 				requestAnimationFrame(() => self.renderAllBoxesPreviews());
 			});
@@ -1941,6 +2174,7 @@
 		}
 
 		recalculateDimensions() {
+			const self = this;
 			const w = parseFloat($('#mr_tee_real_width').val()) || 30.0;
 			const h = parseFloat($('#mr_tee_real_height').val()) || 40.0;
 			const unit = $('#mr_tee_print_unit').val() || 'cm';
@@ -1949,13 +2183,16 @@
 			const isLocked = $('#mr_tee_lock_aspect_ratio').is(':checked') || pType === 'flat_object';
 
 			const refRatio = (h > 0) ? (w / h) : 1.0;
+			const activeSideId = this.getActiveSideId();
 
-			// Calculate cumulative bounding box across all active fields
+			// Calculate cumulative bounding box across all fields on the active printable side
 			let xMin = 100, yMin = 100, xMax = 0, yMax = 0;
 			let boxCount = 0;
 			$('.mr-tee-field-box').each(function() {
 				const idx = parseInt($(this).attr('data-field-index'), 10);
 				if (Number.isNaN(idx)) return;
+				if (activeSideId && self.getFieldSideId(idx) !== activeSideId) return;
+
 				const l = parseFloat($(`#mr_tee_field_left_${idx}`).val()) || 0;
 				const t = parseFloat($(`#mr_tee_field_top_${idx}`).val()) || 0;
 				const bw = parseFloat($(`#mr_tee_field_width_${idx}`).val()) || 10;
@@ -2029,6 +2266,1127 @@
 					this.$canvasWrap.css('aspect-ratio', '');
 				}
 			}
+		}
+
+		/* =====================================================================
+		 * Multi-Side & Multi-View Stage Manager (v2.4.0)
+		 * ===================================================================== */
+
+		readInitialPrintSides() {
+			const fallbackSide = {
+				id: 'front',
+				label: 'Recto (Face)',
+				print_real_width: parseFloat($('#mr_tee_real_width').val()) || parseFloat(this.config.print_real_width) || 30.0,
+				print_real_height: parseFloat($('#mr_tee_real_height').val()) || parseFloat(this.config.print_real_height) || 40.0,
+				print_unit: $('#mr_tee_print_unit').val() || this.config.print_unit || 'cm',
+				dpi: parseInt($('#mr_tee_dpi').val(), 10) || parseInt(this.config.dpi, 10) || 300,
+				product_type: $('#mr_tee_product_type').val() || this.config.product_type || 'garment',
+				lock_aspect_ratio: $('#mr_tee_lock_aspect_ratio').length
+					? $('#mr_tee_lock_aspect_ratio').is(':checked')
+					: Boolean(this.config.lock_aspect_ratio),
+			};
+
+			let parsed = null;
+			const $input = $('#mr_tee_print_sides_json');
+			if ($input.length) {
+				try {
+					const raw = JSON.parse($input.val() || '[]');
+					if (Array.isArray(raw) && raw.length) {
+						parsed = raw;
+					}
+				} catch (e) {
+					parsed = null;
+				}
+			}
+			if (!parsed && Array.isArray(this.config.print_sides) && this.config.print_sides.length) {
+				parsed = this.config.print_sides;
+			}
+			if (!parsed || !parsed.length) {
+				return [fallbackSide];
+			}
+
+			const seen = new Set();
+			const normalized = [];
+			parsed.forEach((s, idx) => {
+				if (!s || typeof s !== 'object') return;
+				let id = String(s.id || (idx === 0 ? 'front' : `side_${idx + 1}`)).trim();
+				if (!id) id = `side_${idx + 1}`;
+				if (seen.has(id)) return;
+				seen.add(id);
+				const prodType = (s.product_type === 'flat_object') ? 'flat_object' : 'garment';
+				normalized.push({
+					id,
+					label: String(s.label || (id === 'front' ? 'Recto (Face)' : (id === 'back' ? 'Verso (Dos)' : id))).trim(),
+					print_real_width: Math.max(0.1, parseFloat(s.print_real_width) || fallbackSide.print_real_width),
+					print_real_height: Math.max(0.1, parseFloat(s.print_real_height) || fallbackSide.print_real_height),
+					print_unit: ['cm', 'mm', 'in'].includes(s.print_unit) ? s.print_unit : fallbackSide.print_unit,
+					dpi: Math.max(72, parseInt(s.dpi, 10) || fallbackSide.dpi),
+					product_type: prodType,
+					lock_aspect_ratio: Boolean(s.lock_aspect_ratio) || prodType === 'flat_object',
+				});
+			});
+
+			return normalized.length ? normalized : [fallbackSide];
+		}
+
+		readInitialPreviewViews() {
+			const defaultSideId = (this.printSides && this.printSides[0]) ? this.printSides[0].id : 'front';
+			const fallbackImg = this.defaultThumbUrl || $('#mr-tee-stage-garment-img').attr('src') || '';
+			const fallbackView = {
+				id: 'view_1',
+				label: 'Vue Principale',
+				side_id: defaultSideId,
+				view_role: 'full',
+				image_id: 0,
+				image_url: fallbackImg,
+				blend_mode: 'normal',
+				is_cart_preview: true,
+			};
+
+			let parsed = null;
+			const $input = $('#mr_tee_preview_views_json');
+			if ($input.length) {
+				try {
+					const raw = JSON.parse($input.val() || '[]');
+					if (Array.isArray(raw) && raw.length) {
+						parsed = raw;
+					}
+				} catch (e) {
+					parsed = null;
+				}
+			}
+			if (!parsed && Array.isArray(this.config.preview_views) && this.config.preview_views.length) {
+				parsed = this.config.preview_views;
+			}
+			if (!parsed || !parsed.length) {
+				return [fallbackView];
+			}
+
+			const validSideIds = new Set(this.printSides.map(s => s.id));
+			const seen = new Set();
+			const normalized = [];
+			parsed.forEach((v, idx) => {
+				if (!v || typeof v !== 'object') return;
+				let id = String(v.id || `view_${idx + 1}`).trim();
+				if (!id) id = `view_${idx + 1}`;
+				if (seen.has(id)) return;
+				seen.add(id);
+				const sideId = (v.side_id && validSideIds.has(v.side_id)) ? v.side_id : defaultSideId;
+				const role = ['full', 'closeup', 'detail'].includes(v.view_role) ? v.view_role : 'full';
+				const blend = ['normal', 'multiply', 'soft_ink'].includes(v.blend_mode) ? v.blend_mode : 'normal';
+				normalized.push({
+					id,
+					label: String(v.label || `Vue ${idx + 1}`).trim(),
+					side_id: sideId,
+					view_role: role,
+					image_id: parseInt(v.image_id, 10) || 0,
+					image_url: String(v.image_url || '').trim(),
+					blend_mode: blend,
+					is_cart_preview: v.is_cart_preview !== undefined ? Boolean(v.is_cart_preview) : (role === 'full'),
+				});
+			});
+
+			return normalized.length ? normalized : [fallbackView];
+		}
+
+		getSideById(sideId) {
+			if (!Array.isArray(this.printSides) || !this.printSides.length) return null;
+			return this.printSides.find(s => s.id === sideId) || this.printSides[0];
+		}
+
+		getViewById(viewId) {
+			if (!Array.isArray(this.previewViews) || !this.previewViews.length) return null;
+			return this.previewViews.find(v => v.id === viewId) || this.previewViews[0];
+		}
+
+		getActiveView() {
+			return this.getViewById(this.activeViewId);
+		}
+
+		getActiveSideId() {
+			const v = this.getActiveView();
+			if (v && v.side_id) return v.side_id;
+			return (this.printSides && this.printSides[0]) ? this.printSides[0].id : 'front';
+		}
+
+		getPrimaryViewForSide(sideId, strict = false) {
+			if (!Array.isArray(this.previewViews) || !this.previewViews.length) return null;
+			const fullMatch = this.previewViews.find(v => v.side_id === sideId && v.view_role === 'full');
+			if (fullMatch) return fullMatch;
+			const anyMatch = this.previewViews.find(v => v.side_id === sideId);
+			if (anyMatch) return anyMatch;
+			return strict ? null : this.previewViews[0];
+		}
+
+		generateUniqueSideId(label) {
+			let base = String(label || 'side');
+			if (typeof base.normalize === 'function') {
+				base = base.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+			}
+			base = base.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+			if (!base) base = 'side';
+
+			const used = new Set(this.printSides.map(s => s.id));
+			if (!used.has(base)) return base;
+			let n = 2;
+			while (used.has(`${base}_${n}`)) n++;
+			return `${base}_${n}`;
+		}
+
+		generateUniqueViewId(base = 'view') {
+			const used = new Set(this.previewViews.map(v => v.id));
+			if (base !== 'view' && !used.has(base)) return base;
+			let n = (base === 'view') ? (this.previewViews.length + 1) : 2;
+			while (used.has(`${base}_${n}`)) n++;
+			return `${base}_${n}`;
+		}
+
+		generateSideSelectOptions(selectedSideId) {
+			return this.printSides.map(s => {
+				const sel = (s.id === selectedSideId) ? 'selected' : '';
+				return `<option value="${this.escapeXml(s.id)}" ${sel}>${this.escapeXml(s.label || s.id)}</option>`;
+			}).join('');
+		}
+
+		refreshAllSideSelects() {
+			const self = this;
+			const activeView = this.getActiveView();
+			const defaultSideId = this.printSides[0] ? this.printSides[0].id : 'front';
+			const validIds = new Set(this.printSides.map(s => s.id));
+
+			const $viewSide = $('#mr_tee_view_side_id');
+			if ($viewSide.length) {
+				const curSide = (activeView && validIds.has(activeView.side_id)) ? activeView.side_id : defaultSideId;
+				$viewSide.html(this.generateSideSelectOptions(curSide)).val(curSide);
+			}
+
+			$('.mr-tee-field-side-select').each(function() {
+				const $sel = $(this);
+				const idx = parseInt($sel.attr('data-field-index'), 10);
+				let curVal = $sel.val() || $(`#mr-tee-field-panel-${idx}`).attr('data-side-id') || defaultSideId;
+				if (!validIds.has(curVal)) curVal = defaultSideId;
+				$sel.html(self.generateSideSelectOptions(curVal)).val(curVal);
+			});
+		}
+
+		getFieldSideId(idx) {
+			const defaultSideId = (this.printSides && this.printSides[0]) ? this.printSides[0].id : 'front';
+			const $sel = $(`#mr-tee-field-panel-${idx} .mr-tee-field-side-select`);
+			if ($sel.length && $sel.val()) {
+				return String($sel.val());
+			}
+			const panelSide = $(`#mr-tee-field-panel-${idx}`).attr('data-side-id');
+			if (panelSide) return String(panelSide);
+			const boxSide = $(`#mr-tee-field-box-${idx}`).attr('data-side-id');
+			if (boxSide) return String(boxSide);
+			return defaultSideId;
+		}
+
+		getFieldCurrentCoords(idx) {
+			const defaultH = this.getFieldType(idx) === 'image' ? 30.0 : 8.5;
+			const round1 = (val, fallback) => {
+				const n = parseFloat(val);
+				return Number.isFinite(n) ? (Math.round(n * 10) / 10) : fallback;
+			};
+			const rawRot = parseFloat($(`#mr_tee_field_rotate_${idx}`).val());
+			return {
+				box_left: round1($(`#mr_tee_field_left_${idx}`).val(), 30.0),
+				box_top: round1($(`#mr_tee_field_top_${idx}`).val(), 25.0),
+				box_width: round1($(`#mr_tee_field_width_${idx}`).val(), 40.0),
+				box_height: round1($(`#mr_tee_field_height_${idx}`).val(), defaultH),
+				box_rotate: Number.isFinite(rawRot) ? Math.round(rawRot) : 0,
+			};
+		}
+
+		getFieldPlacements(idx) {
+			let $input = $(`#mr_tee_field_placements_${idx}`);
+			if (!$input.length) {
+				$input = $(`#mr-tee-field-panel-${idx} .mr-tee-field-placements-json`);
+			}
+			if (!$input.length) return {};
+			try {
+				const raw = JSON.parse($input.val() || '{}');
+				return (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+			} catch (e) {
+				return {};
+			}
+		}
+
+		setFieldPlacements(idx, placementsObj) {
+			let $input = $(`#mr_tee_field_placements_${idx}`);
+			if (!$input.length) {
+				$input = $(`#mr-tee-field-panel-${idx} .mr-tee-field-placements-json`);
+			}
+			if (!$input.length) return;
+			$input.val(JSON.stringify(placementsObj || {}));
+		}
+
+		saveFieldPlacementForActiveView(idx) {
+			const activeView = this.getActiveView();
+			if (!activeView || !activeView.id) return;
+			if (this.getFieldSideId(idx) !== activeView.side_id) return;
+
+			const placements = this.getFieldPlacements(idx);
+			placements[activeView.id] = this.getFieldCurrentCoords(idx);
+			this.setFieldPlacements(idx, placements);
+		}
+
+		flushActiveViewPlacements() {
+			const activeView = this.getActiveView();
+			if (!activeView || !activeView.id) return;
+			const count = $('.mr-tee-field-box').length;
+			for (let i = 0; i < count; i++) {
+				if (this.getFieldSideId(i) === activeView.side_id) {
+					this.saveFieldPlacementForActiveView(i);
+				}
+			}
+		}
+
+		applyFieldCoordsToDom(idx, coords) {
+			if (!coords || typeof coords !== 'object') return;
+			const defaultH = this.getFieldType(idx) === 'image' ? 30.0 : 8.5;
+			const l = Number.isFinite(parseFloat(coords.box_left)) ? parseFloat(coords.box_left) : 30.0;
+			const t = Number.isFinite(parseFloat(coords.box_top)) ? parseFloat(coords.box_top) : 25.0;
+			const w = Number.isFinite(parseFloat(coords.box_width)) ? parseFloat(coords.box_width) : 40.0;
+			const h = Number.isFinite(parseFloat(coords.box_height)) ? parseFloat(coords.box_height) : defaultH;
+			const r = Number.isFinite(parseFloat(coords.box_rotate)) ? parseFloat(coords.box_rotate) : 0;
+
+			$(`#mr_tee_field_left_${idx}`).val(l);
+			$(`#mr_tee_field_top_${idx}`).val(t);
+			$(`#mr_tee_field_width_${idx}`).val(w);
+			$(`#mr_tee_field_height_${idx}`).val(h);
+			$(`#mr_tee_field_rotate_${idx}`).val(r);
+
+			$(`#mr-tee-field-box-${idx}`).css({
+				left: l + '%',
+				top: t + '%',
+				width: w + '%',
+				height: h + '%',
+				transform: `rotate(${r}deg)`,
+				'transform-origin': 'center center',
+			});
+
+			const rotTxt = r !== 0 ? ` (${r}°)` : '';
+			$(`.mr-tee-field-pill[data-field-index="${idx}"] .mr-tee-pill-dims`).text(`${w}×${h}%${rotTxt}`);
+		}
+
+		loadSideDimensionsToToolbar(sideId) {
+			const side = this.getSideById(sideId);
+			if (!side) return;
+
+			this._syncingSideDims = true;
+			try {
+				$('#mr_tee_real_width').val(side.print_real_width);
+				$('#mr_tee_real_height').val(side.print_real_height);
+				$('#mr_tee_print_unit').val(side.print_unit);
+				$('#mr_tee_dpi').val(side.dpi);
+				$('#mr_tee_product_type').val(side.product_type);
+				$('#mr_tee_lock_aspect_ratio').prop('checked', Boolean(side.lock_aspect_ratio));
+
+				$('#mr_tee_tab4_real_width').val(side.print_real_width);
+				$('#mr_tee_tab4_real_height').val(side.print_real_height);
+				$('#mr_tee_tab4_print_unit').val(side.print_unit);
+				$('#mr_tee_tab4_dpi').val(side.dpi);
+				$('#mr_tee_tab4_product_type').val(side.product_type);
+				$('#mr_tee_tab4_lock_ratio').prop('checked', Boolean(side.lock_aspect_ratio));
+			} finally {
+				this._syncingSideDims = false;
+			}
+		}
+
+		updateActiveSideDimensionsFromToolbar(opts = {}) {
+			const activeSide = this.getSideById(this.getActiveSideId());
+			if (!activeSide) return;
+
+			const w = parseFloat($('#mr_tee_real_width').val());
+			const h = parseFloat($('#mr_tee_real_height').val());
+			const unit = $('#mr_tee_print_unit').val() || 'cm';
+			const dpi = parseInt($('#mr_tee_dpi').val(), 10);
+			const prodType = $('#mr_tee_product_type').val() === 'flat_object' ? 'flat_object' : 'garment';
+			const lockRatio = $('#mr_tee_lock_aspect_ratio').is(':checked') || prodType === 'flat_object';
+
+			if (Number.isFinite(w) && w > 0) activeSide.print_real_width = w;
+			if (Number.isFinite(h) && h > 0) activeSide.print_real_height = h;
+			activeSide.print_unit = ['cm', 'mm', 'in'].includes(unit) ? unit : 'cm';
+			if (Number.isFinite(dpi) && dpi >= 72) activeSide.dpi = dpi;
+			activeSide.product_type = prodType;
+			activeSide.lock_aspect_ratio = lockRatio;
+
+			if (!opts.skipJsonSync) {
+				this.syncHiddenMultiViewJson();
+				this.renderSidesBar();
+			}
+		}
+
+		syncHiddenMultiViewJson() {
+			const $sidesInput = $('#mr_tee_print_sides_json');
+			if ($sidesInput.length) {
+				$sidesInput.val(JSON.stringify(this.printSides));
+			}
+			const $viewsInput = $('#mr_tee_preview_views_json');
+			if ($viewsInput.length) {
+				$viewsInput.val(JSON.stringify(this.previewViews));
+			}
+		}
+
+		/**
+		 * Flush multi-view hidden JSON inputs and optionally sync each field's
+		 * top-level box_* inputs to the primary/full view of its side before form submit.
+		 */
+		syncMultiViewInputs(syncPrimaryBoxes = false) {
+			this.flushActiveViewPlacements();
+			this.updateActiveSideDimensionsFromToolbar({ skipJsonSync: true });
+			this.syncHiddenMultiViewJson();
+
+			if (!syncPrimaryBoxes) return;
+
+			const count = $('.mr-tee-field-box').length;
+			for (let i = 0; i < count; i++) {
+				const fieldSide = this.getFieldSideId(i);
+				const primaryView = this.getPrimaryViewForSide(fieldSide);
+				const placements = this.getFieldPlacements(i);
+				if (primaryView && placements[primaryView.id] && placements[primaryView.id].box_left !== undefined) {
+					const p = placements[primaryView.id];
+					$(`#mr_tee_field_left_${i}`).val(p.box_left);
+					$(`#mr_tee_field_top_${i}`).val(p.box_top);
+					$(`#mr_tee_field_width_${i}`).val(p.box_width);
+					$(`#mr_tee_field_height_${i}`).val(p.box_height);
+					$(`#mr_tee_field_rotate_${i}`).val(p.box_rotate !== undefined ? p.box_rotate : 0);
+				}
+			}
+
+			// Ensure top-level legacy product dimension inputs reflect the primary side (printSides[0])
+			if (this.printSides.length > 1 && this.printSides[0]) {
+				this.loadSideDimensionsToToolbar(this.printSides[0].id);
+			}
+		}
+
+		renderSidesBar() {
+			const $bar = $('#mr-tee-sides-bar');
+			if (!$bar.length) return;
+
+			const activeSideId = this.getActiveSideId();
+			const fieldCountBySide = {};
+			const totalFields = $('.mr-tee-field-box').length;
+			for (let i = 0; i < totalFields; i++) {
+				const sid = this.getFieldSideId(i);
+				fieldCountBySide[sid] = (fieldCountBySide[sid] || 0) + 1;
+			}
+
+			const pillsHtml = this.printSides.map(side => {
+				const isActive = side.id === activeSideId;
+				const fCount = fieldCountBySide[side.id] || 0;
+				const dimsText = `${side.print_real_width}×${side.print_real_height} ${side.print_unit}`;
+				return `
+					<button
+						type="button"
+						class="mr-tee-side-pill ${isActive ? 'is-active' : ''}"
+						data-side-id="${this.escapeXml(side.id)}"
+					>
+						<span class="mr-tee-side-pill-dot" aria-hidden="true"></span>
+						<span class="mr-tee-side-pill-label">${this.escapeXml(side.label || side.id)}</span>
+						<span class="mr-tee-side-pill-dims">${this.escapeXml(dimsText)} · ${fCount}</span>
+					</button>
+				`;
+			}).join('');
+
+			const $list = $('#mr-tee-sides-list').length
+				? $('#mr-tee-sides-list')
+				: $bar.find('.mr-tee-sides-list').first();
+
+			if ($list.length) {
+				$list.html(pillsHtml);
+			} else {
+				$bar.find('.mr-tee-side-pill').remove();
+				const $anchor = $bar.children('.mr-tee-sides-actions, #mr-tee-btn-add-back-side, #mr-tee-btn-add-side').first();
+				if ($anchor.length) {
+					$(pillsHtml).insertBefore($anchor);
+				} else {
+					$bar.append(pillsHtml);
+				}
+			}
+
+			const hasBack = this.printSides.some(s => s.id === 'back');
+			$('#mr-tee-btn-add-back-side').toggleClass('has-back-side', hasBack).toggle(!hasBack);
+		}
+
+		renderViewsBar() {
+			const $list = $('#mr-tee-views-list');
+			if (!$list.length) return;
+
+			const roleLabels = {
+				full: 'Complet',
+				closeup: 'Zoom',
+				detail: 'Détail',
+			};
+
+			const tabsHtml = this.previewViews.map((view, idx) => {
+				const isActive = view.id === this.activeViewId;
+				const side = this.getSideById(view.side_id);
+				const sideLabel = side ? (side.label || side.id) : view.side_id;
+				const role = view.view_role || 'full';
+				const roleLabel = roleLabels[role] || role;
+				const thumbUrl = view.image_url || (idx === 0 ? this.defaultThumbUrl : '');
+
+				return `
+					<button
+						type="button"
+						class="mr-tee-view-tab ${isActive ? 'is-active' : ''}"
+						data-view-id="${this.escapeXml(view.id)}"
+						data-side-id="${this.escapeXml(view.side_id)}"
+						data-view-role="${this.escapeXml(role)}"
+					>
+						<span class="mr-tee-view-tab-thumb">
+							${thumbUrl
+								? `<img src="${this.escapeXml(thumbUrl)}" alt="" />`
+								: '<span class="dashicons dashicons-format-image" aria-hidden="true"></span>'}
+						</span>
+						<span class="mr-tee-view-tab-meta">
+							<span class="mr-tee-view-tab-label">${this.escapeXml(view.label || `Vue ${idx + 1}`)}</span>
+							<span class="mr-tee-view-tab-badges">
+								<span class="mr-tee-view-side-badge">${this.escapeXml(sideLabel)}</span>
+								<span class="mr-tee-view-role-badge is-role-${this.escapeXml(role)}">${this.escapeXml(roleLabel)}</span>
+								${view.is_cart_preview ? '<span class="mr-tee-view-badge-cart" title="Aperçu panier">🛒</span>' : ''}
+							</span>
+						</span>
+					</button>
+				`;
+			}).join('');
+
+			$list.html(tabsHtml);
+		}
+
+		updateEmptySideNotice(sideId, isEmpty) {
+			const $container = $('#mr-tee-field-panels-container');
+			if (!$container.length) return;
+
+			let $notice = $('#mr-tee-empty-side-notice');
+			if (!isEmpty) {
+				if ($notice.length) $notice.hide();
+				return;
+			}
+
+			const side = this.getSideById(sideId);
+			const sideLabel = side ? (side.label || side.id) : sideId;
+			if (!$notice.length) {
+				$notice = $('<div id="mr-tee-empty-side-notice" class="mr-tee-empty-side-notice"></div>');
+				$container.before($notice);
+			}
+			$notice
+				.html(`<strong>Face « ${this.escapeXml(sideLabel)} » sans zone</strong><span>Cliquez sur « + Ajouter un Texte » ou « + Ajouter une Image » pour créer une zone sur cette face.</span>`)
+				.show();
+		}
+
+		setViewUploadStatus(message, tone = 'info') {
+			const $bar = $('#mr-tee-active-view-bar');
+			if (!$bar.length) return;
+			let $status = $('#mr-tee-view-upload-status');
+			if (!$status.length) {
+				$status = $bar.find('.mr-tee-view-upload-status').first();
+			}
+			if (!$status.length) {
+				$status = $('<span id="mr-tee-view-upload-status" class="mr-tee-view-upload-status"></span>');
+				$bar.append($status);
+			}
+			const colors = {
+				info: '#2563eb',
+				success: '#059669',
+				error: '#dc2626',
+				muted: '#64748b',
+			};
+			$status.text(message || '').css('color', colors[tone] || colors.muted);
+		}
+
+		highlightViewImagePrompt(message) {
+			const $btn = $('#mr_tee_view_image_btn');
+			if ($btn.length) {
+				$btn.removeClass('mr-tee-attention-pulse');
+				// Force reflow so animation replays reliably
+				void $btn[0].offsetWidth;
+				$btn.addClass('mr-tee-attention-pulse');
+				clearTimeout(this._viewImgPulseTimer);
+				this._viewImgPulseTimer = setTimeout(() => {
+					$btn.removeClass('mr-tee-attention-pulse');
+				}, 3600);
+			}
+			if (message) {
+				this.setViewUploadStatus(message, 'info');
+			}
+		}
+
+		setActiveView(viewId, opts = {}) {
+			const nextView = this.getViewById(viewId);
+			if (!nextView) return;
+
+			// Flush previously active view placements & side dims before switching
+			if (!opts.isInitial && this._multiviewInitialized && this.activeViewId && this.activeViewId !== nextView.id) {
+				const prevView = this.previewViews.find(v => v.id === this.activeViewId);
+				if (prevView) {
+					this.flushActiveViewPlacements();
+					this.updateActiveSideDimensionsFromToolbar({ skipJsonSync: true });
+				}
+			}
+
+			this.activeViewId = nextView.id;
+			const activeSideId = nextView.side_id;
+
+			// 1. Highlight active view tab and printable side pill
+			$('.mr-tee-view-tab').removeClass('is-active').filter(function() {
+				return $(this).attr('data-view-id') === nextView.id;
+			}).addClass('is-active');
+			$('.mr-tee-side-pill').removeClass('is-active').filter(function() {
+				return $(this).attr('data-side-id') === activeSideId;
+			}).addClass('is-active');
+
+			// 2. Swap stage garment mockup image
+			const targetImgUrl = nextView.image_url || this.defaultThumbUrl || '';
+			const $img = $('#mr-tee-stage-garment-img');
+			if ($img.length && targetImgUrl && $img.attr('src') !== targetImgUrl) {
+				$img.attr('src', targetImgUrl);
+			}
+
+			// 3. Populate Active View Settings bar
+			$('#mr-tee-active-view-bar').attr('data-active-view-id', nextView.id);
+			$('#mr_tee_view_label').val(nextView.label || '');
+			if ($('#mr_tee_view_side_id').length) {
+				$('#mr_tee_view_side_id').val(activeSideId);
+			}
+			$('#mr_tee_view_role').val(nextView.view_role || 'full');
+			$('#mr_tee_view_blend_mode').val(nextView.blend_mode || 'normal');
+			$('#mr_tee_view_is_cart_preview').prop('checked', Boolean(nextView.is_cart_preview));
+
+			const viewIdx = this.previewViews.findIndex(v => v.id === nextView.id);
+			$('#mr_tee_view_move_left').prop('disabled', viewIdx <= 0);
+			$('#mr_tee_view_move_right').prop('disabled', viewIdx < 0 || viewIdx >= this.previewViews.length - 1);
+			$('#mr_tee_view_delete_btn').prop('disabled', this.previewViews.length <= 1);
+
+			// 4. Apply live blend preview attribute on stage wrap & boxes container
+			const blendMode = nextView.blend_mode || 'normal';
+			$('#mr-tee-boxes-container').attr('data-blend', blendMode);
+			if (this.$canvasWrap.length) {
+				this.$canvasWrap
+					.attr('data-active-view-id', nextView.id)
+					.attr('data-active-side-id', activeSideId)
+					.attr('data-blend-mode', blendMode);
+			}
+
+			// 5. Filter canvas boxes to active side & load/seed placements[viewId]
+			let firstMatchingIdx = -1;
+			let activeFieldMatchesSide = false;
+			const count = $('.mr-tee-field-box').length;
+
+			for (let i = 0; i < count; i++) {
+				const fieldSide = this.getFieldSideId(i);
+				const matches = (fieldSide === activeSideId);
+				const $box = $(`#mr-tee-field-box-${i}`);
+				const $pill = $(`.mr-tee-field-pill[data-field-index="${i}"]`);
+				const $panel = $(`#mr-tee-field-panel-${i}`);
+
+				$box.attr('data-side-id', fieldSide);
+				$pill.attr('data-side-id', fieldSide).toggleClass('is-other-side', !matches);
+				$panel.attr('data-side-id', fieldSide);
+
+				if (matches) {
+					$box.show().removeClass('is-other-side');
+					if (firstMatchingIdx === -1) firstMatchingIdx = i;
+					if (i === this.activeFieldIndex) activeFieldMatchesSide = true;
+
+					const placements = this.getFieldPlacements(i);
+					let placement = placements[nextView.id];
+					if (!placement || typeof placement !== 'object' || placement.box_left === undefined) {
+						const primaryView = this.getPrimaryViewForSide(activeSideId, true);
+						const seed = (primaryView && placements[primaryView.id] && placements[primaryView.id].box_left !== undefined)
+							? placements[primaryView.id]
+							: this.getFieldCurrentCoords(i);
+						const defaultH = this.getFieldType(i) === 'image' ? 30.0 : 8.5;
+						placement = {
+							box_left: Number.isFinite(parseFloat(seed.box_left)) ? parseFloat(seed.box_left) : 30.0,
+							box_top: Number.isFinite(parseFloat(seed.box_top)) ? parseFloat(seed.box_top) : 25.0,
+							box_width: Number.isFinite(parseFloat(seed.box_width)) ? parseFloat(seed.box_width) : 40.0,
+							box_height: Number.isFinite(parseFloat(seed.box_height)) ? parseFloat(seed.box_height) : defaultH,
+							box_rotate: Number.isFinite(parseFloat(seed.box_rotate)) ? parseFloat(seed.box_rotate) : 0,
+						};
+						placements[nextView.id] = placement;
+						this.setFieldPlacements(i, placements);
+					}
+					this.applyFieldCoordsToDom(i, placement);
+				} else {
+					$box.hide().addClass('is-other-side');
+				}
+			}
+
+			// 6. Auto-activate first field on activeSideId if current active field belongs to another side
+			const preferredIdx = (opts.preferredFieldIndex !== undefined && opts.preferredFieldIndex !== null)
+				? opts.preferredFieldIndex
+				: null;
+			if (preferredIdx !== null && preferredIdx >= 0 && preferredIdx < count && this.getFieldSideId(preferredIdx) === activeSideId) {
+				this.setActiveField(preferredIdx);
+			} else if (!activeFieldMatchesSide && firstMatchingIdx !== -1) {
+				this.setActiveField(firstMatchingIdx);
+			} else if (firstMatchingIdx === -1) {
+				$('.mr-tee-field-box, .mr-tee-field-pill, .mr-tee-field-panel').removeClass('is-active');
+			}
+
+			this.updateEmptySideNotice(activeSideId, firstMatchingIdx === -1);
+
+			// 7. Sync physical dimension toolbar to active side
+			this.loadSideDimensionsToToolbar(activeSideId);
+
+			// 8. Recalculate aspect ratio / dimensions first, then re-render box previews
+			this.recalculateDimensions();
+			this.renderAllBoxesPreviews();
+			this.syncHiddenMultiViewJson();
+		}
+
+		bindMultiViewManager() {
+			const self = this;
+
+			// Initial render & dropdown synchronization
+			this.renderSidesBar();
+			this.renderViewsBar();
+			this.refreshAllSideSelects();
+
+			// Switch active view by clicking a view tab
+			$(document).on('click', '.mr-tee-view-tab', function(e) {
+				e.preventDefault();
+				const viewId = $(this).attr('data-view-id');
+				if (viewId) {
+					self.setViewUploadStatus('');
+					self.setActiveView(viewId);
+				}
+			});
+
+			// Switch active side by clicking a side pill
+			$(document).on('click', '.mr-tee-side-pill', function(e) {
+				e.preventDefault();
+				const sideId = $(this).attr('data-side-id');
+				if (!sideId) return;
+				const currentView = self.getActiveView();
+				if (currentView && currentView.side_id === sideId) return;
+
+				let targetView = self.getPrimaryViewForSide(sideId, true);
+				if (!targetView) {
+					const side = self.getSideById(sideId);
+					targetView = {
+						id: self.generateUniqueViewId(`view_${sideId}`),
+						label: side ? (side.label || sideId) : sideId,
+						side_id: sideId,
+						view_role: 'full',
+						image_id: 0,
+						image_url: '',
+						blend_mode: currentView ? (currentView.blend_mode || 'normal') : 'normal',
+						is_cart_preview: true,
+					};
+					self.previewViews.push(targetView);
+					self.renderViewsBar();
+				}
+				self.setViewUploadStatus('');
+				self.setActiveView(targetView.id);
+			});
+
+			// Add New View (1-click Close-Up / Full pairing on the active side)
+			$(document).on('click', '#mr-tee-btn-add-view', function(e) {
+				e.preventDefault();
+				const activeView = self.getActiveView();
+				const sideId = activeView ? activeView.side_id : (self.printSides[0] ? self.printSides[0].id : 'front');
+				const side = self.getSideById(sideId);
+				const nextRole = (activeView && activeView.view_role === 'full') ? 'closeup' : 'full';
+				const isCartPreview = (nextRole === 'full');
+				const sideViewsCount = self.previewViews.filter(v => v.side_id === sideId).length;
+				const sideTitle = side ? (side.label || sideId) : sideId;
+				const defaultLabel = nextRole === 'closeup'
+					? `${sideTitle} — Zoom`
+					: `${sideTitle} — Vue ${sideViewsCount + 1}`;
+
+				const newView = {
+					id: self.generateUniqueViewId('view'),
+					label: defaultLabel,
+					side_id: sideId,
+					view_role: nextRole,
+					image_id: 0,
+					image_url: '',
+					blend_mode: activeView ? (activeView.blend_mode || 'normal') : 'normal',
+					is_cart_preview: isCartPreview,
+				};
+
+				self.flushActiveViewPlacements();
+				self.previewViews.push(newView);
+
+				// Seed placements for all fields on this side
+				const fieldCount = $('.mr-tee-field-box').length;
+				for (let i = 0; i < fieldCount; i++) {
+					if (self.getFieldSideId(i) !== sideId) continue;
+					const placements = self.getFieldPlacements(i);
+					const seed = (activeView && placements[activeView.id]) ? placements[activeView.id] : self.getFieldCurrentCoords(i);
+					placements[newView.id] = { ...seed };
+					self.setFieldPlacements(i, placements);
+				}
+
+				self.renderViewsBar();
+				self.syncMultiViewInputs();
+				self.setActiveView(newView.id);
+				self.highlightViewImagePrompt('👆 Sélectionnez la photo mockup pour cette nouvelle vue.');
+			});
+
+			// 1-Click Recto/Verso Wizard
+			$(document).on('click', '#mr-tee-btn-add-back-side', function(e) {
+				e.preventDefault();
+				self.flushActiveViewPlacements();
+				self.updateActiveSideDimensionsFromToolbar({ skipJsonSync: true });
+
+				const refSide = self.getSideById(self.getActiveSideId()) || self.printSides[0];
+				const activeView = self.getActiveView();
+
+				if (!self.printSides.some(s => s.id === 'back')) {
+					self.printSides.push({
+						id: 'back',
+						label: 'Verso (Dos)',
+						print_real_width: refSide ? refSide.print_real_width : 30.0,
+						print_real_height: refSide ? refSide.print_real_height : 40.0,
+						print_unit: refSide ? refSide.print_unit : 'cm',
+						dpi: refSide ? refSide.dpi : 300,
+						product_type: refSide ? refSide.product_type : 'garment',
+						lock_aspect_ratio: refSide ? Boolean(refSide.lock_aspect_ratio) : false,
+					});
+				}
+
+				let backView = self.previewViews.find(v => v.id === 'view_back' || v.side_id === 'back');
+				if (!backView) {
+					backView = {
+						id: self.generateUniqueViewId('view_back'),
+						label: 'T-Shirt Verso',
+						side_id: 'back',
+						view_role: 'full',
+						image_id: 0,
+						image_url: '',
+						blend_mode: activeView ? (activeView.blend_mode || 'normal') : 'normal',
+						is_cart_preview: true,
+					};
+					self.previewViews.push(backView);
+				}
+
+				self.renderSidesBar();
+				self.renderViewsBar();
+				self.refreshAllSideSelects();
+				self.syncMultiViewInputs();
+				self.setActiveView(backView.id);
+				self.highlightViewImagePrompt('👆 Face Verso prête ! Choisissez l\'image mockup du dos.');
+			});
+
+			// Add Custom Printable Side (e.g. "Manche Gauche")
+			$(document).on('click', '#mr-tee-btn-add-side', function(e) {
+				e.preventDefault();
+				const rawName = window.prompt('Nom de la nouvelle face d\'impression (ex : Manche Gauche, Poche, Capuche) :', '');
+				if (!rawName || !rawName.trim()) return;
+
+				const label = rawName.trim();
+				const sideId = self.generateUniqueSideId(label);
+				self.flushActiveViewPlacements();
+				self.updateActiveSideDimensionsFromToolbar({ skipJsonSync: true });
+
+				const refSide = self.getSideById(self.getActiveSideId()) || self.printSides[0];
+				const activeView = self.getActiveView();
+
+				self.printSides.push({
+					id: sideId,
+					label,
+					print_real_width: refSide ? refSide.print_real_width : 30.0,
+					print_real_height: refSide ? refSide.print_real_height : 40.0,
+					print_unit: refSide ? refSide.print_unit : 'cm',
+					dpi: refSide ? refSide.dpi : 300,
+					product_type: refSide ? refSide.product_type : 'garment',
+					lock_aspect_ratio: refSide ? Boolean(refSide.lock_aspect_ratio) : false,
+				});
+
+				const newView = {
+					id: self.generateUniqueViewId(`view_${sideId}`),
+					label,
+					side_id: sideId,
+					view_role: 'full',
+					image_id: 0,
+					image_url: '',
+					blend_mode: activeView ? (activeView.blend_mode || 'normal') : 'normal',
+					is_cart_preview: true,
+				};
+				self.previewViews.push(newView);
+
+				self.renderSidesBar();
+				self.renderViewsBar();
+				self.refreshAllSideSelects();
+				self.syncMultiViewInputs();
+				self.setActiveView(newView.id);
+				self.highlightViewImagePrompt(`👆 Face « ${label} » ajoutée ! Choisissez son image mockup.`);
+			});
+
+			// Active View Settings: Label
+			$(document).on('input change', '#mr_tee_view_label', function() {
+				const view = self.getActiveView();
+				if (!view) return;
+				const nextLabel = ($(this).val() || '').trim() || view.id;
+				view.label = nextLabel;
+				$(`.mr-tee-view-tab[data-view-id="${view.id}"] .mr-tee-view-tab-label`).text(nextLabel);
+				self.syncHiddenMultiViewJson();
+			});
+
+			// Active View Settings: Linked Side
+			$(document).on('change', '#mr_tee_view_side_id', function() {
+				const view = self.getActiveView();
+				if (!view) return;
+				const nextSideId = $(this).val();
+				if (!nextSideId || nextSideId === view.side_id) return;
+
+				self.flushActiveViewPlacements();
+				self.updateActiveSideDimensionsFromToolbar({ skipJsonSync: true });
+				view.side_id = nextSideId;
+				self.renderViewsBar();
+				self.renderSidesBar();
+				self.syncHiddenMultiViewJson();
+				self.setActiveView(view.id);
+			});
+
+			// Active View Settings: View Role (full / closeup / detail)
+			$(document).on('change', '#mr_tee_view_role', function() {
+				const view = self.getActiveView();
+				if (!view) return;
+				const role = $(this).val();
+				view.view_role = ['full', 'closeup', 'detail'].includes(role) ? role : 'full';
+				self.renderViewsBar();
+				self.syncHiddenMultiViewJson();
+			});
+
+			// Active View Settings: Blend Mode (normal / multiply / soft_ink)
+			$(document).on('change', '#mr_tee_view_blend_mode', function() {
+				const view = self.getActiveView();
+				if (!view) return;
+				const blend = $(this).val();
+				view.blend_mode = ['normal', 'multiply', 'soft_ink'].includes(blend) ? blend : 'normal';
+				$('#mr-tee-boxes-container').attr('data-blend', view.blend_mode);
+				if (self.$canvasWrap.length) {
+					self.$canvasWrap.attr('data-blend-mode', view.blend_mode);
+				}
+				self.syncHiddenMultiViewJson();
+			});
+
+			// Active View Settings: Cart Preview checkbox
+			$(document).on('change', '#mr_tee_view_is_cart_preview', function() {
+				const view = self.getActiveView();
+				if (!view) return;
+				view.is_cart_preview = $(this).is(':checked');
+				self.renderViewsBar();
+				self.syncHiddenMultiViewJson();
+			});
+
+			// Active View Image Picker (WP Media Library with file upload fallback)
+			$(document).on('click', '#mr_tee_view_image_btn', function(e) {
+				e.preventDefault();
+				$(this).removeClass('mr-tee-attention-pulse');
+				const view = self.getActiveView();
+				if (!view) return;
+
+				if (!window.wp || !window.wp.media) {
+					$('#mr_tee_view_image_upload').trigger('click');
+					return;
+				}
+
+				const frame = window.wp.media({
+					title: `Image mockup — ${view.label || view.id}`,
+					button: { text: 'Utiliser cette image' },
+					library: { type: 'image' },
+					multiple: false,
+				});
+
+				frame.on('select', function() {
+					const att = frame.state().get('selection').first().toJSON();
+					const url = (att && att.url) ? att.url : '';
+					const attId = (att && att.id) ? parseInt(att.id, 10) : 0;
+					if (!url) return;
+
+					view.image_id = attId || 0;
+					view.image_url = url;
+					$('#mr-tee-stage-garment-img').attr('src', url);
+					self.renderViewsBar();
+					self.syncHiddenMultiViewJson();
+					self.setViewUploadStatus('✅ Image mockup mise à jour !', 'success');
+				});
+
+				frame.open();
+			});
+
+			// Active View Direct File Upload (via existing mr_tee_upload_default_image AJAX action)
+			$(document).on('change', '#mr_tee_view_image_upload', function() {
+				const inputEl = this;
+				const file = inputEl.files && inputEl.files[0];
+				if (!file) return;
+
+				const view = self.getActiveView();
+				if (!view) return;
+
+				self.setViewUploadStatus('⏳ Envoi de l\'image mockup...', 'info');
+
+				const formData = new FormData();
+				formData.append('action', 'mr_tee_upload_default_image');
+				formData.append('nonce', window.mrTeeAdminData ? window.mrTeeAdminData.nonce : '');
+				formData.append('product_id', window.mrTeeAdminData ? (window.mrTeeAdminData.productId || 0) : 0);
+				formData.append('image_file', file);
+
+				const ajaxUrl = self.toSameOriginPath((window.mrTeeAdminData && window.mrTeeAdminData.ajaxUrl) || '/wp-admin/admin-ajax.php');
+				$.ajax({
+					url: ajaxUrl,
+					type: 'POST',
+					data: formData,
+					processData: false,
+					contentType: false,
+					success: function(resp) {
+						inputEl.value = '';
+						if (resp && resp.success && resp.data && resp.data.url) {
+							view.image_id = parseInt(resp.data.id, 10) || 0;
+							view.image_url = resp.data.url;
+							$('#mr_tee_view_image_btn').removeClass('mr-tee-attention-pulse');
+							if (self.activeViewId === view.id) {
+								$('#mr-tee-stage-garment-img').attr('src', resp.data.url);
+							}
+							self.renderViewsBar();
+							self.syncHiddenMultiViewJson();
+							self.setViewUploadStatus('✅ Image mockup importée !', 'success');
+						} else {
+							const msg = (resp && resp.data && resp.data.message) ? resp.data.message : 'Erreur lors de l\'import.';
+							self.setViewUploadStatus(`❌ ${msg}`, 'error');
+						}
+					},
+					error: function(xhr, status, err) {
+						inputEl.value = '';
+						self.setViewUploadStatus(`❌ Erreur réseau : ${err}`, 'error');
+					},
+				});
+			});
+
+			// Move Active View Left
+			$(document).on('click', '#mr_tee_view_move_left', function(e) {
+				e.preventDefault();
+				const idx = self.previewViews.findIndex(v => v.id === self.activeViewId);
+				if (idx <= 0) return;
+				const tmp = self.previewViews[idx - 1];
+				self.previewViews[idx - 1] = self.previewViews[idx];
+				self.previewViews[idx] = tmp;
+				self.renderViewsBar();
+				self.syncHiddenMultiViewJson();
+				$('#mr_tee_view_move_left').prop('disabled', idx - 1 <= 0);
+				$('#mr_tee_view_move_right').prop('disabled', false);
+			});
+
+			// Move Active View Right
+			$(document).on('click', '#mr_tee_view_move_right', function(e) {
+				e.preventDefault();
+				const idx = self.previewViews.findIndex(v => v.id === self.activeViewId);
+				if (idx < 0 || idx >= self.previewViews.length - 1) return;
+				const tmp = self.previewViews[idx + 1];
+				self.previewViews[idx + 1] = self.previewViews[idx];
+				self.previewViews[idx] = tmp;
+				self.renderViewsBar();
+				self.syncHiddenMultiViewJson();
+				$('#mr_tee_view_move_left').prop('disabled', false);
+				$('#mr_tee_view_move_right').prop('disabled', idx + 1 >= self.previewViews.length - 1);
+			});
+
+			// Delete Active View (never delete the last remaining view)
+			$(document).on('click', '#mr_tee_view_delete_btn', function(e) {
+				e.preventDefault();
+				if (self.previewViews.length <= 1) return;
+				const idx = self.previewViews.findIndex(v => v.id === self.activeViewId);
+				if (idx < 0) return;
+
+				const victim = self.previewViews[idx];
+				if (!confirm(`Supprimer la vue « ${victim.label || victim.id} » ?`)) {
+					return;
+				}
+
+				self.previewViews.splice(idx, 1);
+
+				// Clean deleted view key out of field placements maps
+				const fieldCount = $('.mr-tee-field-box').length;
+				for (let i = 0; i < fieldCount; i++) {
+					const placements = self.getFieldPlacements(i);
+					if (placements && Object.prototype.hasOwnProperty.call(placements, victim.id)) {
+						delete placements[victim.id];
+						self.setFieldPlacements(i, placements);
+					}
+				}
+
+				const nextView = self.previewViews[Math.max(0, Math.min(idx, self.previewViews.length - 1))];
+				self.renderViewsBar();
+				self.renderSidesBar();
+				self.syncHiddenMultiViewJson();
+				self.setViewUploadStatus('');
+				if (nextView) {
+					self.setActiveView(nextView.id);
+				}
+			});
+
+			// Per-field Side Selector Change
+			$(document).on('change', '.mr-tee-field-side-select', function() {
+				const rawIdx = $(this).attr('data-field-index') || $(this).closest('.mr-tee-field-panel').attr('data-field-index');
+				const idx = parseInt(rawIdx, 10);
+				if (Number.isNaN(idx)) return;
+
+				const newSideId = $(this).val();
+				if (!newSideId) return;
+
+				// Update data-side-id on box, pill, and panel
+				$(`#mr-tee-field-box-${idx}`).attr('data-side-id', newSideId);
+				$(`.mr-tee-field-pill[data-field-index="${idx}"]`).attr('data-side-id', newSideId);
+				$(`#mr-tee-field-panel-${idx}`).attr('data-side-id', newSideId);
+
+				// Seed placements for all views belonging to the newly selected side
+				const currentCoords = self.getFieldCurrentCoords(idx);
+				const placements = self.getFieldPlacements(idx);
+				self.previewViews.forEach(v => {
+					if (v.side_id === newSideId && !placements[v.id]) {
+						placements[v.id] = { ...currentCoords };
+					}
+				});
+				self.setFieldPlacements(idx, placements);
+				self.renderSidesBar();
+
+				// Switch to first view of newly chosen side if active view belongs to a different side
+				const activeView = self.getActiveView();
+				if (!activeView || activeView.side_id !== newSideId) {
+					let targetView = self.getPrimaryViewForSide(newSideId, true);
+					if (!targetView) {
+						const side = self.getSideById(newSideId);
+						targetView = {
+							id: self.generateUniqueViewId(`view_${newSideId}`),
+							label: side ? (side.label || newSideId) : newSideId,
+							side_id: newSideId,
+							view_role: 'full',
+							image_id: 0,
+							image_url: '',
+							blend_mode: activeView ? (activeView.blend_mode || 'normal') : 'normal',
+							is_cart_preview: true,
+						};
+						self.previewViews.push(targetView);
+						placements[targetView.id] = { ...currentCoords };
+						self.setFieldPlacements(idx, placements);
+						self.renderViewsBar();
+					}
+					self.setActiveView(targetView.id, { preferredFieldIndex: idx });
+				} else {
+					$(`#mr-tee-field-box-${idx}`).show().removeClass('is-other-side');
+					$(`.mr-tee-field-pill[data-field-index="${idx}"]`).removeClass('is-other-side');
+					self.updateEmptySideNotice(newSideId, false);
+					self.saveFieldPlacementForActiveView(idx);
+					self.renderBoxPreview(idx);
+					self.recalculateDimensions();
+				}
+			});
+
+			// Flush all multi-view JSON + primary box coords right before WordPress post form submit
+			$('form#post').on('submit.mrTeeMultiView', function() {
+				self.syncMultiViewInputs(true);
+			});
+
+			// Activate initial view
+			this.setActiveView(this.activeViewId, { isInitial: true });
+			this._multiviewInitialized = true;
 		}
 
 		getSimplifiedRatio(w, h) {

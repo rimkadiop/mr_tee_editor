@@ -12,7 +12,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { DedicatedGallery } from './dedicated-gallery.js?v=2.4.0';
+import { DedicatedGallery } from './dedicated-gallery.js?v=2.4.0.1';
 
 export class GalleryStage {
 	constructor(config, options = {}) {

@@ -138,10 +138,20 @@ export class DedicatedGallery {
 
 		const targetSelectors = [
 			'.woocommerce-product-gallery',
-			'.product-gallery',
-			'.product-images',
+			'.wp-block-woocommerce-product-image-gallery',
+			'.wp-block-woocommerce-product-gallery',
 			'.wc-block-product-gallery-large-image',
 			'.elementor-widget-woocommerce-product-images .elementor-widget-container',
+			'.et_pb_wc_images .et_pb_module_inner',
+			'.et_pb_wc_images',
+			'.brxe-product-gallery',
+			'.bde-woo-product-images',
+			'.breakdance-woocommerce-product-images',
+			'.fusion-woo-product-images',
+			'.ct-product-gallery-container',
+			'.wd-product-gallery',
+			'.product-gallery',
+			'.product-images',
 		];
 
 		let container = null;
@@ -172,6 +182,8 @@ export class DedicatedGallery {
 
 		const slidesHtml = rawSlides.map((s, idx) => {
 			const imgUrl = DedicatedGallery.normalizeProtocol(s.image_url || '');
+			const srcsetAttr = s.srcset ? ` srcset="${DedicatedGallery.escHtml(s.srcset)}"` : '';
+			const sizesAttr = s.sizes ? ` sizes="${DedicatedGallery.escHtml(s.sizes)}"` : '';
 			const dimAttrs = (s.width && s.height) ? ` width="${parseInt(s.width, 10)}" height="${parseInt(s.height, 10)}"` : '';
 			const loadAttrs = idx === 0
 				? ' loading="eager" fetchpriority="high" decoding="sync"'
@@ -180,7 +192,7 @@ export class DedicatedGallery {
 			const overlayHtml = s.is_customizable
 				? `<div class="mr-tee-live-stage-overlay" data-view-id="${DedicatedGallery.escHtml(s.view_id)}" data-side-id="${DedicatedGallery.escHtml(s.side_id || 'front')}" data-blend="${DedicatedGallery.escHtml(s.blend_mode || 'normal')}"><div class="mr-tee-live-svg-container"></div></div>`
 				: '';
-			return `<div class="mr-tee-slide${idx === 0 ? ' is-active' : ''}" data-slide-index="${idx}" data-view-id="${DedicatedGallery.escHtml(s.view_id)}" data-side-id="${DedicatedGallery.escHtml(s.side_id || '')}" data-view-role="${DedicatedGallery.escHtml(s.view_role || 'full')}" data-customizable="${s.is_customizable ? '1' : '0'}"><div class="mr-tee-slide-stage"${stageStyle}><img src="${DedicatedGallery.escHtml(imgUrl)}" alt="${DedicatedGallery.escHtml(s.alt || s.label || '')}" class="mr-tee-slide-img${idx === 0 ? ' wp-post-image' : ''} skip-lazy no-lazyload" data-no-lazy="1" data-large_image="${DedicatedGallery.escHtml(imgUrl)}"${dimAttrs}${loadAttrs} draggable="false" />${overlayHtml}</div></div>`;
+			return `<div class="mr-tee-slide${idx === 0 ? ' is-active' : ''}" data-slide-index="${idx}" data-view-id="${DedicatedGallery.escHtml(s.view_id)}" data-side-id="${DedicatedGallery.escHtml(s.side_id || '')}" data-view-role="${DedicatedGallery.escHtml(s.view_role || 'full')}" data-customizable="${s.is_customizable ? '1' : '0'}"><div class="mr-tee-slide-stage"${stageStyle}><img src="${DedicatedGallery.escHtml(imgUrl)}"${srcsetAttr}${sizesAttr} alt="${DedicatedGallery.escHtml(s.alt || s.label || '')}" class="mr-tee-slide-img${idx === 0 ? ' wp-post-image' : ''} skip-lazy no-lazyload" data-no-lazy="1" data-skip-lazy="1" data-large_image="${DedicatedGallery.escHtml(imgUrl)}"${dimAttrs}${loadAttrs} draggable="false" />${overlayHtml}</div></div>`;
 		}).join('');
 
 		const arrowsHtml = count > 1
@@ -194,14 +206,14 @@ export class DedicatedGallery {
 		if (count > 1) {
 			const thumbItems = rawSlides.map((s, idx) => {
 				const thumbUrl = DedicatedGallery.normalizeProtocol(s.thumb_url || s.image_url || '');
-				return `<button type="button" class="mr-tee-gallery-thumb${idx === 0 ? ' is-active' : ''}" data-slide-index="${idx}" data-view-id="${DedicatedGallery.escHtml(s.view_id)}" data-side-id="${DedicatedGallery.escHtml(s.side_id || '')}" aria-label="${DedicatedGallery.escHtml(s.label || '')}"><img src="${DedicatedGallery.escHtml(thumbUrl)}" alt="${DedicatedGallery.escHtml(s.label || '')}" class="skip-lazy no-lazyload" data-no-lazy="1" loading="lazy" decoding="async" draggable="false" /><span class="mr-tee-gallery-thumb-label">${DedicatedGallery.escHtml(s.label || '')}</span></button>`;
+				return `<button type="button" class="mr-tee-gallery-thumb${idx === 0 ? ' is-active' : ''}" data-slide-index="${idx}" data-view-id="${DedicatedGallery.escHtml(s.view_id)}" data-side-id="${DedicatedGallery.escHtml(s.side_id || '')}" aria-label="${DedicatedGallery.escHtml(s.label || '')}"><img src="${DedicatedGallery.escHtml(thumbUrl)}" alt="${DedicatedGallery.escHtml(s.label || '')}" class="skip-lazy no-lazyload" data-no-lazy="1" data-skip-lazy="1" loading="lazy" decoding="async" draggable="false" /><span class="mr-tee-gallery-thumb-label">${DedicatedGallery.escHtml(s.label || '')}</span></button>`;
 			}).join('');
 			thumbsHtml = `<div class="mr-tee-gallery-thumbs" role="group" aria-label="${DedicatedGallery.escHtml(i18n.thumbsLabel || 'Miniatures des vues')}">${thumbItems}</div>`;
 		}
 
 		const wrapper = document.createElement('div');
 		wrapper.id = 'mr-tee-gallery-root';
-		wrapper.className = `woocommerce-product-gallery images mr-tee-dedicated-gallery${isLocked ? ' mr-tee-gallery--aspect-locked' : ''}`;
+		wrapper.className = `woocommerce-product-gallery images wp-block-woocommerce-product-image-gallery mr-tee-dedicated-gallery${isLocked ? ' mr-tee-gallery--aspect-locked' : ''}`;
 		wrapper.setAttribute('data-product-id', String(data.productId || 0));
 		wrapper.setAttribute('data-columns', '4');
 		wrapper.setAttribute('data-slide-count', String(count));

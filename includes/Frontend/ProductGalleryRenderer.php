@@ -27,6 +27,21 @@ class ProductGalleryRenderer {
 	private static $initialized = false;
 
 	/**
+	 * Track product IDs whose dedicated gallery has already been rendered in this request
+	 * so themes with duplicate mobile/desktop wrappers or related product loops never emit duplicate #mr-tee-gallery-root IDs.
+	 *
+	 * @var array<int, bool>
+	 */
+	private static $rendered_galleries = array();
+
+	/**
+	 * Per-request cache of computed gallery slides by product ID.
+	 *
+	 * @var array<int, array<int, array<string, mixed>>>
+	 */
+	private static $slides_cache = array();
+
+	/**
 	 * Register WordPress & WooCommerce gallery override hooks.
 	 */
 	public static function init() {
@@ -42,21 +57,26 @@ class ProductGalleryRenderer {
 
 	/**
 	 * Resolve active product ID when WooCommerce renders single-product image templates.
+	 * Strictly verifies global $product when present so related/upsell product loops or duplicate calls
+	 * never hijack non-Mr. Tee products or output duplicate #mr-tee-gallery-root IDs.
 	 *
 	 * @return int
 	 */
 	private static function resolve_mr_tee_product_id() {
-		$active_id = ProductPageRenderer::get_active_product_id();
-		if ( $active_id > 0 ) {
-			return $active_id;
-		}
-
 		global $product;
 		if ( is_object( $product ) && method_exists( $product, 'get_id' ) ) {
 			$pid = (int) $product->get_id();
-			if ( $pid > 0 && ProductPageRenderer::is_mr_tee_product( $pid ) ) {
-				return $pid;
+			if ( $pid > 0 ) {
+				if ( ! empty( self::$rendered_galleries[ $pid ] ) ) {
+					return 0;
+				}
+				return ProductPageRenderer::is_mr_tee_product( $pid ) ? $pid : 0;
 			}
+		}
+
+		$active_id = ProductPageRenderer::get_active_product_id();
+		if ( $active_id > 0 && empty( self::$rendered_galleries[ $active_id ] ) ) {
+			return $active_id;
 		}
 
 		return 0;
@@ -112,7 +132,7 @@ class ProductGalleryRenderer {
 		}
 
 		$product_id = ProductPageRenderer::get_active_product_id();
-		if ( $product_id <= 0 ) {
+		if ( $product_id <= 0 || ! empty( self::$rendered_galleries[ $product_id ] ) ) {
 			return $block_content;
 		}
 
@@ -122,7 +142,8 @@ class ProductGalleryRenderer {
 
 	/**
 	 * Dequeue WooCommerce's unused gallery JS/CSS bloat (Flexslider, Zoom, PhotoSwipe)
-	 * exclusively on Mr. Tee product pages (~100 KB saved per page load).
+	 * and legacy NBDesigner frontend assets (AngularJS 1.6.9, nbdesigner.js/css)
+	 * exclusively on Mr. Tee product pages (~350 KB saved per page load).
 	 */
 	public static function dequeue_theme_gallery_bloat() {
 		if ( ! ProductPageRenderer::is_active() ) {
@@ -134,6 +155,13 @@ class ProductGalleryRenderer {
 			'zoom',
 			'photoswipe',
 			'photoswipe-ui-default',
+			'angularjs',
+			'nbdesigner',
+			'nbd-vista',
+			'app-modern',
+			'nbd-bundle',
+			'nbd-quote',
+			'jquery-ui-vista',
 		);
 		foreach ( $unused_scripts as $handle ) {
 			if ( wp_script_is( $handle, 'enqueued' ) || wp_script_is( $handle, 'registered' ) ) {
@@ -141,9 +169,22 @@ class ProductGalleryRenderer {
 			}
 		}
 
+		global $wp_scripts;
+		if ( is_object( $wp_scripts ) && ! empty( $wp_scripts->registered['custom-js']->src ) ) {
+			if ( false !== strpos( (string) $wp_scripts->registered['custom-js']->src, 'web-to-print-online-designer' ) ) {
+				wp_dequeue_script( 'custom-js' );
+			}
+		}
+
 		$unused_styles = array(
 			'photoswipe',
 			'photoswipe-default-skin',
+			'nbdesigner',
+			'vista',
+			'vista-rtl',
+			'spectrum',
+			'product-builder',
+			'nbd-quote',
 		);
 		foreach ( $unused_styles as $handle ) {
 			if ( wp_style_is( $handle, 'enqueued' ) || wp_style_is( $handle, 'registered' ) ) {
@@ -183,6 +224,30 @@ class ProductGalleryRenderer {
 	}
 
 	/**
+	 * Normalize URL schemes across a responsive `srcset` attribute string.
+	 *
+	 * @param string $srcset Raw srcset string from WordPress.
+	 * @return string
+	 */
+	private static function normalize_srcset_scheme( $srcset ) {
+		if ( empty( $srcset ) || ! is_string( $srcset ) ) {
+			return '';
+		}
+		$parts = explode( ',', $srcset );
+		$out   = array();
+		foreach ( $parts as $part ) {
+			$trimmed = trim( $part );
+			if ( '' === $trimmed ) {
+				continue;
+			}
+			$tokens = preg_split( '/\s+/', $trimmed, 2 );
+			$u      = self::normalize_url_scheme( $tokens[0] );
+			$out[]  = isset( $tokens[1] ) ? ( $u . ' ' . $tokens[1] ) : $u;
+		}
+		return implode( ', ', $out );
+	}
+
+	/**
 	 * Normalize URL path key for deduplicating images across preview_views and WooCommerce gallery.
 	 *
 	 * @param string $url Raw URL.
@@ -202,17 +267,19 @@ class ProductGalleryRenderer {
 	}
 
 	/**
-	 * Resolve image URL, thumbnail URL, alt text, and natural dimensions from an attachment ID.
+	 * Resolve image URL, responsive srcset/sizes, thumbnail URL, alt text, and natural dimensions from an attachment ID.
 	 *
 	 * @param int    $attachment_id WP attachment ID.
 	 * @param string $fallback_alt  Fallback alt text.
-	 * @return array{image_url: string, thumb_url: string, alt: string, width: int, height: int, aspect_ratio: float}
+	 * @return array{image_url: string, srcset: string, sizes: string, thumb_url: string, alt: string, width: int, height: int, aspect_ratio: float}
 	 */
 	private static function resolve_attachment_image( $attachment_id, $fallback_alt = '' ) {
 		$att_id = absint( $attachment_id );
 		if ( $att_id <= 0 ) {
 			return array(
 				'image_url'    => '',
+				'srcset'       => '',
+				'sizes'        => '',
 				'thumb_url'    => '',
 				'alt'          => $fallback_alt,
 				'width'        => 0,
@@ -230,6 +297,10 @@ class ProductGalleryRenderer {
 		$width     = ! empty( $src[1] ) ? (int) $src[1] : 0;
 		$height    = ! empty( $src[2] ) ? (int) $src[2] : 0;
 
+		$raw_srcset = function_exists( 'wp_get_attachment_image_srcset' ) ? wp_get_attachment_image_srcset( $att_id, 'large' ) : '';
+		$srcset     = is_string( $raw_srcset ) && '' !== $raw_srcset ? self::normalize_srcset_scheme( $raw_srcset ) : '';
+		$sizes      = '' !== $srcset ? '(max-width: 767px) 94vw, (max-width: 1200px) 48vw, 600px' : '';
+
 		$thumb_src = wp_get_attachment_image_src( $att_id, 'woocommerce_gallery_thumbnail' );
 		if ( empty( $thumb_src ) || empty( $thumb_src[0] ) ) {
 			$thumb_src = wp_get_attachment_image_src( $att_id, 'thumbnail' );
@@ -245,6 +316,8 @@ class ProductGalleryRenderer {
 
 		return array(
 			'image_url'    => $image_url,
+			'srcset'       => $srcset,
+			'sizes'        => $sizes,
 			'thumb_url'    => $thumb_url,
 			'alt'          => $alt,
 			'width'        => $width,
@@ -273,8 +346,18 @@ class ProductGalleryRenderer {
 	 * @param array<string, mixed> $config     Compiled product configuration.
 	 * @return array<int, array<string, mixed>>
 	 */
-	public static function get_gallery_slides( $product_id, array $config ) {
-		$product_id    = absint( $product_id );
+	public static function get_gallery_slides( $product_id, array $config = array() ) {
+		$product_id = absint( $product_id );
+		if ( $product_id <= 0 ) {
+			return array();
+		}
+		if ( isset( self::$slides_cache[ $product_id ] ) ) {
+			return self::$slides_cache[ $product_id ];
+		}
+		if ( empty( $config ) ) {
+			$config = ProductPageRenderer::get_cached_config( $product_id );
+		}
+
 		$wc_product    = function_exists( 'wc_get_product' ) ? wc_get_product( $product_id ) : null;
 		$product_title = $wc_product && method_exists( $wc_product, 'get_name' )
 			? (string) $wc_product->get_name()
@@ -349,6 +432,8 @@ class ProductGalleryRenderer {
 				? self::resolve_attachment_image( $att_id, $product_title ? $product_title . ' - ' . $label : $label )
 				: array(
 					'image_url'    => '',
+					'srcset'       => '',
+					'sizes'        => '',
 					'thumb_url'    => '',
 					'alt'          => $product_title ? $product_title . ' - ' . $label : $label,
 					'width'        => ! empty( $view['width'] ) ? absint( $view['width'] ) : 0,
@@ -363,6 +448,9 @@ class ProductGalleryRenderer {
 			if ( '' === $image_url ) {
 				$image_url = $placeholder_url;
 			}
+
+			// Use attachment srcset only if image_url comes from that attachment
+			$use_srcset = ( $att_id > 0 && '' !== $att_meta['srcset'] && ( '' === trim( $raw_url ) || self::normalize_dedup_key( $raw_url ) === self::normalize_dedup_key( $att_meta['image_url'] ) ) );
 
 			$thumb_url = '' !== trim( $raw_thumb )
 				? self::normalize_url_scheme( $raw_thumb )
@@ -400,6 +488,8 @@ class ProductGalleryRenderer {
 				'blend_mode'      => $blend_mode,
 				'image_id'        => $att_id,
 				'image_url'       => $image_url,
+				'srcset'          => $use_srcset ? $att_meta['srcset'] : '',
+				'sizes'           => $use_srcset ? $att_meta['sizes'] : '',
 				'thumb_url'       => $thumb_url,
 				'alt'             => ! empty( $view['alt'] ) ? (string) $view['alt'] : $att_meta['alt'],
 				'width'           => $width,
@@ -452,6 +542,8 @@ class ProductGalleryRenderer {
 						'blend_mode'      => 'normal',
 						'image_id'        => $att_id,
 						'image_url'       => $att_meta['image_url'],
+						'srcset'          => $att_meta['srcset'],
+						'sizes'           => $att_meta['sizes'],
 						'thumb_url'       => $att_meta['thumb_url'],
 						'alt'             => $att_meta['alt'],
 						'width'           => $att_meta['width'],
@@ -474,6 +566,8 @@ class ProductGalleryRenderer {
 				'blend_mode'      => 'normal',
 				'image_id'        => 0,
 				'image_url'       => $placeholder_url,
+				'srcset'          => '',
+				'sizes'           => '',
 				'thumb_url'       => $placeholder_url,
 				'alt'             => $product_title ? $product_title : __( 'Aperçu produit', 'mr-tee-editor' ),
 				'width'           => 0,
@@ -482,6 +576,7 @@ class ProductGalleryRenderer {
 			);
 		}
 
+		self::$slides_cache[ $product_id ] = $slides;
 		return $slides;
 	}
 
@@ -497,11 +592,15 @@ class ProductGalleryRenderer {
 	 */
 	public static function render_gallery_html( $product_id ) {
 		$product_id = absint( $product_id );
-		if ( $product_id <= 0 ) {
+		if ( $product_id <= 0 || ! ProductPageRenderer::is_mr_tee_product( $product_id ) ) {
 			return '';
 		}
+		if ( ! empty( self::$rendered_galleries[ $product_id ] ) ) {
+			return '';
+		}
+		self::$rendered_galleries[ $product_id ] = true;
 
-		$config      = SceneGraphSchema::get_product_config( $product_id );
+		$config      = ProductPageRenderer::get_cached_config( $product_id );
 		$slides      = self::get_gallery_slides( $product_id, $config );
 		$slide_count = count( $slides );
 		$is_locked   = ! empty( $config['lock_aspect_ratio'] ) || ( isset( $config['product_type'] ) && 'flat_object' === $config['product_type'] );
@@ -513,7 +612,7 @@ class ProductGalleryRenderer {
 		?>
 		<div
 			id="mr-tee-gallery-root"
-			class="woocommerce-product-gallery images mr-tee-dedicated-gallery<?php echo $is_locked ? ' mr-tee-gallery--aspect-locked' : ''; ?>"
+			class="woocommerce-product-gallery images wp-block-woocommerce-product-image-gallery mr-tee-dedicated-gallery<?php echo $is_locked ? ' mr-tee-gallery--aspect-locked' : ''; ?>"
 			data-product-id="<?php echo esc_attr( $product_id ); ?>"
 			data-columns="4"
 			data-slide-count="<?php echo esc_attr( $slide_count ); ?>"
@@ -565,9 +664,16 @@ class ProductGalleryRenderer {
 							>
 								<img
 									src="<?php echo esc_url( $slide['image_url'] ); ?>"
+									<?php if ( ! empty( $slide['srcset'] ) ) : ?>
+										srcset="<?php echo esc_attr( $slide['srcset'] ); ?>"
+									<?php endif; ?>
+									<?php if ( ! empty( $slide['sizes'] ) ) : ?>
+										sizes="<?php echo esc_attr( $slide['sizes'] ); ?>"
+									<?php endif; ?>
 									alt="<?php echo esc_attr( $slide['alt'] ); ?>"
 									class="mr-tee-slide-img<?php echo 0 === $idx ? ' wp-post-image' : ''; ?> skip-lazy no-lazyload"
 									data-no-lazy="1"
+									data-skip-lazy="1"
 									data-large_image="<?php echo esc_url( $slide['image_url'] ); ?>"
 									<?php if ( ! empty( $slide['width'] ) && ! empty( $slide['height'] ) ) : ?>
 										width="<?php echo esc_attr( (string) $slide['width'] ); ?>"

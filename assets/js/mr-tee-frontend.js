@@ -8,12 +8,12 @@
  * @package MrTeeEditor\Assets
  */
 
-import { StateStore } from './modules/state-store.js?v=2.4.0';
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.4.0';
-import { SvgRenderer } from './modules/svg-renderer.js?v=2.4.0';
-import { GalleryStage } from './modules/gallery-stage.js?v=2.4.0';
-import { FormController } from './modules/form-controller.js?v=2.4.0';
-import { PrintExporter } from './modules/print-exporter.js?v=2.4.0';
+import { StateStore } from './modules/state-store.js?v=2.4.0.1';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.4.0.1';
+import { SvgRenderer } from './modules/svg-renderer.js?v=2.4.0.1';
+import { GalleryStage } from './modules/gallery-stage.js?v=2.4.0.1';
+import { FormController } from './modules/form-controller.js?v=2.4.0.1';
+import { PrintExporter } from './modules/print-exporter.js?v=2.4.0.1';
 
 window.mrTeePrintExporter = PrintExporter;
 window.mrTeeSvgRenderer = SvgRenderer;
@@ -214,6 +214,20 @@ class MrTeeFrontendApp {
 	}
 
 	/**
+	 * Resolve print side definition for a given sideId from product config.
+	 *
+	 * @param {string} sideId Print side identifier.
+	 * @return {Object|null}
+	 */
+	getSideDef(sideId) {
+		const sides = Array.isArray(this.config.print_sides) ? this.config.print_sides : [];
+		if (sides.length === 0) return null;
+		if (!sideId) return sides[0] || null;
+		const key = String(sideId);
+		return sides.find(s => s && String(s.id) === key) || sides[0] || null;
+	}
+
+	/**
 	 * Read live natural aspect ratio for a specific view's garment image (ignoring <= 2px placeholders).
 	 * Never caches a stale ratio that could be poisoned by unloaded lazy images or variation swaps.
 	 *
@@ -221,9 +235,13 @@ class MrTeeFrontendApp {
 	 * @return {number}
 	 */
 	computeAspectRatioForView(viewId = '') {
-		const isLocked = Boolean(this.config.lock_aspect_ratio) || this.config.product_type === 'flat_object';
-		const realW = parseFloat(this.config.print_real_width) || 0;
-		const realH = parseFloat(this.config.print_real_height) || 0;
+		const meta = this.getViewMeta(viewId);
+		const sideDef = this.getSideDef(meta && meta.sideId);
+		const isLocked = (sideDef && sideDef.lock_aspect_ratio !== undefined)
+			? (Boolean(sideDef.lock_aspect_ratio) || sideDef.product_type === 'flat_object')
+			: (Boolean(this.config.lock_aspect_ratio) || this.config.product_type === 'flat_object');
+		const realW = (sideDef && parseFloat(sideDef.print_real_width)) || parseFloat(this.config.print_real_width) || 0;
+		const realH = (sideDef && parseFloat(sideDef.print_real_height)) || parseFloat(this.config.print_real_height) || 0;
 
 		if (isLocked && realW > 0 && realH > 0) {
 			return realW / realH;
@@ -248,7 +266,6 @@ class MrTeeFrontendApp {
 			}
 		}
 
-		const meta = this.getViewMeta(viewId);
 		if (meta && meta.aspectRatio > 0) {
 			return meta.aspectRatio;
 		}
@@ -304,18 +321,19 @@ class MrTeeFrontendApp {
 			return '';
 		}
 
+		const sideDef = this.getSideDef(meta && meta.sideId);
 		const ratio = (extraOpts && extraOpts.aspectRatio > 0)
 			? extraOpts.aspectRatio
 			: this.computeAspectRatioForView(viewId);
-		const realW = parseFloat(this.config.print_real_width) || 0;
-		const realH = parseFloat(this.config.print_real_height) || 0;
+		const realW = (sideDef && parseFloat(sideDef.print_real_width)) || parseFloat(this.config.print_real_width) || 0;
+		const realH = (sideDef && parseFloat(sideDef.print_real_height)) || parseFloat(this.config.print_real_height) || 0;
 
 		const renderOptions = {
 			aspectRatio: ratio,
 			realWidth: realW,
 			realHeight: realH,
-			unit: this.config.print_unit || 'cm',
-			dpi: this.config.dpi || 300,
+			unit: (sideDef && sideDef.print_unit) || this.config.print_unit || 'cm',
+			dpi: (sideDef && parseInt(sideDef.dpi, 10)) || this.config.dpi || 300,
 			hasPerLineBoxes: Boolean(this._hasPerLineBoxes),
 			viewId: viewId || undefined,
 			sideId: (meta && meta.sideId) ? meta.sideId : undefined,
@@ -353,15 +371,19 @@ class MrTeeFrontendApp {
 	}
 
 	/**
-	 * Stage 1: Immediately decode only the glyph bitmaps used by each line's initial default_text.
+	 * Stage 1: Immediately decode only the glyph bitmaps used by Slide 0's initial default_text.
 	 */
 	prewarmDefaultTextGlyphs() {
 		const preloaded = (this.data && this.data.svgFonts) || {};
 		const fonts = (this.data && this.data.fonts) || {};
 		const textLines = this.config.text_lines || [];
+		const activeViewId = this.stage ? this.stage.getActiveViewId() : '';
+		const activeMeta = activeViewId ? this.getViewMeta(activeViewId) : null;
+		const activeSideId = (activeMeta && activeMeta.sideId) ? String(activeMeta.sideId) : '';
 
 		for (const line of textLines) {
 			if (line.field_type === 'image') continue;
+			if (activeSideId && String(line.side_id || 'front') !== activeSideId) continue;
 			const activeFontId = line.font || (Array.isArray(line.allowed_fonts) && line.allowed_fonts[0]);
 			let defaultText = line.default_text || '';
 			if (!activeFontId || !defaultText) continue;
@@ -381,25 +403,31 @@ class MrTeeFrontendApp {
 
 	/**
 	 * Schedule Stage 2 background alphabet pre-warming and secondary manifest prefetching
-	 * after initial page load completes so LCP and initial default_text glyphs have 100% network priority.
+	 * strictly upon first user interaction with the editor/gallery so initial page load
+	 * downloads ZERO unused alphabet glyph bitmaps (~600 KB+ saved on initial load).
 	 */
 	scheduleStageTwoWarmup() {
-		const runStageTwo = () => {
-			const idleExec = typeof window.requestIdleCallback === 'function'
-				? (fn) => window.requestIdleCallback(fn, { timeout: 1500 })
-				: (fn) => setTimeout(fn, 250);
-
-			idleExec(() => {
-				this.prewarmActiveLineFonts();
-				setTimeout(() => this.prefetchAllowedSvgFonts(), 600);
+		let warmed = false;
+		const triggerWarmup = () => {
+			if (warmed) return;
+			warmed = true;
+			targets.forEach((el) => {
+				if (!el) return;
+				events.forEach((evt) => el.removeEventListener(evt, triggerWarmup));
 			});
+			this.prewarmActiveLineFonts();
+			setTimeout(() => this.prefetchAllowedSvgFonts(), 300);
 		};
 
-		if (document.readyState === 'complete') {
-			runStageTwo();
-		} else {
-			window.addEventListener('load', runStageTwo, { once: true });
-		}
+		const events = ['pointerdown', 'touchstart', 'focusin', 'mouseenter', 'keydown'];
+		const targets = [
+			document.getElementById('mr-tee-editor-container'),
+			document.getElementById('mr-tee-gallery-root'),
+		];
+		targets.forEach((el) => {
+			if (!el) return;
+			events.forEach((evt) => el.addEventListener(evt, triggerWarmup, { once: true, passive: true }));
+		});
 	}
 
 	/**

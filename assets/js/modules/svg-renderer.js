@@ -87,10 +87,13 @@ export class SvgRenderer {
 		const idPrefix = options.idPrefix ? String(options.idPrefix).replace(/[^a-zA-Z0-9_-]/g, '') : '';
 		const activeLayers = options.sideId ? this.filterLayersBySide(layers, options.sideId) : (Array.isArray(layers) ? layers : []);
 
-		const fontFaceCss = options.fontFaceCss
-			|| (typeof window !== 'undefined' && window.mrTeeOrderExportData && window.mrTeeOrderExportData.fontFaceCss)
-			|| (typeof window !== 'undefined' && window.mrTeeProductData && window.mrTeeProductData.fontFaceCss)
-			|| '';
+		const needsStandaloneFontCss = Boolean(options.isExport || options.useThumbCache || options.fontFaceCss);
+		const fontFaceCss = needsStandaloneFontCss
+			? (options.fontFaceCss
+				|| (typeof window !== 'undefined' && window.mrTeeOrderExportData && window.mrTeeOrderExportData.fontFaceCss)
+				|| (typeof window !== 'undefined' && window.mrTeeProductData && window.mrTeeProductData.fontFaceCss)
+				|| '')
+			: '';
 		let defs = '';
 		if (fontFaceCss) {
 			defs += `<style><![CDATA[\n${fontFaceCss}\n]]></style>`;

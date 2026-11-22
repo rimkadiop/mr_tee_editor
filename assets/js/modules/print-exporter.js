@@ -7,7 +7,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.4.0';
+import { SvgRenderer } from './svg-renderer.js?v=2.4.0.1';
 
 export class PrintExporter {
 	static CHUNK_SIZE_BYTES = 600 * 1024; // 600 KB binary chunks fit cleanly under 1 MB proxy/WAF limits while minimizing round-trips
@@ -172,14 +172,14 @@ export class PrintExporter {
 		const imgEl = this.findProductGalleryImageElement(viewId);
 		if (imgEl) {
 			const candidates = [
+				imgEl.getAttribute('data-large_image'),
+				imgEl.getAttribute('data-lazy-src'),
+				imgEl.getAttribute('data-src'),
 				imgEl.currentSrc,
 				imgEl.getAttribute('src'),
-				imgEl.getAttribute('data-large_image'),
-				imgEl.getAttribute('data-src'),
-				imgEl.getAttribute('data-lazy-src'),
 			];
 			for (const cand of candidates) {
-				if (cand && !cand.startsWith('data:image/svg+xml')) {
+				if (cand && !cand.startsWith('data:image/svg+xml') && !cand.startsWith('data:image/gif')) {
 					return cand;
 				}
 			}
@@ -641,10 +641,7 @@ export class PrintExporter {
 		}
 
 		const fontFaceCss = this.extractFontFaceCss();
-		const renderedViews = [];
-
-		for (let i = 0; i < cartViews.length; i++) {
-			const view = cartViews[i];
+		const renderedViews = await Promise.all(cartViews.map(async (view, i) => {
 			const sideId = view.side_id || 'front';
 			const viewId = view.id || null;
 			const sideMetrics = this.computeSideExportMetrics(config, null, sideId);
@@ -654,7 +651,7 @@ export class PrintExporter {
 				domGarmentImg = this.findProductGalleryImageElement();
 			}
 			const hasFastDomBg = this.isSameOriginImage(domGarmentImg);
-			const bgUrl = view.image_url || (i === 0 ? this.resolveProductBackgroundUrl(viewId) : '');
+			const bgUrl = this.resolveProductBackgroundUrl(viewId) || view.image_url || '';
 			const bgAsset = hasFastDomBg ? null : (bgUrl ? await this.loadBackgroundImage(bgUrl) : null);
 			const isLocked = Boolean(sideMetrics.lockAspectRatio) || sideMetrics.isFlatObject;
 
@@ -704,11 +701,11 @@ export class PrintExporter {
 				realH: sideMetrics.realH,
 			});
 
-			renderedViews.push({
+			return {
 				view,
 				b64: compositeB64 || '',
-			});
-		}
+			};
+		}));
 
 		const primaryEntry = renderedViews[0] || { view: cartViews[0], b64: '' };
 		const compositeB64 = primaryEntry.b64;
@@ -746,19 +743,12 @@ export class PrintExporter {
 			if (previewInput) previewInput.value = '';
 		}
 
-		// Upload additional cart preview views (index 1..N) and persist metadata in #mr_tee_previews_json
+		// Upload additional cart preview views (index 1..N) in parallel and persist metadata in #mr_tee_previews_json
 		const previewsMeta = [];
 		if (renderedViews.length > 1) {
 			const v0 = primaryEntry.view || {};
-			previewsMeta.push({
-				view_id: v0.id || v0.side_id || 'front',
-				side_id: v0.side_id || 'front',
-				label: v0.label || 'Recto',
-				url: primaryUploadedUrl || '',
-			});
-
-			for (let i = 1; i < renderedViews.length; i++) {
-				const item = renderedViews[i];
+			const secondaryEntries = await Promise.all(renderedViews.slice(1).map(async (item, idx) => {
+				const i = idx + 1;
 				const v = item.view || {};
 				const rawViewId = v.id || `view_${i}`;
 				const safeSuffix = String(rawViewId).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32) || `view_${i}`;
@@ -775,13 +765,23 @@ export class PrintExporter {
 						uploadedUrl = upRes.url;
 					}
 				}
-				previewsMeta.push({
+				return {
 					view_id: safeSuffix,
 					side_id: v.side_id || 'front',
 					label: v.label || `Vue ${i + 1}`,
 					url: uploadedUrl,
-				});
-			}
+				};
+			}));
+
+			previewsMeta.push(
+				{
+					view_id: v0.id || v0.side_id || 'front',
+					side_id: v0.side_id || 'front',
+					label: v0.label || 'Recto',
+					url: primaryUploadedUrl || '',
+				},
+				...secondaryEntries
+			);
 
 			if (!previewsInput && designKeyInput && designKeyInput.parentNode) {
 				previewsInput = document.createElement('input');

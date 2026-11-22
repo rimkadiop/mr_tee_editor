@@ -224,12 +224,71 @@ class ProductPageRenderer {
 	 * @param int $product_id Product ID.
 	 * @return array<string, mixed>
 	 */
-	private static function get_cached_config( $product_id ) {
+	public static function get_cached_config( $product_id ) {
 		$pid = (int) $product_id;
 		if ( ! isset( self::$config_cache[ $pid ] ) ) {
 			self::$config_cache[ $pid ] = SceneGraphSchema::get_product_config( $pid );
 		}
 		return self::$config_cache[ $pid ];
+	}
+
+	/**
+	 * Resolve the ordered map of allowed fonts for a product configuration across all text lines
+	 * (including multi-side Recto/Verso lines) while stripping internal server filesystem paths.
+	 *
+	 * @param array<string, mixed> $config Compiled product configuration.
+	 * @return array<string, array<string, mixed>>
+	 */
+	private static function resolve_allowed_fonts_for_config( array $config ) {
+		$all_fonts        = FontRegistry::get_fonts();
+		$allowed_font_ids = array();
+
+		if ( ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
+			foreach ( $config['allowed_fonts'] as $fid ) {
+				if ( is_string( $fid ) && '' !== $fid && ! in_array( $fid, $allowed_font_ids, true ) ) {
+					$allowed_font_ids[] = $fid;
+				}
+			}
+		}
+
+		if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
+			foreach ( $config['text_lines'] as $tl ) {
+				if ( ! is_array( $tl ) || ( isset( $tl['field_type'] ) && 'image' === $tl['field_type'] ) ) {
+					continue;
+				}
+				if ( ! empty( $tl['font'] ) && is_string( $tl['font'] ) && ! in_array( $tl['font'], $allowed_font_ids, true ) ) {
+					$allowed_font_ids[] = $tl['font'];
+				}
+				if ( ! empty( $tl['allowed_fonts'] ) && is_array( $tl['allowed_fonts'] ) ) {
+					foreach ( $tl['allowed_fonts'] as $fid ) {
+						if ( is_string( $fid ) && '' !== $fid && ! in_array( $fid, $allowed_font_ids, true ) ) {
+							$allowed_font_ids[] = $fid;
+						}
+					}
+				}
+			}
+		}
+
+		if ( empty( $allowed_font_ids ) ) {
+			$allowed_font_ids = array_keys( $all_fonts );
+		}
+
+		$filtered_fonts = array();
+		foreach ( $allowed_font_ids as $f_id ) {
+			if ( isset( $all_fonts[ $f_id ] ) ) {
+				$f_entry = $all_fonts[ $f_id ];
+				unset( $f_entry['path'] );
+				$filtered_fonts[ $f_id ] = $f_entry;
+			}
+		}
+		if ( empty( $filtered_fonts ) ) {
+			foreach ( $all_fonts as $f_id => $f_entry ) {
+				unset( $f_entry['path'] );
+				$filtered_fonts[ $f_id ] = $f_entry;
+			}
+		}
+
+		return $filtered_fonts;
 	}
 
 	/**
@@ -264,8 +323,8 @@ class ProductPageRenderer {
 
 	/**
 	 * Output high-priority performance hints in wp_head:
-	 * - Emits <link rel="modulepreload"> for mr-tee-frontend.js and its 6 ES modules to eliminate the footer waterfall.
-	 * - Preloads glyph images used by default text with fetchpriority="high" so 3D fonts render instantly without flicker.
+	 * - Emits <link rel="modulepreload"> for mr-tee-frontend.js and its 7 ES modules to eliminate the footer waterfall.
+	 * - Preloads Slide 0's hero garment image and ONLY Slide 0's side default_text glyph images with fetchpriority="high".
 	 */
 	public static function render_performance_hints() {
 		$product_id = self::get_active_product_id();
@@ -273,7 +332,7 @@ class ProductPageRenderer {
 			return;
 		}
 
-		// 1. Preload ES6 module graph in <head> to eliminate the 6-file discovery waterfall at bottom of <body>
+		// 1. Preload ES6 module graph in <head> to eliminate the discovery waterfall at bottom of <body>
 		$base_parsed = wp_parse_url( MR_TEE_EDITOR_URL );
 		$url_host    = ! empty( $base_parsed['host'] ) ? $base_parsed['host'] : '';
 		$site_host   = wp_parse_url( home_url(), PHP_URL_HOST );
@@ -281,7 +340,7 @@ class ProductPageRenderer {
 		$same_orig   = ! $url_host || $url_host === $site_host || ( $http_host && $url_host === $http_host );
 		$base_path   = ( $same_orig && ! empty( $base_parsed['path'] ) ) ? trailingslashit( $base_parsed['path'] ) : trailingslashit( MR_TEE_EDITOR_URL );
 		$entry_ver   = self::get_asset_version( 'assets/js/mr-tee-frontend.js' );
-		$mod_ver     = MR_TEE_EDITOR_VERSION;
+		$mod_ver     = '2.4.0.1';
 
 		printf(
 			"<link rel=\"modulepreload\" href=\"%s\" />\n",
@@ -304,13 +363,36 @@ class ProductPageRenderer {
 			);
 		}
 
-		$config = self::get_cached_config( $product_id );
+		$config         = self::get_cached_config( $product_id );
+		$gallery_slides = ProductGalleryRenderer::get_gallery_slides( $product_id, $config );
+		$slide0         = ! empty( $gallery_slides[0] ) && is_array( $gallery_slides[0] ) ? $gallery_slides[0] : null;
+		$slide0_side_id = ( $slide0 && ! empty( $slide0['side_id'] ) ) ? (string) $slide0['side_id'] : 'front';
+
+		// 2. Preload Slide 0 LCP hero garment image in <head> (with responsive imagesrcset/imagesizes if available)
+		$preloaded_images = array();
+		if ( $slide0 && ! empty( $slide0['image_url'] ) ) {
+			$s0_url                      = $slide0['image_url'];
+			$preloaded_images[ $s0_url ] = true;
+			$srcset_attr                 = ! empty( $slide0['srcset'] ) ? sprintf( ' imagesrcset="%s"', esc_attr( $slide0['srcset'] ) ) : '';
+			$sizes_attr                  = ! empty( $slide0['sizes'] ) ? sprintf( ' imagesizes="%s"', esc_attr( $slide0['sizes'] ) ) : '';
+			printf(
+				"<link rel=\"preload\" href=\"%s\" as=\"image\"%s%s fetchpriority=\"high\" />\n",
+				esc_url( $s0_url ),
+				$srcset_attr,
+				$sizes_attr
+			);
+		}
+
 		if ( empty( $config['text_lines'] ) || ! is_array( $config['text_lines'] ) ) {
 			return;
 		}
 
-		$preloaded_images = array();
+		// 3. Preload default images & default_text glyphs strictly for Slide 0's visible side
 		foreach ( $config['text_lines'] as $line ) {
+			$line_side = ! empty( $line['side_id'] ) ? (string) $line['side_id'] : 'front';
+			if ( '' !== $slide0_side_id && $line_side !== $slide0_side_id ) {
+				continue;
+			}
 			if ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) {
 				if ( ! empty( $line['default_image'] ) && ! isset( $preloaded_images[ $line['default_image'] ] ) && count( $preloaded_images ) < 24 ) {
 					$preloaded_images[ $line['default_image'] ] = true;
@@ -384,37 +466,8 @@ class ProductPageRenderer {
 		}
 		self::$assets_enqueued = true;
 
-		$config = self::get_cached_config( $product_id );
-
-		// Determine allowed fonts strictly for this product
-		$all_fonts        = FontRegistry::get_fonts();
-		$allowed_font_ids = array();
-		if ( ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
-			$allowed_font_ids = $config['allowed_fonts'];
-		} else {
-			if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
-				foreach ( $config['text_lines'] as $tl ) {
-					if ( ( empty( $tl['field_type'] ) || 'image' !== $tl['field_type'] ) && ! empty( $tl['allowed_fonts'] ) && is_array( $tl['allowed_fonts'] ) ) {
-						$allowed_font_ids = $tl['allowed_fonts'];
-						break;
-					}
-				}
-			}
-			if ( empty( $allowed_font_ids ) ) {
-				$allowed_font_ids = array_keys( $all_fonts );
-			}
-		}
-
-		// Filter and strictly preserve the admin's chosen font order
-		$filtered_fonts = array();
-		foreach ( $allowed_font_ids as $f_id ) {
-			if ( isset( $all_fonts[ $f_id ] ) ) {
-				$filtered_fonts[ $f_id ] = $all_fonts[ $f_id ];
-			}
-		}
-		if ( empty( $filtered_fonts ) ) {
-			$filtered_fonts = $all_fonts;
-		}
+		$config         = self::get_cached_config( $product_id );
+		$filtered_fonts = self::resolve_allowed_fonts_for_config( $config );
 		unset( $config['fonts'] );
 
 		// Frontend styles (all fancy display fonts bundled locally in assets/fonts/ with font-display: swap)
@@ -482,13 +535,9 @@ class ProductPageRenderer {
 			}
 		}
 
-		$thumb_id          = get_post_thumbnail_id( $product_id );
-		$product_image_url = $thumb_id ? ( wp_get_attachment_image_url( $thumb_id, 'large' ) ?: wp_get_attachment_image_url( $thumb_id, 'full' ) ) : '';
-		if ( ! empty( $product_image_url ) && ! is_ssl() ) {
-			$product_image_url = set_url_scheme( $product_image_url, 'http' );
-		}
-		$cart_url       = function_exists( 'wc_get_cart_url' ) ? wc_get_cart_url() : '';
-		$gallery_slides = ProductGalleryRenderer::get_gallery_slides( $product_id, $config );
+		$gallery_slides    = ProductGalleryRenderer::get_gallery_slides( $product_id, $config );
+		$product_image_url = ! empty( $gallery_slides[0]['image_url'] ) ? $gallery_slides[0]['image_url'] : '';
+		$cart_url          = function_exists( 'wc_get_cart_url' ) ? wc_get_cart_url() : '';
 
 		wp_localize_script(
 			'mr-tee-frontend-js',
@@ -565,32 +614,7 @@ class ProductPageRenderer {
 
 		$wc_product = is_object( $product ) && method_exists( $product, 'is_type' ) ? $product : ( function_exists( 'wc_get_product' ) ? wc_get_product( $product_id ) : null );
 		$config     = self::get_cached_config( $product_id );
-		$all_fonts  = FontRegistry::get_fonts();
-		$allowed_ids = array();
-		if ( ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
-			$allowed_ids = $config['allowed_fonts'];
-		} else {
-			if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
-				foreach ( $config['text_lines'] as $tl ) {
-					if ( ( empty( $tl['field_type'] ) || 'image' !== $tl['field_type'] ) && ! empty( $tl['allowed_fonts'] ) && is_array( $tl['allowed_fonts'] ) ) {
-						$allowed_ids = $tl['allowed_fonts'];
-						break;
-					}
-				}
-			}
-			if ( empty( $allowed_ids ) ) {
-				$allowed_ids = array_keys( $all_fonts );
-			}
-		}
-		$fonts       = array();
-		foreach ( $allowed_ids as $aid ) {
-			if ( isset( $all_fonts[ $aid ] ) ) {
-				$fonts[ $aid ] = $all_fonts[ $aid ];
-			}
-		}
-		if ( empty( $fonts ) ) {
-			$fonts = $all_fonts;
-		}
+		$fonts      = self::resolve_allowed_fonts_for_config( $config );
 		$swatches   = ColorPaletteRegistry::get_solid_swatches();
 		$icons      = IconSetRegistry::get_mushroom_icons();
 		$rep        = $config['repeater'];

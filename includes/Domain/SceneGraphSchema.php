@@ -25,8 +25,60 @@ if ( ! defined( 'ABSPATH' ) ) {
 class SceneGraphSchema {
 
 	/**
-	 * Return the default product configuration structure.
+	 * Per-request in-memory cache of compiled product configurations keyed by product ID.
 	 *
+	 * @var array<int, array<string, mixed>>
+	 */
+	private static $product_config_cache = array();
+
+	/**
+	 * Clear the per-request product configuration cache for a given product ID (or all products).
+	 *
+	 * @param int $product_id Optional product ID to clear; 0 clears all cached entries.
+	 */
+	public static function clear_product_config_cache( $product_id = 0 ) {
+		$pid = (int) $product_id;
+		if ( $pid > 0 ) {
+			unset( self::$product_config_cache[ $pid ] );
+		} else {
+			self::$product_config_cache = array();
+		}
+	}
+
+	/**
+	 * Normalize same-site image URLs to match the active request scheme (http vs https)
+	 * to prevent cross-scheme 503 timeouts or mixed-content blocks in WP Admin and Storefront.
+	 *
+	 * @param string $url Raw URL.
+	 * @return string
+	 */
+	public static function normalize_url_scheme( $url ) {
+		if ( empty( $url ) || ! is_string( $url ) ) {
+			return '';
+		}
+		$url = trim( $url );
+		if ( 0 !== strpos( $url, 'http://' ) && 0 !== strpos( $url, 'https://' ) ) {
+			return $url;
+		}
+		if ( ! function_exists( 'wp_parse_url' ) || ! function_exists( 'set_url_scheme' ) ) {
+			return $url;
+		}
+
+		$site_host = wp_parse_url( home_url(), PHP_URL_HOST );
+		$http_host = isset( $_SERVER['HTTP_HOST'] ) ? preg_replace( '/:\d+$/', '', sanitize_text_field( wp_unslash( $_SERVER['HTTP_HOST'] ) ) ) : '';
+		$url_host  = wp_parse_url( $url, PHP_URL_HOST );
+
+		if ( $url_host && ( $url_host === $site_host || ( $http_host && $url_host === $http_host ) ) ) {
+			return set_url_scheme( $url, is_ssl() ? 'https' : 'http' );
+		}
+
+		if ( is_ssl() && 0 === strpos( $url, 'http://' ) ) {
+			return set_url_scheme( $url, 'https' );
+		}
+
+		return $url;
+	}
+
 	/**
 	 * Return the default product configuration structure for a given preset.
 	 *
@@ -438,6 +490,11 @@ class SceneGraphSchema {
 	 * @return array<string, mixed>
 	 */
 	public static function get_product_config( $product_id ) {
+		$cache_key = (int) $product_id;
+		if ( $cache_key > 0 && isset( self::$product_config_cache[ $cache_key ] ) ) {
+			return self::$product_config_cache[ $cache_key ];
+		}
+
 		$saved  = get_post_meta( $product_id, '_mr_tee_config', true );
 		$engine = get_post_meta( $product_id, '_mr_tee_engine_mode', true );
 
@@ -515,6 +572,7 @@ class SceneGraphSchema {
 		if ( ! is_string( $featured_url ) ) {
 			$featured_url = '';
 		}
+		$featured_url = self::normalize_url_scheme( $featured_url );
 
 		// Normalize multi-view preview slides (`preview_views`)
 		$preview_views             = self::normalize_preview_views( isset( $config['preview_views'] ) ? $config['preview_views'] : array(), $print_sides, $thumb_id, $featured_url );
@@ -578,7 +636,7 @@ class SceneGraphSchema {
 			$merged['field_type'] = $field_type;
 
 			if ( 'image' === $field_type ) {
-				$merged['default_image']      = ! empty( $merged['default_image'] ) ? esc_url_raw( $merged['default_image'] ) : '';
+				$merged['default_image']      = ! empty( $merged['default_image'] ) ? self::normalize_url_scheme( esc_url_raw( $merged['default_image'] ) ) : '';
 				$merged['default_image_id']   = ! empty( $merged['default_image_id'] ) ? absint( $merged['default_image_id'] ) : 0;
 				$merged['image_fit']          = ( isset( $merged['image_fit'] ) && 'cover' === $merged['image_fit'] ) ? 'cover' : 'contain';
 				$merged['allow_image_upload'] = isset( $merged['allow_image_upload'] ) ? (bool) $merged['allow_image_upload'] : true;
@@ -722,6 +780,10 @@ class SceneGraphSchema {
 		$config['solid_colors'] = ColorPaletteRegistry::get_solid_swatches();
 		$config['perso_visual'] = self::compile_scene_graph( $config );
 
+		if ( $cache_key > 0 ) {
+			self::$product_config_cache[ $cache_key ] = $config;
+		}
+
 		return $config;
 	}
 
@@ -856,7 +918,7 @@ class SceneGraphSchema {
 		$allowed_roles   = array( 'full', 'closeup', 'detail' );
 		$allowed_blends  = array( 'normal', 'multiply', 'soft_ink' );
 		$thumb_id        = (int) $thumb_id;
-		$featured_url    = is_string( $featured_url ) ? $featured_url : '';
+		$featured_url    = is_string( $featured_url ) ? self::normalize_url_scheme( $featured_url ) : '';
 
 		$views    = array();
 		$used_ids = array();
@@ -910,6 +972,7 @@ class SceneGraphSchema {
 					$v_img_id  = $thumb_id;
 					$v_img_url = $featured_url;
 				}
+				$v_img_url = self::normalize_url_scheme( $v_img_url );
 
 				$v_cart = ! empty( $raw_view['is_cart_preview'] );
 

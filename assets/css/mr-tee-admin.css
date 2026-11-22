@@ -249,6 +249,11 @@
 	box-shadow: 0 0 0 1px #ffffff, 0 4px 14px rgba(0, 0, 0, 0.15);
 }
 
+.mr-tee-field-box.is-interacting {
+	will-change: transform, left, top, width, height;
+	transition: none !important;
+}
+
 .mr-tee-box-badge {
 	position: absolute;
 	top: -20px;
@@ -272,6 +277,10 @@
 	justify-content: center;
 	pointer-events: none;
 	overflow: visible;
+}
+
+.mr-tee-field-box.is-image-field .mr-tee-box-svg-holder {
+	overflow: hidden;
 }
 
 /* Resize Handles (Active Box Only) */

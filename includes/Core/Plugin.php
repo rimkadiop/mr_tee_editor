@@ -852,7 +852,7 @@ final class Plugin {
 			return;
 		}
 
-		if ( function_exists( 'wp_enqueue_media' ) ) {
+		if ( function_exists( 'wp_enqueue_media' ) && ! did_action( 'wp_enqueue_media' ) ) {
 			wp_enqueue_media( array( 'post' => $post->ID ) );
 		}
 
@@ -900,7 +900,7 @@ final class Plugin {
 		wp_enqueue_script(
 			'mr-tee-admin-js',
 			MR_TEE_EDITOR_URL . 'assets/js/mr-tee-admin.js',
-			array( 'jquery', 'jquery-ui-draggable', 'jquery-ui-resizable' ),
+			array( 'jquery' ),
 			$this->get_asset_version( 'assets/js/mr-tee-admin.js' ),
 			true
 		);
@@ -919,19 +919,48 @@ final class Plugin {
 				if ( $f_def && ( ( ! empty( $f_def['font_type'] ) && 'opentype_svg' === $f_def['font_type'] ) || ! empty( $f_def['color_svg'] ) ) ) {
 					$svg_data = \MrTeeEditor\Registry\FontRegistry::get_svg_font_data( $line['font'] );
 					if ( $svg_data ) {
+						// Omit 300-DPI fullMap from admin placement stage payload (saves ~15.5 KB per font)
+						unset( $svg_data['fullMap'] );
 						$preloaded_svg_fonts[ $line['font'] ] = $svg_data;
 					}
 				}
 			}
 		}
 
+		// Strip internal server paths & unused fields from localized admin font registry
+		$admin_fonts = array();
+		foreach ( $all_fonts as $f_id => $f_meta ) {
+			if ( ! is_array( $f_meta ) ) {
+				continue;
+			}
+			unset( $f_meta['path'], $f_meta['data_url'], $f_meta['palette'] );
+			if ( ! empty( $f_meta['url'] ) ) {
+				$f_meta['url'] = SceneGraphSchema::normalize_url_scheme( $f_meta['url'] );
+			}
+			if ( ! empty( $f_meta['thumb_url'] ) ) {
+				$f_meta['thumb_url'] = SceneGraphSchema::normalize_url_scheme( $f_meta['thumb_url'] );
+			}
+			$admin_fonts[ $f_id ] = $f_meta;
+		}
+
+		// Strip duplicate fonts/scene-graph/palettes from localized admin config (~40 KB -> ~4 KB)
+		$admin_config = $config;
+		unset(
+			$admin_config['fonts'],
+			$admin_config['perso_visual'],
+			$admin_config['color_sets'],
+			$admin_config['icons'],
+			$admin_config['solid_colors'],
+			$admin_config['garment_colors']
+		);
+
 		wp_localize_script(
 			'mr-tee-admin-js',
 			'mrTeeAdminData',
 			array(
 				'productId' => $post->ID,
-				'config'    => $config,
-				'fonts'     => $all_fonts,
+				'config'    => $admin_config,
+				'fonts'     => $admin_fonts,
 				'svgFonts'  => $preloaded_svg_fonts,
 				'ajaxUrl'   => admin_url( 'admin-ajax.php', $proto ),
 				'nonce'     => wp_create_nonce( 'mr_tee_admin_nonce' ),

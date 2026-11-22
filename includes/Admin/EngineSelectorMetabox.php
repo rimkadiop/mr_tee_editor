@@ -29,6 +29,23 @@ class EngineSelectorMetabox {
 	public static function init() {
 		add_action( 'add_meta_boxes', array( __CLASS__, 'add_meta_boxes' ) );
 		add_action( 'save_post_product', array( __CLASS__, 'save_meta_box' ), 20, 2 );
+		add_filter( 'use_block_editor_for_post_type', array( __CLASS__, 'disable_block_editor_for_products' ), 100, 2 );
+	}
+
+	/**
+	 * Ensure WooCommerce products use the fast native Classic Product Editor even when a theme
+	 * (such as Shoptimizer's `shoptimizer_activate_gutenberg_product`) overrides
+	 * `WC_Post_Types::gutenberg_can_edit_post_type` at priority 10.
+	 *
+	 * @param bool   $can_edit  Whether the post type can be edited with the block editor.
+	 * @param string $post_type Post type slug.
+	 * @return bool
+	 */
+	public static function disable_block_editor_for_products( $can_edit, $post_type ) {
+		if ( 'product' === $post_type ) {
+			return (bool) apply_filters( 'mr_tee_use_block_editor_for_product', false, $can_edit );
+		}
+		return $can_edit;
 	}
 
 	/**
@@ -53,13 +70,12 @@ class EngineSelectorMetabox {
 	public static function render_metabox( $post ) {
 		wp_nonce_field( 'mr_tee_save_metabox', 'mr_tee_nonce' );
 
-		$config     = SceneGraphSchema::get_product_config( $post->ID );
-		$engine     = $config['engine'];
-		$fonts      = FontRegistry::get_fonts();
-		$color_sets = ColorPaletteRegistry::get_color_sets();
-		$icons      = IconSetRegistry::get_mushroom_icons();
-		$thumb_id   = get_post_thumbnail_id( $post->ID );
-		$thumb_url  = $thumb_id ? wp_get_attachment_image_url( $thumb_id, 'large' ) : ( function_exists( 'wc_placeholder_img_src' ) ? wc_placeholder_img_src() : '' );
+		$config    = SceneGraphSchema::get_product_config( $post->ID );
+		$engine    = $config['engine'];
+		$fonts     = FontRegistry::get_fonts();
+		$thumb_id  = get_post_thumbnail_id( $post->ID );
+		$thumb_url = $thumb_id ? wp_get_attachment_image_url( $thumb_id, 'large' ) : ( function_exists( 'wc_placeholder_img_src' ) ? wc_placeholder_img_src() : '' );
+		$thumb_url = SceneGraphSchema::normalize_url_scheme( $thumb_url );
 
 		?>
 		<div class="mr-tee-admin-wrap" data-product-id="<?php echo esc_attr( $post->ID ); ?>" data-thumb-url="<?php echo esc_url( $thumb_url ); ?>">
@@ -712,5 +728,7 @@ class EngineSelectorMetabox {
 			$config['engine'] = $engine;
 			update_post_meta( $post_id, '_mr_tee_config', $config );
 		}
+
+		SceneGraphSchema::clear_product_config_cache( $post_id );
 	}
 }

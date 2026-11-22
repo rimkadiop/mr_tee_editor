@@ -27,9 +27,12 @@
 			this.data = window.mrTeeAdminData || {};
 			this.config = this.data.config || {};
 			this.$canvasWrap = $('#mr-tee-stage-canvas-wrap');
-			this.defaultThumbUrl = $('.mr-tee-admin-wrap').attr('data-thumb-url')
+			this._cachedStageRatio = 0;
+			this.defaultThumbUrl = this.normalizeAdminAssetUrl(
+				$('.mr-tee-admin-wrap').attr('data-thumb-url')
 				|| $('#mr-tee-stage-garment-img').attr('src')
-				|| '';
+				|| ''
+			);
 			this.activeFieldIndex = 0;
 			this._pendingSvgFetches = {};
 			this._loadedTtfFonts = new Set();
@@ -60,7 +63,6 @@
 			this.bindFontUploader();
 			this.bindProductAllowedFonts();
 			this.bindStagePreviewRefreshes();
-			this.renderAllBoxesPreviews();
 		}
 
 		isSvgFont(fontDef) {
@@ -73,6 +75,19 @@
 				const u = new URL(rawUrl, window.location.origin);
 				if (u.hostname === window.location.hostname) {
 					return u.pathname + u.search;
+				}
+				return rawUrl;
+			} catch (e) {
+				return rawUrl;
+			}
+		}
+
+		normalizeAdminAssetUrl(rawUrl) {
+			if (!rawUrl) return '';
+			try {
+				const u = new URL(rawUrl, window.location.origin);
+				if (u.hostname === window.location.hostname) {
+					return window.location.origin + u.pathname + u.search;
 				}
 				return rawUrl;
 			} catch (e) {
@@ -196,16 +211,36 @@
 		bindStagePreviewRefreshes() {
 			const self = this;
 			$('#mr-tee-stage-garment-img').on('load', function() {
+				self._cachedStageRatio = 0;
 				self.renderAllBoxesPreviews();
 			});
 
 			let resizeTimer = null;
 			$(window).on('resize.mrTeeAdmin', function() {
+				self._cachedStageRatio = 0;
 				if (resizeTimer) clearTimeout(resizeTimer);
 				resizeTimer = setTimeout(() => {
 					self.renderAllBoxesPreviews();
 				}, 120);
 			});
+
+			if (typeof window.ResizeObserver === 'function' && this.$canvasWrap && this.$canvasWrap[0]) {
+				let prevW = 0;
+				let prevH = 0;
+				const ro = new window.ResizeObserver(entries => {
+					const entry = entries && entries[0];
+					if (!entry || !entry.contentRect) return;
+					const w = Math.round(entry.contentRect.width);
+					const h = Math.round(entry.contentRect.height);
+					if (w > 20 && h > 20 && (Math.abs(w - prevW) > 1 || Math.abs(h - prevH) > 1)) {
+						prevW = w;
+						prevH = h;
+						self._cachedStageRatio = w / h;
+						self.renderAllBoxesPreviews();
+					}
+				});
+				ro.observe(this.$canvasWrap[0]);
+			}
 		}
 
 		/**
@@ -220,6 +255,7 @@
 
 				if (val === 'mr_tee_editor') {
 					$('#mr-tee-settings-panel').slideDown(200, function() {
+						self._cachedStageRatio = 0;
 						self.renderAllBoxesPreviews();
 					});
 				} else {
@@ -242,6 +278,7 @@
 				$('#' + tabId).addClass('is-active');
 
 				if (tabId === 'tab-stage') {
+					self._cachedStageRatio = 0;
 					self.renderAllBoxesPreviews();
 				}
 			});
@@ -296,7 +333,7 @@
 		}
 
 		/**
-		 * Interactive Box Drag & Resize for Multi-Rectangle System.
+		 * Interactive Box Drag & Resize for Multi-Rectangle System (60/120 FPS GPU-Accelerated).
 		 */
 		bindInteractiveBoxes() {
 			if (!this.$canvasWrap.length) return;
@@ -308,117 +345,222 @@
 			let startX, startY, startLeft, startTop, startWidth, startHeight;
 			let currentIdx = 0;
 
-			// Dragging active box
+			// Dragging active box (GPU translate3d during mousemove, committed on mouseup)
 			$(document).on('mousedown', '.mr-tee-field-box.is-active', function(e) {
 				if ($(e.target).hasClass('mr-tee-handle') || $(e.target).hasClass('mr-tee-handle-rot')) return;
 				e.preventDefault();
 
-				currentIdx = parseInt($(this).attr('data-field-index'), 10);
+				const boxEl = this;
+				currentIdx = parseInt(boxEl.getAttribute('data-field-index'), 10);
 				const wrapRect = self.$canvasWrap[0].getBoundingClientRect();
+				if (!wrapRect.width || !wrapRect.height) return;
+
+				const leftInput = document.getElementById(`mr_tee_field_left_${currentIdx}`);
+				const topInput = document.getElementById(`mr_tee_field_top_${currentIdx}`);
+				const widthInput = document.getElementById(`mr_tee_field_width_${currentIdx}`);
+				const heightInput = document.getElementById(`mr_tee_field_height_${currentIdx}`);
+				const rotInput = document.getElementById(`mr_tee_field_rotate_${currentIdx}`);
 
 				isDragging = true;
 				startX = e.clientX;
 				startY = e.clientY;
 
 				// Use logical percentage inputs rather than getBoundingClientRect to prevent rotation transforms from causing coordinate shifts
-				startLeft = parseFloat($(`#mr_tee_field_left_${currentIdx}`).val()) || 0;
-				startTop = parseFloat($(`#mr_tee_field_top_${currentIdx}`).val()) || 0;
+				startLeft = leftInput ? (parseFloat(leftInput.value) || 0) : 0;
+				startTop = topInput ? (parseFloat(topInput.value) || 0) : 0;
 
-				const curW = parseFloat($(`#mr_tee_field_width_${currentIdx}`).val()) || 40.0;
-				const curH = parseFloat($(`#mr_tee_field_height_${currentIdx}`).val()) || 8.5;
+				const curW = widthInput ? (parseFloat(widthInput.value) || 40.0) : 40.0;
+				const curH = heightInput ? (parseFloat(heightInput.value) || 8.5) : 8.5;
+				const startRotDeg = rotInput ? (parseFloat(rotInput.value) || 0) : 0;
+
+				let latestLeft = startLeft;
+				let latestTop = startTop;
+				boxEl.classList.add('is-interacting');
+
+				const applyDragDelta = (clientX, clientY) => {
+					const dx = ((clientX - startX) / wrapRect.width) * 100;
+					const dy = ((clientY - startY) / wrapRect.height) * 100;
+
+					let newLeft = Math.max(0, Math.min(100 - curW, startLeft + dx));
+					let newTop = Math.max(0, Math.min(100 - curH, startTop + dy));
+
+					newLeft = Math.round(newLeft * 10) / 10;
+					newTop = Math.round(newTop * 10) / 10;
+
+					latestLeft = newLeft;
+					latestTop = newTop;
+
+					const dxPx = ((newLeft - startLeft) / 100) * wrapRect.width;
+					const dyPx = ((newTop - startTop) / 100) * wrapRect.height;
+
+					boxEl.style.transform = `translate3d(${dxPx.toFixed(2)}px, ${dyPx.toFixed(2)}px, 0) rotate(${startRotDeg}deg)`;
+					if (leftInput) leftInput.value = newLeft;
+					if (topInput) topInput.value = newTop;
+				};
 
 				let dragRaf = null;
+				let pendingX = startX;
+				let pendingY = startY;
+
 				$(document).on('mousemove.mrTeeDrag', function(moveEvent) {
 					if (!isDragging) return;
-					if (dragRaf) cancelAnimationFrame(dragRaf);
+					pendingX = moveEvent.clientX;
+					pendingY = moveEvent.clientY;
+					if (dragRaf) return;
 					dragRaf = requestAnimationFrame(() => {
-						const dx = (moveEvent.clientX - startX) / wrapRect.width * 100;
-						const dy = (moveEvent.clientY - startY) / wrapRect.height * 100;
-
-						let newLeft = Math.max(0, Math.min(100 - curW, startLeft + dx));
-						let newTop = Math.max(0, Math.min(100 - curH, startTop + dy));
-
-						newLeft = Math.round(newLeft * 10) / 10;
-						newTop = Math.round(newTop * 10) / 10;
-
-						self.updateBoxPosition(currentIdx, newLeft, newTop);
+						dragRaf = null;
+						if (!isDragging) return;
+						applyDragDelta(pendingX, pendingY);
 					});
 				});
 
-				$(document).on('mouseup.mrTeeDrag', function() {
+				$(document).on('mouseup.mrTeeDrag', function(upEvent) {
+					if (!isDragging) return;
 					isDragging = false;
-					if (dragRaf) cancelAnimationFrame(dragRaf);
+					if (dragRaf) {
+						cancelAnimationFrame(dragRaf);
+						dragRaf = null;
+						applyDragDelta(upEvent && upEvent.clientX !== undefined ? upEvent.clientX : pendingX, upEvent && upEvent.clientY !== undefined ? upEvent.clientY : pendingY);
+					}
 					$(document).off('.mrTeeDrag');
+
+					boxEl.classList.remove('is-interacting');
+					boxEl.style.left = `${latestLeft}%`;
+					boxEl.style.top = `${latestTop}%`;
+					boxEl.style.transform = `rotate(${startRotDeg}deg)`;
+					if (leftInput) leftInput.value = latestLeft;
+					if (topInput) topInput.value = latestTop;
+
+					self.saveFieldPlacementForActiveView(currentIdx);
+					self.recalculateDimensions();
 				});
 			});
 
-			// Resizing active box via corner handles
+			// Resizing active box via corner handles (zero DOM rebuilds / zero forced layout reads during drag)
 			$(document).on('mousedown', '.mr-tee-field-box.is-active .mr-tee-handle:not(.mr-tee-handle-rot)', function(e) {
 				e.preventDefault();
 				e.stopPropagation();
 
 				const $box = $(this).closest('.mr-tee-field-box');
-				currentIdx = parseInt($box.attr('data-field-index'), 10);
-				currentHandle = $(this).data('handle');
+				const boxEl = $box[0];
+				if (!boxEl) return;
+
+				currentIdx = parseInt(boxEl.getAttribute('data-field-index'), 10);
+				currentHandle = $(this).data('handle') || '';
 
 				const wrapRect = self.$canvasWrap[0].getBoundingClientRect();
+				if (!wrapRect.width || !wrapRect.height) return;
+				const stageRatio = self.getStageAspectRatio(wrapRect);
+
+				const leftInput = document.getElementById(`mr_tee_field_left_${currentIdx}`);
+				const topInput = document.getElementById(`mr_tee_field_top_${currentIdx}`);
+				const widthInput = document.getElementById(`mr_tee_field_width_${currentIdx}`);
+				const heightInput = document.getElementById(`mr_tee_field_height_${currentIdx}`);
+				const rotInput = document.getElementById(`mr_tee_field_rotate_${currentIdx}`);
+				const pillDimsEl = document.querySelector(`.mr-tee-field-pill[data-field-index="${currentIdx}"] .mr-tee-pill-dims`);
 
 				isResizing = true;
 				startX = e.clientX;
 				startY = e.clientY;
 
-				startLeft = parseFloat($(`#mr_tee_field_left_${currentIdx}`).val()) || 0;
-				startTop = parseFloat($(`#mr_tee_field_top_${currentIdx}`).val()) || 0;
-				startWidth = parseFloat($(`#mr_tee_field_width_${currentIdx}`).val()) || 40.0;
-				startHeight = parseFloat($(`#mr_tee_field_height_${currentIdx}`).val()) || 8.5;
+				startLeft = leftInput ? (parseFloat(leftInput.value) || 0) : 0;
+				startTop = topInput ? (parseFloat(topInput.value) || 0) : 0;
+				startWidth = widthInput ? (parseFloat(widthInput.value) || 40.0) : 40.0;
+				startHeight = heightInput ? (parseFloat(heightInput.value) || 8.5) : 8.5;
+
+				const rotDeg = rotInput ? (parseFloat(rotInput.value) || 0) : 0;
+				const rotTxt = rotDeg !== 0 ? ` (${rotDeg}°)` : '';
+
+				let latestL = startLeft;
+				let latestT = startTop;
+				let latestW = startWidth;
+				let latestH = startHeight;
+				boxEl.classList.add('is-interacting');
+
+				const applyResizeDelta = (clientX, clientY) => {
+					const dx = ((clientX - startX) / wrapRect.width) * 100;
+					const dy = ((clientY - startY) / wrapRect.height) * 100;
+
+					const rightEdge = startLeft + startWidth;
+					const bottomEdge = startTop + startHeight;
+
+					let newW = startWidth;
+					let newH = startHeight;
+					let newL = startLeft;
+					let newT = startTop;
+
+					if (currentHandle.includes('e')) {
+						newW = Math.max(5, Math.min(100 - startLeft, startWidth + dx));
+					}
+					if (currentHandle.includes('s')) {
+						newH = Math.max(3, Math.min(100 - startTop, startHeight + dy));
+					}
+					if (currentHandle.includes('w')) {
+						newL = Math.max(0, Math.min(Math.max(0, rightEdge - 5), startLeft + dx));
+						newW = Math.max(5, rightEdge - newL);
+					}
+					if (currentHandle.includes('n')) {
+						newT = Math.max(0, Math.min(Math.max(0, bottomEdge - 3), startTop + dy));
+						newH = Math.max(3, bottomEdge - newT);
+					}
+
+					newW = Math.round(newW * 10) / 10;
+					newH = Math.round(newH * 10) / 10;
+					newL = Math.round(newL * 10) / 10;
+					newT = Math.round(newT * 10) / 10;
+
+					if (newL + newW > 100) newW = Math.max(5, Math.round((100 - newL) * 10) / 10);
+					if (newT + newH > 100) newH = Math.max(3, Math.round((100 - newT) * 10) / 10);
+
+					latestL = newL;
+					latestT = newT;
+					latestW = newW;
+					latestH = newH;
+
+					boxEl.style.left = `${newL}%`;
+					boxEl.style.top = `${newT}%`;
+					boxEl.style.width = `${newW}%`;
+					boxEl.style.height = `${newH}%`;
+
+					if (leftInput) leftInput.value = newL;
+					if (topInput) topInput.value = newT;
+					if (widthInput) widthInput.value = newW;
+					if (heightInput) heightInput.value = newH;
+					if (pillDimsEl) pillDimsEl.textContent = `${newW}×${newH}%${rotTxt}`;
+
+					self.renderBoxPreview(currentIdx, { bw: newW, bh: newH, stageRatio });
+				};
 
 				let resizeRaf = null;
+				let pendingX = startX;
+				let pendingY = startY;
+
 				$(document).on('mousemove.mrTeeResize', function(moveEvent) {
 					if (!isResizing) return;
-					if (resizeRaf) cancelAnimationFrame(resizeRaf);
+					pendingX = moveEvent.clientX;
+					pendingY = moveEvent.clientY;
+					if (resizeRaf) return;
 					resizeRaf = requestAnimationFrame(() => {
-						const dx = (moveEvent.clientX - startX) / wrapRect.width * 100;
-						const dy = (moveEvent.clientY - startY) / wrapRect.height * 100;
-
-						const rightEdge = startLeft + startWidth;
-						const bottomEdge = startTop + startHeight;
-
-						let newW = startWidth;
-						let newH = startHeight;
-						let newL = startLeft;
-						let newT = startTop;
-
-						if (currentHandle.includes('e')) {
-							newW = Math.max(5, Math.min(100 - startLeft, startWidth + dx));
-						}
-						if (currentHandle.includes('s')) {
-							newH = Math.max(3, Math.min(100 - startTop, startHeight + dy));
-						}
-						if (currentHandle.includes('w')) {
-							newL = Math.max(0, Math.min(Math.max(0, rightEdge - 5), startLeft + dx));
-							newW = Math.max(5, rightEdge - newL);
-						}
-						if (currentHandle.includes('n')) {
-							newT = Math.max(0, Math.min(Math.max(0, bottomEdge - 3), startTop + dy));
-							newH = Math.max(3, bottomEdge - newT);
-						}
-
-						newW = Math.round(newW * 10) / 10;
-						newH = Math.round(newH * 10) / 10;
-						newL = Math.round(newL * 10) / 10;
-						newT = Math.round(newT * 10) / 10;
-
-						if (newL + newW > 100) newW = Math.max(5, Math.round((100 - newL) * 10) / 10);
-						if (newT + newH > 100) newH = Math.max(3, Math.round((100 - newT) * 10) / 10);
-
-						self.updateBoxBounds(currentIdx, newL, newT, newW, newH);
+						resizeRaf = null;
+						if (!isResizing) return;
+						applyResizeDelta(pendingX, pendingY);
 					});
 				});
 
-				$(document).on('mouseup.mrTeeResize', function() {
+				$(document).on('mouseup.mrTeeResize', function(upEvent) {
+					if (!isResizing) return;
 					isResizing = false;
-					if (resizeRaf) cancelAnimationFrame(resizeRaf);
+					if (resizeRaf) {
+						cancelAnimationFrame(resizeRaf);
+						resizeRaf = null;
+						applyResizeDelta(upEvent && upEvent.clientX !== undefined ? upEvent.clientX : pendingX, upEvent && upEvent.clientY !== undefined ? upEvent.clientY : pendingY);
+					}
 					$(document).off('.mrTeeResize');
+
+					boxEl.classList.remove('is-interacting');
+					self.saveFieldPlacementForActiveView(currentIdx);
+					self.renderBoxPreview(currentIdx, { bw: latestW, bh: latestH, stageRatio });
+					self.recalculateDimensions();
 				});
 			});
 
@@ -429,43 +571,83 @@
 
 				const $handle = $(this);
 				const $box = $handle.closest('.mr-tee-field-box');
-				currentIdx = parseInt($box.attr('data-field-index'), 10);
-				$handle.addClass('is-rotating');
+				const boxEl = $box[0];
+				if (!boxEl) return;
 
-				const boxRect = $box[0].getBoundingClientRect();
+				currentIdx = parseInt(boxEl.getAttribute('data-field-index'), 10);
+				$handle.addClass('is-rotating');
+				boxEl.classList.add('is-interacting');
+
+				const rotInput = document.getElementById(`mr_tee_field_rotate_${currentIdx}`);
+				const widthInput = document.getElementById(`mr_tee_field_width_${currentIdx}`);
+				const heightInput = document.getElementById(`mr_tee_field_height_${currentIdx}`);
+				const pillDimsEl = document.querySelector(`.mr-tee-field-pill[data-field-index="${currentIdx}"] .mr-tee-pill-dims`);
+				const curW = widthInput ? (parseFloat(widthInput.value) || 40.0) : 40.0;
+				const curH = heightInput ? (parseFloat(heightInput.value) || 8.5) : 8.5;
+
+				const boxRect = boxEl.getBoundingClientRect();
 				const centerX = (boxRect.left + boxRect.right) / 2;
 				const centerY = (boxRect.top + boxRect.bottom) / 2;
 
+				const applyRotateDelta = (clientX, clientY) => {
+					const dx = clientX - centerX;
+					const dy = clientY - centerY;
+
+					// Vector angle relative to 12 o'clock stem (stem pointing up = 0 deg)
+					let deg = (Math.atan2(dy, dx) * 180 / Math.PI) + 90;
+					while (deg > 180) deg -= 360;
+					while (deg < -180) deg += 360;
+
+					// Snap to common angles
+					if (Math.abs(deg) < 3) deg = 0;
+					if (Math.abs(deg - 90) < 3) deg = 90;
+					if (Math.abs(deg + 90) < 3) deg = -90;
+					if (Math.abs(deg - 45) < 3) deg = 45;
+					if (Math.abs(deg + 45) < 3) deg = -45;
+					if (Math.abs(deg - 40) < 2) deg = 40;
+					if (Math.abs(deg + 15) < 2) deg = -15;
+
+					deg = Math.round(deg);
+					if (rotInput) rotInput.value = deg;
+					boxEl.style.transform = `rotate(${deg}deg)`;
+					boxEl.style.transformOrigin = 'center center';
+					if (pillDimsEl) {
+						const rotTxt = deg !== 0 ? ` (${deg}°)` : '';
+						pillDimsEl.textContent = `${curW}×${curH}%${rotTxt}`;
+					}
+				};
+
 				let rotRaf = null;
+				let pendingX = e.clientX;
+				let pendingY = e.clientY;
+				let isRotating = true;
+
 				$(document).on('mousemove.mrTeeRot', function(moveEvent) {
-					if (rotRaf) cancelAnimationFrame(rotRaf);
+					if (!isRotating) return;
+					pendingX = moveEvent.clientX;
+					pendingY = moveEvent.clientY;
+					if (rotRaf) return;
 					rotRaf = requestAnimationFrame(() => {
-						const dx = moveEvent.clientX - centerX;
-						const dy = moveEvent.clientY - centerY;
-
-						// Vector angle relative to 12 o'clock stem (stem pointing up = 0 deg)
-						let deg = (Math.atan2(dy, dx) * 180 / Math.PI) + 90;
-						while (deg > 180) deg -= 360;
-						while (deg < -180) deg += 360;
-
-						// Snap to common angles
-						if (Math.abs(deg) < 3) deg = 0;
-						if (Math.abs(deg - 90) < 3) deg = 90;
-						if (Math.abs(deg + 90) < 3) deg = -90;
-						if (Math.abs(deg - 45) < 3) deg = 45;
-						if (Math.abs(deg + 45) < 3) deg = -45;
-						if (Math.abs(deg - 40) < 2) deg = 40;
-						if (Math.abs(deg + 15) < 2) deg = -15;
-
-						deg = Math.round(deg);
-						self.updateBoxRotation(currentIdx, deg);
+						rotRaf = null;
+						if (!isRotating) return;
+						applyRotateDelta(pendingX, pendingY);
 					});
 				});
 
-				$(document).on('mouseup.mrTeeRot', function() {
+				$(document).on('mouseup.mrTeeRot', function(upEvent) {
+					if (!isRotating) return;
+					isRotating = false;
+					if (rotRaf) {
+						cancelAnimationFrame(rotRaf);
+						rotRaf = null;
+						applyRotateDelta(upEvent && upEvent.clientX !== undefined ? upEvent.clientX : pendingX, upEvent && upEvent.clientY !== undefined ? upEvent.clientY : pendingY);
+					}
 					$handle.removeClass('is-rotating');
-					if (rotRaf) cancelAnimationFrame(rotRaf);
+					boxEl.classList.remove('is-interacting');
 					$(document).off('.mrTeeRot');
+
+					self.saveFieldPlacementForActiveView(currentIdx);
+					self.recalculateDimensions();
 				});
 			});
 		}
@@ -1246,55 +1428,76 @@
 			return { charRatio, letterSpacingEm };
 		}
 
-		renderBoxPreview(idx) {
-			const $holder = $(`#mr-tee-box-svg-${idx}`);
-			if (!$holder.length) return;
-
-			// Compute box visual aspect ratio so SVG glyphs and images render without horizontal stretching
-			const el = $holder[0];
-			let boxRatio = 0;
-			if (el && el.clientWidth > 0 && el.clientHeight > 0) {
-				boxRatio = el.clientWidth / el.clientHeight;
-			} else {
-				const bw = parseFloat($(`#mr_tee_field_width_${idx}`).val()) || 40;
-				const bh = parseFloat($(`#mr_tee_field_height_${idx}`).val()) || 8.5;
-				const rw = parseFloat($('#mr_tee_real_width').val()) || 30;
-				const rh = parseFloat($('#mr_tee_real_height').val()) || 40;
-				const stageRatio = rh > 0 ? (rw / rh) : 0.75;
-				boxRatio = (bw / Math.max(1, bh)) * stageRatio;
+		getStageAspectRatio(cachedWrapRect) {
+			if (cachedWrapRect && cachedWrapRect.width > 0 && cachedWrapRect.height > 0) {
+				this._cachedStageRatio = cachedWrapRect.width / cachedWrapRect.height;
+				return this._cachedStageRatio;
 			}
-			boxRatio = Math.max(0.2, Math.min(20, boxRatio || 1));
-			const vbH = 100;
-			const vbW = Number((vbH * boxRatio).toFixed(2));
+			if (this._cachedStageRatio && this._cachedStageRatio > 0) {
+				return this._cachedStageRatio;
+			}
+			const wrapEl = this.$canvasWrap && this.$canvasWrap[0];
+			if (wrapEl && wrapEl.clientWidth > 0 && wrapEl.clientHeight > 0) {
+				this._cachedStageRatio = wrapEl.clientWidth / wrapEl.clientHeight;
+				return this._cachedStageRatio;
+			}
+			const rw = parseFloat($('#mr_tee_real_width').val()) || 30;
+			const rh = parseFloat($('#mr_tee_real_height').val()) || 40;
+			return rh > 0 ? (rw / rh) : 0.75;
+		}
 
-			// Image field branch: render strictly clipped inside the box rectangle
+		renderBoxPreview(idx, opts = {}) {
+			const el = document.getElementById(`mr-tee-box-svg-${idx}`);
+			if (!el) return;
+
+			// Image field branch: render native GPU-scaled <img> strictly clipped inside the box rectangle (ZERO DOM rebuilds on resize!)
 			if (this.getFieldType(idx) === 'image') {
-				const imgUrl = ($(`[name="mr_tee_config[text_lines][${idx}][default_image]"]`).val() || '').trim();
+				const rawImgUrl = ($(`[name="mr_tee_config[text_lines][${idx}][default_image]"]`).val() || '').trim();
+				const imgUrl = this.normalizeAdminAssetUrl(rawImgUrl);
 				const imgFit = $(`[name="mr_tee_config[text_lines][${idx}][image_fit]"]`).val() === 'cover' ? 'cover' : 'contain';
 
 				if (!imgUrl) {
-					$holder.html('<div class="mr-tee-admin-img-placeholder"><span>🖼️ Zone Image</span><small>Choisissez une image par défaut</small></div>');
+					if (el._renderMode !== 'img-empty') {
+						el.innerHTML = '<div class="mr-tee-admin-img-placeholder"><span>🖼️ Zone Image</span><small>Choisissez une image par défaut</small></div>';
+						el._renderMode = 'img-empty';
+						el._imgEl = null;
+						el._svgEl = null;
+						el._groupEl = null;
+					}
 					return;
 				}
 
-				const preserveRatio = (imgFit === 'cover') ? 'xMidYMid slice' : 'xMidYMid meet';
+				if (el._renderMode === 'img' && el._imgEl) {
+					if (el._imgUrl !== imgUrl) {
+						el._imgEl.src = imgUrl;
+						el._imgUrl = imgUrl;
+					}
+					if (el._imgFit !== imgFit) {
+						el._imgEl.style.objectFit = imgFit;
+						el._imgFit = imgFit;
+					}
+					return;
+				}
+
 				const safeUrl = this.escapeXml(imgUrl);
-				const clipId = `mr-tee-admin-clip-${idx}`;
-				const imgSvg = `
-					<svg viewBox="0 0 ${vbW} ${vbH}" width="100%" height="100%" preserveAspectRatio="none" style="overflow:hidden;width:100%;height:100%;display:block;">
-						<defs>
-							<clipPath id="${clipId}">
-								<rect x="0" y="0" width="${vbW}" height="${vbH}" />
-							</clipPath>
-						</defs>
-						<g clip-path="url(#${clipId})">
-							<image href="${safeUrl}" xlink:href="${safeUrl}" x="0" y="0" width="${vbW}" height="${vbH}" preserveAspectRatio="${preserveRatio}" />
-						</g>
-					</svg>
-				`;
-				$holder.html(imgSvg);
+				el.innerHTML = `<img class="mr-tee-admin-box-img" src="${safeUrl}" alt="" decoding="async" draggable="false" style="width:100%;height:100%;object-fit:${imgFit};display:block;pointer-events:none;user-select:none;" />`;
+				el._renderMode = 'img';
+				el._imgUrl = imgUrl;
+				el._imgFit = imgFit;
+				el._imgEl = el.querySelector('.mr-tee-admin-box-img');
+				el._svgEl = null;
+				el._groupEl = null;
 				return;
 			}
+
+			// Compute box visual aspect ratio from logical % inputs + cached stage ratio to avoid forced synchronous layout reads
+			const bw = (opts && opts.bw > 0) ? opts.bw : (parseFloat((document.getElementById(`mr_tee_field_width_${idx}`) || {}).value) || 40);
+			const bh = (opts && opts.bh > 0) ? opts.bh : (parseFloat((document.getElementById(`mr_tee_field_height_${idx}`) || {}).value) || 8.5);
+			const stageRatio = (opts && opts.stageRatio > 0) ? opts.stageRatio : this.getStageAspectRatio();
+			let boxRatio = (bw / Math.max(0.5, bh)) * stageRatio;
+			boxRatio = Math.max(0.2, Math.min(20, boxRatio || 1));
+			const vbH = 100;
+			const vbW = Number((vbH * boxRatio).toFixed(2));
 
 			const rawTextVal = $(`[name="mr_tee_config[text_lines][${idx}][default_text]"]`).val();
 			const textVal = (rawTextVal !== undefined && String(rawTextVal).trim() !== '') ? String(rawTextVal) : `Texte ${idx + 1}`;
@@ -1311,10 +1514,23 @@
 				const svgData = svgFonts[fontId];
 
 				if (svgData && svgData.glyphs) {
-					const unitsPerEm = svgData.unitsPerEm || 1000;
-					const ascent = svgData.ascent || 800;
 					const casing = fontDef.uppercase ? 'UPPER' : 'ORIGINAL';
 					const displayVal = (casing === 'UPPER') ? textVal.toUpperCase() : textVal;
+					const glyphsKey = `otsvg::${fontId}::${displayVal}`;
+
+					// O(1) Resize Fast-Path: if text & font are unchanged, update ONLY viewBox and outer <g> transform (2 setAttribute calls, 0 innerHTML parse!)
+					if (el._renderMode === 'otsvg' && el._glyphsKey === glyphsKey && el._svgEl && el._groupEl) {
+						if (el._lastVbW !== vbW) {
+							const maxDesignW = vbW * 0.92;
+							const autoScale = (el._rawW > maxDesignW && maxDesignW > 0) ? (maxDesignW / el._rawW) : 1.0;
+							el._svgEl.setAttribute('viewBox', `0 0 ${vbW} ${vbH}`);
+							el._groupEl.setAttribute('transform', `translate(${(vbW / 2).toFixed(2)}, 50) scale(${autoScale.toFixed(5)})`);
+							el._lastVbW = vbW;
+						}
+						return;
+					}
+
+					const unitsPerEm = svgData.unitsPerEm || 1000;
 					const lines = displayVal.split(/\r?\n/);
 					const numLines = Math.max(1, lines.length);
 					const lineHeightRatio = 0.92;
@@ -1370,13 +1586,12 @@
 					}
 
 					const maxDesignW = vbW * 0.92;
-					const maxDesignH = (vbH * 0.84) / (1 + (numLines - 1) * lineHeightRatio);
-					const rawW = (maxWidthUnits / unitsPerEm) * maxDesignH;
+					const baseFontSize = (vbH * 0.84) / (1 + (numLines - 1) * lineHeightRatio);
+					const rawW = (maxWidthUnits / unitsPerEm) * baseFontSize;
 					const autoScale = (rawW > maxDesignW && maxDesignW > 0) ? (maxDesignW / rawW) : 1.0;
-					const effectiveFontSize = maxDesignH * autoScale;
-					const scale = effectiveFontSize / unitsPerEm;
-					const lineStepY = effectiveFontSize * lineHeightRatio;
-					const startCenterY = (vbH / 2) - (((numLines - 1) * lineStepY) / 2);
+					const baseScale = baseFontSize / unitsPerEm;
+					const baseStepY = baseFontSize * lineHeightRatio;
+					const baseStartCenterY = -(((numLines - 1) * baseStepY) / 2);
 					const fbFontSize = Math.round(unitsPerEm * 0.78);
 					const fbStrokeWidth = Math.round(unitsPerEm * 0.11);
 					const baselineOffsetUnits = this.getOpenTypeSvgBaselineOffset(svgData);
@@ -1384,35 +1599,41 @@
 					let glyphsMarkup = '';
 					for (let li = 0; li < lines.length; li++) {
 						const lineStr = lines[li];
-						const lineW = (lineWidths[li] / unitsPerEm) * effectiveFontSize;
-						let cursorX = (vbW / 2) - (lineW / 2);
-						const lineCenterY = startCenterY + (li * lineStepY);
-						const baselineY = lineCenterY + (baselineOffsetUnits * scale);
+						const baseLineW = (lineWidths[li] / unitsPerEm) * baseFontSize;
+						let cursorX = -(baseLineW / 2);
+						const lineCenterY = baseStartCenterY + (li * baseStepY);
+						const baselineY = lineCenterY + (baselineOffsetUnits * baseScale);
 
 						for (let i = 0; i < lineStr.length; i++) {
 							const ch = lineStr[i];
 							const g = resolveAdminGlyph(ch);
 							if (g.hasSvg) {
-								glyphsMarkup += `<g class="mrtee-ot-glyph" transform="translate(${cursorX.toFixed(3)}, ${baselineY.toFixed(3)}) scale(${scale.toFixed(5)})">${g.svg}</g>\n`;
+								glyphsMarkup += `<g class="mrtee-ot-glyph" transform="translate(${cursorX.toFixed(3)}, ${baselineY.toFixed(3)}) scale(${baseScale.toFixed(5)})">${g.svg}</g>\n`;
 							} else if (!g.isSpace) {
 								const escapedCh = this.escapeXml(ch);
 								const fbCenterX = (g.adv / 2).toFixed(1);
-								glyphsMarkup += `<g class="mrtee-ot-glyph mrtee-ot-glyph-fallback" transform="translate(${cursorX.toFixed(3)}, ${baselineY.toFixed(3)}) scale(${scale.toFixed(5)})"><text x="${fbCenterX}" y="0" text-anchor="middle" font-family="'Bungee', 'Luckiest Guy', 'Impact', sans-serif" font-weight="900" font-size="${fbFontSize}" fill="#FFFFFF" stroke="#1E293B" stroke-width="${fbStrokeWidth}" stroke-linejoin="round" stroke-linecap="round" style="paint-order: stroke fill; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.45));">${escapedCh}</text></g>\n`;
+								glyphsMarkup += `<g class="mrtee-ot-glyph mrtee-ot-glyph-fallback" transform="translate(${cursorX.toFixed(3)}, ${baselineY.toFixed(3)}) scale(${baseScale.toFixed(5)})"><text x="${fbCenterX}" y="0" text-anchor="middle" font-family="'Bungee', 'Luckiest Guy', 'Impact', sans-serif" font-weight="900" font-size="${fbFontSize}" fill="#FFFFFF" stroke="#1E293B" stroke-width="${fbStrokeWidth}" stroke-linejoin="round" stroke-linecap="round" style="paint-order: stroke fill; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.45));">${escapedCh}</text></g>\n`;
 							}
-							cursorX += (g.adv + letterSpacingUnits) * scale;
+							cursorX += (g.adv + letterSpacingUnits) * baseScale;
 						}
 					}
 
 					const defs = svgData.defs ? `<defs>${svgData.defs}</defs>` : '';
-					const svg = `
+					el.innerHTML = `
 						<svg viewBox="0 0 ${vbW} ${vbH}" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" style="overflow:visible;">
 							${defs}
-							<g class="mrtee-ot-admin-glyph-group">
+							<g class="mrtee-ot-admin-glyph-group" transform="translate(${(vbW / 2).toFixed(2)}, 50) scale(${autoScale.toFixed(5)})">
 								${glyphsMarkup}
 							</g>
 						</svg>
 					`;
-					$holder.html(svg);
+					el._renderMode = 'otsvg';
+					el._glyphsKey = glyphsKey;
+					el._rawW = rawW;
+					el._lastVbW = vbW;
+					el._svgEl = el.querySelector('svg');
+					el._groupEl = el.querySelector('.mrtee-ot-admin-glyph-group');
+					el._imgEl = null;
 					return;
 				}
 
@@ -1433,6 +1654,20 @@
 			const strokeColor = (fontDef && fontDef.stroke && rawStrokeW > 0) ? fontDef.stroke : 'transparent';
 			const textTransform = (fontDef && fontDef.uppercase) ? 'uppercase' : 'none';
 			const displayVal = (fontDef && fontDef.uppercase) ? textVal.toUpperCase() : textVal;
+			const glyphsKey = `ttf::${fontId}::${displayVal}::${strokeColor}::${rawStrokeW}`;
+
+			// O(1) Resize Fast-Path for TTF text boxes: update ONLY viewBox and outer <g> transform
+			if (el._renderMode === 'ttf' && el._glyphsKey === glyphsKey && el._svgEl && el._groupEl) {
+				if (el._lastVbW !== vbW) {
+					const maxDesignW = vbW * 0.92;
+					const autoScale = (el._rawW > maxDesignW && maxDesignW > 0) ? (maxDesignW / el._rawW) : 1.0;
+					el._svgEl.setAttribute('viewBox', `0 0 ${vbW} ${vbH}`);
+					el._groupEl.setAttribute('transform', `translate(${(vbW / 2).toFixed(2)}, 50) scale(${autoScale.toFixed(5)})`);
+					el._lastVbW = vbW;
+				}
+				return;
+			}
+
 			const lines = displayVal.split(/\r?\n/);
 			const numLines = Math.max(1, lines.length);
 			const lineHeightRatio = 0.92;
@@ -1447,64 +1682,46 @@
 				if (estW > maxEstW) maxEstW = estW;
 			}
 			const autoScale = (maxEstW > maxDesignW && maxEstW > 0) ? (maxDesignW / maxEstW) : 1.0;
-			const effectiveFontSize = Math.max(8, baseFontSize * autoScale);
-			const scaledStrokeW = rawStrokeW > 0 ? ((rawStrokeW * effectiveFontSize) / 16).toFixed(2) : '0';
+			const scaledStrokeW = rawStrokeW > 0 ? ((rawStrokeW * baseFontSize) / 16).toFixed(2) : '0';
 
 			let textBody = '';
 			if (numLines > 1) {
-				const stepY = effectiveFontSize * lineHeightRatio;
+				const stepY = baseFontSize * lineHeightRatio;
 				const startDy = -(((numLines - 1) * stepY) / 2);
 				lines.forEach((lineStr, li) => {
 					const dy = (li === 0) ? startDy : stepY;
-					const lineEstW = effectiveFontSize * (lineStr.length * metrics.charRatio + Math.max(0, lineStr.length - 1) * metrics.letterSpacingEm);
-					const lenAttr = (lineEstW > maxDesignW) ? ` textLength="${maxDesignW.toFixed(1)}" lengthAdjust="spacingAndGlyphs"` : '';
-					textBody += `<tspan x="${(vbW / 2).toFixed(2)}" dy="${dy.toFixed(2)}"${lenAttr}>${this.escapeXml(lineStr || ' ')}</tspan>`;
+					textBody += `<tspan x="0" dy="${dy.toFixed(2)}">${this.escapeXml(lineStr || ' ')}</tspan>`;
 				});
 			} else {
-				const lineEstW = effectiveFontSize * (displayVal.length * metrics.charRatio + Math.max(0, displayVal.length - 1) * metrics.letterSpacingEm);
-				const lenAttr = (lineEstW > maxDesignW) ? `textLength="${maxDesignW.toFixed(1)}" lengthAdjust="spacingAndGlyphs"` : '';
 				textBody = `${this.escapeXml(displayVal)}`;
-				const svg = `
-					<svg viewBox="0 0 ${vbW} ${vbH}" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" style="overflow:visible;">
+			}
+
+			el.innerHTML = `
+				<svg viewBox="0 0 ${vbW} ${vbH}" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" style="overflow:visible;">
+					<g class="mrtee-ttf-admin-glyph-group" transform="translate(${(vbW / 2).toFixed(2)}, 50) scale(${autoScale.toFixed(5)})">
 						<text
-							x="${(vbW / 2).toFixed(2)}"
-							y="50"
+							x="0"
+							y="0"
 							font-family="${fontFamily}"
-							font-size="${effectiveFontSize.toFixed(2)}"
+							font-size="${baseFontSize.toFixed(2)}"
 							letter-spacing="${letterSpacing}"
 							text-anchor="middle"
 							dominant-baseline="central"
 							fill="#ffffff"
 							stroke="${strokeColor}"
 							stroke-width="${scaledStrokeW}"
-							${lenAttr}
 							style="paint-order: stroke fill; stroke-linejoin: round; text-transform: ${textTransform}; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.45));"
 						>${textBody}</text>
-					</svg>
-				`;
-				$holder.html(svg);
-				return;
-			}
-
-			const svg = `
-				<svg viewBox="0 0 ${vbW} ${vbH}" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" style="overflow:visible;">
-					<text
-						x="${(vbW / 2).toFixed(2)}"
-						y="50"
-						font-family="${fontFamily}"
-						font-size="${effectiveFontSize.toFixed(2)}"
-						letter-spacing="${letterSpacing}"
-						text-anchor="middle"
-						dominant-baseline="central"
-						fill="#ffffff"
-						stroke="${strokeColor}"
-						stroke-width="${scaledStrokeW}"
-						style="paint-order: stroke fill; stroke-linejoin: round; text-transform: ${textTransform}; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.45));"
-					>${textBody}</text>
+					</g>
 				</svg>
 			`;
-
-			$holder.html(svg);
+			el._renderMode = 'ttf';
+			el._glyphsKey = glyphsKey;
+			el._rawW = maxEstW;
+			el._lastVbW = vbW;
+			el._svgEl = el.querySelector('svg');
+			el._groupEl = el.querySelector('.mrtee-ttf-admin-glyph-group');
+			el._imgEl = null;
 		}
 
 		/**
@@ -1830,7 +2047,7 @@
 				$('#mr-tee-allowed-fonts-count').text(self.allowedFonts.length);
 
 				// Keep every rectangle's font dropdown strictly restricted to allowedFonts
-				if (!opts.skipBoxSelectSync) {
+				if (!opts.skipBoxSelectSync && !opts.isInitial) {
 					self.refreshAllFontSelects();
 				}
 
@@ -1844,12 +2061,21 @@
 					$(this).text(inList ? `${text} (déjà active)` : text);
 				});
 
-				self.renderAllBoxesPreviews();
+				if (!opts.isInitial) {
+					self.renderAllBoxesPreviews();
+				}
 			};
 
 			const renderAllowedList = (opts = {}) => {
 				const fonts = (window.mrTeeAdminData && window.mrTeeAdminData.fonts) || {};
 				const $list = $('#mr-tee-allowed-fonts-list, #mr_tee_allowed_fonts_list');
+
+				// On initial boot, if PHP VisualPlacementStage already rendered the exact items, preserve them without re-requesting 11 thumbnails
+				if (opts.isInitial && $list.children('.mr-tee-allowed-font-item').length === self.allowedFonts.length) {
+					updateHiddenAndSync(opts);
+					return;
+				}
+
 				$list.empty();
 
 				self.allowedFonts.forEach((fId, idx) => {
@@ -1867,7 +2093,7 @@
 								<span class="mr-tee-font-type-pill ${isSvg ? 'is-svg' : 'is-ttf'}">
 									${isSvg ? 'SVG 3D' : 'TTF'}
 								</span>
-								${thumbUrl ? `<img src="${thumbUrl}" alt="" style="width:18px; height:18px; object-fit:contain;" />` : ''}
+								${thumbUrl ? `<img src="${thumbUrl}" alt="" loading="lazy" decoding="async" style="width:18px; height:18px; object-fit:contain;" />` : ''}
 								<strong class="mr-tee-font-name-label">${self.escapeXml(fInfo.name || fId)}</strong>
 							</div>
 							<div class="mr-tee-allowed-font-actions">
@@ -1962,8 +2188,8 @@
 				renderAllowedList();
 			});
 
-			// Initial render and sync
-			renderAllowedList();
+			// Initial sync (preserves server-rendered DOM)
+			renderAllowedList({ isInitial: true });
 		}
 
 		registerUploadedFontsInUi(uploadedFonts) {
@@ -2111,6 +2337,7 @@
 			// Listen to dimension inputs on Stage Toolbar
 			$(document).on('input change', '#mr_tee_real_width, #mr_tee_real_height, #mr_tee_print_unit, #mr_tee_dpi, #mr_tee_product_type, #mr_tee_lock_aspect_ratio', function() {
 				if (self._syncingSideDims) return;
+				self._cachedStageRatio = 0;
 
 				// Sync to TAB 4
 				$('#mr_tee_tab4_product_type').val($('#mr_tee_product_type').val());
@@ -2128,6 +2355,7 @@
 			// Listen to dimension inputs on TAB 4
 			$(document).on('input change', '#mr_tee_tab4_real_width, #mr_tee_tab4_real_height, #mr_tee_tab4_print_unit, #mr_tee_tab4_dpi, #mr_tee_tab4_product_type, #mr_tee_tab4_lock_ratio', function() {
 				if (self._syncingSideDims) return;
+				self._cachedStageRatio = 0;
 
 				// Sync to Stage Toolbar
 				$('#mr_tee_product_type').val($('#mr_tee_tab4_product_type').val());
@@ -2145,6 +2373,7 @@
 			// Quick Dimension Presets
 			$(document).on('click', '.mr-tee-btn-preset-dim', function(e) {
 				e.preventDefault();
+				self._cachedStageRatio = 0;
 				const pType = $(this).data('type') || 'garment';
 				const pUnit = $(this).data('unit') || 'cm';
 				const pW = parseFloat($(this).data('w')) || 30;
@@ -2168,19 +2397,23 @@
 				self.recalculateDimensions();
 				requestAnimationFrame(() => self.renderAllBoxesPreviews());
 			});
-
-			// Initial calculation
-			this.recalculateDimensions();
 		}
 
 		recalculateDimensions() {
 			const self = this;
-			const w = parseFloat($('#mr_tee_real_width').val()) || 30.0;
-			const h = parseFloat($('#mr_tee_real_height').val()) || 40.0;
-			const unit = $('#mr_tee_print_unit').val() || 'cm';
-			const dpi = parseInt($('#mr_tee_dpi').val(), 10) || 300;
-			const pType = $('#mr_tee_product_type').val() || 'garment';
-			const isLocked = $('#mr_tee_lock_aspect_ratio').is(':checked') || pType === 'flat_object';
+			const rwEl = document.getElementById('mr_tee_real_width');
+			const rhEl = document.getElementById('mr_tee_real_height');
+			const unitEl = document.getElementById('mr_tee_print_unit');
+			const dpiEl = document.getElementById('mr_tee_dpi');
+			const pTypeEl = document.getElementById('mr_tee_product_type');
+			const lockEl = document.getElementById('mr_tee_lock_aspect_ratio');
+
+			const w = rwEl ? (parseFloat(rwEl.value) || 30.0) : 30.0;
+			const h = rhEl ? (parseFloat(rhEl.value) || 40.0) : 40.0;
+			const unit = unitEl ? (unitEl.value || 'cm') : 'cm';
+			const dpi = dpiEl ? (parseInt(dpiEl.value, 10) || 300) : 300;
+			const pType = pTypeEl ? (pTypeEl.value || 'garment') : 'garment';
+			const isLocked = Boolean(lockEl && lockEl.checked) || pType === 'flat_object';
 
 			const refRatio = (h > 0) ? (w / h) : 1.0;
 			const activeSideId = this.getActiveSideId();
@@ -2188,16 +2421,24 @@
 			// Calculate cumulative bounding box across all fields on the active printable side
 			let xMin = 100, yMin = 100, xMax = 0, yMax = 0;
 			let boxCount = 0;
-			$('.mr-tee-field-box').each(function() {
-				const idx = parseInt($(this).attr('data-field-index'), 10);
-				if (Number.isNaN(idx)) return;
-				if (activeSideId && self.getFieldSideId(idx) !== activeSideId) return;
+			const boxEls = document.querySelectorAll('.mr-tee-field-box');
+			for (let bi = 0; bi < boxEls.length; bi++) {
+				const boxEl = boxEls[bi];
+				const idx = parseInt(boxEl.getAttribute('data-field-index'), 10);
+				if (Number.isNaN(idx)) continue;
+				if (activeSideId && self.getFieldSideId(idx) !== activeSideId) continue;
 
-				const l = parseFloat($(`#mr_tee_field_left_${idx}`).val()) || 0;
-				const t = parseFloat($(`#mr_tee_field_top_${idx}`).val()) || 0;
-				const bw = parseFloat($(`#mr_tee_field_width_${idx}`).val()) || 10;
-				const bh = parseFloat($(`#mr_tee_field_height_${idx}`).val()) || 10;
-				const r = parseFloat($(`#mr_tee_field_rotate_${idx}`).val()) || 0;
+				const lEl = document.getElementById(`mr_tee_field_left_${idx}`);
+				const tEl = document.getElementById(`mr_tee_field_top_${idx}`);
+				const wEl = document.getElementById(`mr_tee_field_width_${idx}`);
+				const hEl = document.getElementById(`mr_tee_field_height_${idx}`);
+				const rEl = document.getElementById(`mr_tee_field_rotate_${idx}`);
+
+				const l = lEl ? (parseFloat(lEl.value) || 0) : 0;
+				const t = tEl ? (parseFloat(tEl.value) || 0) : 0;
+				const bw = wEl ? (parseFloat(wEl.value) || 10) : 10;
+				const bh = hEl ? (parseFloat(hEl.value) || 10) : 10;
+				const r = rEl ? (parseFloat(rEl.value) || 0) : 0;
 
 				if (r !== 0) {
 					const rad = (r * Math.PI) / 180;
@@ -2219,7 +2460,7 @@
 					yMax = Math.max(yMax, t + bh);
 				}
 				boxCount++;
-			});
+			}
 
 			if (boxCount === 0 || pType === 'flat_object') {
 				xMin = 0; yMin = 0; xMax = 100; yMax = 100;
@@ -2247,23 +2488,37 @@
 			const cumRatio = (cumRealH > 0) ? (cumRealW / cumRealH) : 1.0;
 			const simplified = this.getSimplifiedRatio(cumRealW, cumRealH);
 
-			// Update Live Badge
-			$('#mr-tee-badge-cum-val').text(`${cumRealW} × ${cumRealH} ${unit}`);
-			$('#mr-tee-badge-ratio-val').text(`${simplified} (~${cumRatio.toFixed(3)} : 1)`);
-			$('#mr-tee-badge-px-val').text(`${pxW} × ${pxH} px`);
+			// Update Live Badge (only mutate DOM text if value changed)
+			const badgeCumEl = document.getElementById('mr-tee-badge-cum-val');
+			const badgeRatioEl = document.getElementById('mr-tee-badge-ratio-val');
+			const badgePxEl = document.getElementById('mr-tee-badge-px-val');
+			const nextCumText = `${cumRealW} × ${cumRealH} ${unit}`;
+			const nextRatioText = `${simplified} (~${cumRatio.toFixed(3)} : 1)`;
+			const nextPxText = `${pxW} × ${pxH} px`;
+
+			if (badgeCumEl && badgeCumEl.textContent !== nextCumText) badgeCumEl.textContent = nextCumText;
+			if (badgeRatioEl && badgeRatioEl.textContent !== nextRatioText) badgeRatioEl.textContent = nextRatioText;
+			if (badgePxEl && badgePxEl.textContent !== nextPxText) badgePxEl.textContent = nextPxText;
 
 			// Update TAB 4 pixel inputs
-			$('#mr_tee_tab4_width_px').val(pxW);
-			$('#mr_tee_tab4_height_px').val(pxH);
+			const tab4WEl = document.getElementById('mr_tee_tab4_width_px');
+			const tab4HEl = document.getElementById('mr_tee_tab4_height_px');
+			if (tab4WEl) tab4WEl.value = pxW;
+			if (tab4HEl) tab4HEl.value = pxH;
 
-			// Update Stage Canvas Wrap aspect-ratio
-			if (this.$canvasWrap.length) {
-				if (isLocked) {
-					this.$canvasWrap.addClass('is-aspect-locked');
-					this.$canvasWrap.css('aspect-ratio', refRatio.toString());
-				} else {
-					this.$canvasWrap.removeClass('is-aspect-locked');
-					this.$canvasWrap.css('aspect-ratio', '');
+			// Update Stage Canvas Wrap aspect-ratio only when lock state or ratio actually changes
+			const wrapEl = this.$canvasWrap && this.$canvasWrap[0];
+			if (wrapEl) {
+				const lockSig = isLocked ? refRatio.toFixed(4) : 'unlocked';
+				if (wrapEl._lastLockSig !== lockSig) {
+					wrapEl._lastLockSig = lockSig;
+					if (isLocked) {
+						wrapEl.classList.add('is-aspect-locked');
+						wrapEl.style.aspectRatio = refRatio.toString();
+					} else {
+						wrapEl.classList.remove('is-aspect-locked');
+						wrapEl.style.aspectRatio = '';
+					}
 				}
 			}
 		}
@@ -2380,7 +2635,7 @@
 					side_id: sideId,
 					view_role: role,
 					image_id: parseInt(v.image_id, 10) || 0,
-					image_url: String(v.image_url || '').trim(),
+					image_url: this.normalizeAdminAssetUrl(String(v.image_url || '').trim()),
 					blend_mode: blend,
 					is_cart_preview: v.is_cart_preview !== undefined ? Boolean(v.is_cart_preview) : (role === 'full'),
 				});
@@ -2471,41 +2726,49 @@
 
 		getFieldSideId(idx) {
 			const defaultSideId = (this.printSides && this.printSides[0]) ? this.printSides[0].id : 'front';
-			const $sel = $(`#mr-tee-field-panel-${idx} .mr-tee-field-side-select`);
-			if ($sel.length && $sel.val()) {
-				return String($sel.val());
+			const panelEl = document.getElementById(`mr-tee-field-panel-${idx}`);
+			if (panelEl) {
+				const selEl = panelEl.querySelector('.mr-tee-field-side-select');
+				if (selEl && selEl.value) {
+					return String(selEl.value);
+				}
+				const panelSide = panelEl.getAttribute('data-side-id');
+				if (panelSide) return String(panelSide);
 			}
-			const panelSide = $(`#mr-tee-field-panel-${idx}`).attr('data-side-id');
-			if (panelSide) return String(panelSide);
-			const boxSide = $(`#mr-tee-field-box-${idx}`).attr('data-side-id');
-			if (boxSide) return String(boxSide);
+			const boxEl = document.getElementById(`mr-tee-field-box-${idx}`);
+			if (boxEl) {
+				const boxSide = boxEl.getAttribute('data-side-id');
+				if (boxSide) return String(boxSide);
+			}
 			return defaultSideId;
 		}
 
 		getFieldCurrentCoords(idx) {
 			const defaultH = this.getFieldType(idx) === 'image' ? 30.0 : 8.5;
-			const round1 = (val, fallback) => {
-				const n = parseFloat(val);
+			const round1 = (el, fallback) => {
+				const n = el ? parseFloat(el.value) : NaN;
 				return Number.isFinite(n) ? (Math.round(n * 10) / 10) : fallback;
 			};
-			const rawRot = parseFloat($(`#mr_tee_field_rotate_${idx}`).val());
+			const rEl = document.getElementById(`mr_tee_field_rotate_${idx}`);
+			const rawRot = rEl ? parseFloat(rEl.value) : NaN;
 			return {
-				box_left: round1($(`#mr_tee_field_left_${idx}`).val(), 30.0),
-				box_top: round1($(`#mr_tee_field_top_${idx}`).val(), 25.0),
-				box_width: round1($(`#mr_tee_field_width_${idx}`).val(), 40.0),
-				box_height: round1($(`#mr_tee_field_height_${idx}`).val(), defaultH),
+				box_left: round1(document.getElementById(`mr_tee_field_left_${idx}`), 30.0),
+				box_top: round1(document.getElementById(`mr_tee_field_top_${idx}`), 25.0),
+				box_width: round1(document.getElementById(`mr_tee_field_width_${idx}`), 40.0),
+				box_height: round1(document.getElementById(`mr_tee_field_height_${idx}`), defaultH),
 				box_rotate: Number.isFinite(rawRot) ? Math.round(rawRot) : 0,
 			};
 		}
 
 		getFieldPlacements(idx) {
-			let $input = $(`#mr_tee_field_placements_${idx}`);
-			if (!$input.length) {
-				$input = $(`#mr-tee-field-panel-${idx} .mr-tee-field-placements-json`);
+			let inputEl = document.getElementById(`mr_tee_field_placements_${idx}`);
+			if (!inputEl) {
+				const panelEl = document.getElementById(`mr-tee-field-panel-${idx}`);
+				inputEl = panelEl ? panelEl.querySelector('.mr-tee-field-placements-json') : null;
 			}
-			if (!$input.length) return {};
+			if (!inputEl) return {};
 			try {
-				const raw = JSON.parse($input.val() || '{}');
+				const raw = JSON.parse(inputEl.value || '{}');
 				return (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
 			} catch (e) {
 				return {};
@@ -2513,12 +2776,13 @@
 		}
 
 		setFieldPlacements(idx, placementsObj) {
-			let $input = $(`#mr_tee_field_placements_${idx}`);
-			if (!$input.length) {
-				$input = $(`#mr-tee-field-panel-${idx} .mr-tee-field-placements-json`);
+			let inputEl = document.getElementById(`mr_tee_field_placements_${idx}`);
+			if (!inputEl) {
+				const panelEl = document.getElementById(`mr-tee-field-panel-${idx}`);
+				inputEl = panelEl ? panelEl.querySelector('.mr-tee-field-placements-json') : null;
 			}
-			if (!$input.length) return;
-			$input.val(JSON.stringify(placementsObj || {}));
+			if (!inputEl) return;
+			inputEl.value = JSON.stringify(placementsObj || {});
 		}
 
 		saveFieldPlacementForActiveView(idx) {
@@ -2726,7 +2990,7 @@
 				const sideLabel = side ? (side.label || side.id) : view.side_id;
 				const role = view.view_role || 'full';
 				const roleLabel = roleLabels[role] || role;
-				const thumbUrl = view.image_url || (idx === 0 ? this.defaultThumbUrl : '');
+				const thumbUrl = this.normalizeAdminAssetUrl(view.image_url || (idx === 0 ? this.defaultThumbUrl : ''));
 
 				return `
 					<button
@@ -2738,7 +3002,7 @@
 					>
 						<span class="mr-tee-view-tab-thumb">
 							${thumbUrl
-								? `<img src="${this.escapeXml(thumbUrl)}" alt="" />`
+								? `<img src="${this.escapeXml(thumbUrl)}" alt="" loading="lazy" decoding="async" />`
 								: '<span class="dashicons dashicons-format-image" aria-hidden="true"></span>'}
 						</span>
 						<span class="mr-tee-view-tab-meta">
@@ -2839,9 +3103,10 @@
 			}).addClass('is-active');
 
 			// 2. Swap stage garment mockup image
-			const targetImgUrl = nextView.image_url || this.defaultThumbUrl || '';
+			const targetImgUrl = this.normalizeAdminAssetUrl(nextView.image_url || this.defaultThumbUrl || '');
 			const $img = $('#mr-tee-stage-garment-img');
 			if ($img.length && targetImgUrl && $img.attr('src') !== targetImgUrl) {
+				this._cachedStageRatio = 0;
 				$img.attr('src', targetImgUrl);
 			}
 
@@ -3379,8 +3644,11 @@
 				}
 			});
 
-			// Flush all multi-view JSON + primary box coords right before WordPress post form submit
-			$('form#post').on('submit.mrTeeMultiView', function() {
+			// Flush all multi-view JSON + primary box coords right before WordPress post form submit (Classic & Block Editor)
+			$(document).on('submit.mrTeeMultiView', 'form#post, form.metabox-location-normal', function() {
+				self.syncMultiViewInputs(true);
+			});
+			$(document).on('mousedown.mrTeeMultiView click.mrTeeMultiView', '#publish, #save-post, .editor-post-publish-button, .editor-post-save-draft', function() {
 				self.syncMultiViewInputs(true);
 			});
 

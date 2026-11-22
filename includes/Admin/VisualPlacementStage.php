@@ -49,6 +49,7 @@ class VisualPlacementStage {
 	 * @param string               $thumb_url Product thumbnail URL.
 	 */
 	public static function render_stage( array $config, $thumb_url ) {
+		$thumb_url  = SceneGraphSchema::normalize_url_scheme( $thumb_url );
 		$text_lines = ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ? $config['text_lines'] : array();
 		if ( empty( $text_lines ) ) {
 			$text_lines = array(
@@ -138,7 +139,7 @@ class VisualPlacementStage {
 		$first_view         = $preview_views[0];
 		$first_view_id      = ! empty( $first_view['id'] ) ? $first_view['id'] : 'view_1';
 		$first_view_side_id = ! empty( $first_view['side_id'] ) && isset( $sides_by_id[ $first_view['side_id'] ] ) ? $first_view['side_id'] : $default_side_id;
-		$first_view_img     = ! empty( $first_view['image_url'] ) ? $first_view['image_url'] : $thumb_url;
+		$first_view_img     = SceneGraphSchema::normalize_url_scheme( ! empty( $first_view['image_url'] ) ? $first_view['image_url'] : $thumb_url );
 		$first_view_blend   = ! empty( $first_view['blend_mode'] ) ? $first_view['blend_mode'] : 'normal';
 		$include_wc_gallery = isset( $config['include_wc_gallery_slides'] ) ? (bool) $config['include_wc_gallery_slides'] : true;
 
@@ -278,9 +279,10 @@ class VisualPlacementStage {
 				<div class="mr-tee-allowed-fonts-list" id="mr-tee-allowed-fonts-list">
 					<?php foreach ( $allowed_fonts as $order_idx => $af_id ) : ?>
 						<?php
-						$f_info     = isset( $fonts[ $af_id ] ) ? $fonts[ $af_id ] : array( 'name' => $af_id, 'font_type' => 'ttf' );
-						$is_svg     = ( ! empty( $f_info['font_type'] ) && 'opentype_svg' === $f_info['font_type'] ) || ! empty( $f_info['color_svg'] );
-						$is_default = ( 0 === $order_idx );
+						$f_info      = isset( $fonts[ $af_id ] ) ? $fonts[ $af_id ] : array( 'name' => $af_id, 'font_type' => 'ttf' );
+						$is_svg      = ( ! empty( $f_info['font_type'] ) && 'opentype_svg' === $f_info['font_type'] ) || ! empty( $f_info['color_svg'] );
+						$is_default  = ( 0 === $order_idx );
+						$f_thumb_url = ! empty( $f_info['thumb_url'] ) ? SceneGraphSchema::normalize_url_scheme( $f_info['thumb_url'] ) : '';
 						?>
 						<div class="mr-tee-allowed-font-item <?php echo $is_default ? 'is-default-font' : ''; ?>" data-font-id="<?php echo esc_attr( $af_id ); ?>">
 							<div class="mr-tee-allowed-font-info">
@@ -290,8 +292,8 @@ class VisualPlacementStage {
 								<span class="mr-tee-font-type-pill <?php echo $is_svg ? 'is-svg' : 'is-ttf'; ?>">
 									<?php echo $is_svg ? 'SVG 3D' : 'TTF'; ?>
 								</span>
-								<?php if ( ! empty( $f_info['thumb_url'] ) ) : ?>
-									<img src="<?php echo esc_url( $f_info['thumb_url'] ); ?>" alt="" style="width:18px; height:18px; object-fit:contain;" />
+								<?php if ( ! empty( $f_thumb_url ) ) : ?>
+									<img src="<?php echo esc_url( $f_thumb_url ); ?>" alt="" loading="lazy" decoding="async" style="width:18px; height:18px; object-fit:contain;" />
 								<?php endif; ?>
 								<strong class="mr-tee-font-name-label"><?php echo esc_html( $f_info['name'] ); ?></strong>
 							</div>
@@ -400,7 +402,7 @@ class VisualPlacementStage {
 							$v_side_label = isset( $sides_by_id[ $v_side_id ]['label'] ) ? $sides_by_id[ $v_side_id ]['label'] : $v_side_id;
 							$v_role       = ! empty( $view['view_role'] ) ? $view['view_role'] : 'full';
 							$v_role_label = isset( $role_labels[ $v_role ] ) ? $role_labels[ $v_role ] : $role_labels['full'];
-							$v_img        = ! empty( $view['image_url'] ) ? $view['image_url'] : $thumb_url;
+							$v_img        = SceneGraphSchema::normalize_url_scheme( ! empty( $view['image_url'] ) ? $view['image_url'] : $thumb_url );
 							?>
 							<button
 								type="button"
@@ -411,7 +413,7 @@ class VisualPlacementStage {
 							>
 								<span class="mr-tee-view-tab-thumb">
 									<?php if ( ! empty( $v_img ) ) : ?>
-										<img src="<?php echo esc_url( $v_img ); ?>" alt="" />
+										<img src="<?php echo esc_url( $v_img ); ?>" alt="" loading="lazy" decoding="async" />
 									<?php else : ?>
 										<span class="dashicons dashicons-format-image"></span>
 									<?php endif; ?>
@@ -590,7 +592,7 @@ class VisualPlacementStage {
 						data-blend-mode="<?php echo esc_attr( $first_view_blend ); ?>"
 						style="<?php echo ( ! empty( $lock_ratio ) || 'flat_object' === $prod_type ) ? 'aspect-ratio: ' . esc_attr( $ratio ) . ';' : ''; ?>"
 					>
-						<img src="<?php echo esc_url( $first_view_img ); ?>" alt="Garment Preview" class="mr-tee-stage-garment-img" id="mr-tee-stage-garment-img" />
+						<img src="<?php echo esc_url( $first_view_img ); ?>" alt="Garment Preview" decoding="async" class="mr-tee-stage-garment-img" id="mr-tee-stage-garment-img" />
 
 						<!-- Multi-Rectangle Design Area Boxes -->
 						<div id="mr-tee-boxes-container">
@@ -676,7 +678,7 @@ class VisualPlacementStage {
 							$bw                = ( $view_placement && isset( $view_placement['box_width'] ) ) ? floatval( $view_placement['box_width'] ) : $base_box['box_width'];
 							$bh                = ( $view_placement && isset( $view_placement['box_height'] ) ) ? floatval( $view_placement['box_height'] ) : $base_box['box_height'];
 							$br                = ( $view_placement && isset( $view_placement['box_rotate'] ) ) ? floatval( $view_placement['box_rotate'] ) : $base_box['box_rotate'];
-							$def_img_url       = ! empty( $line['default_image'] ) ? $line['default_image'] : '';
+							$def_img_url       = ! empty( $line['default_image'] ) ? SceneGraphSchema::normalize_url_scheme( $line['default_image'] ) : '';
 							$def_img_id        = ! empty( $line['default_image_id'] ) ? absint( $line['default_image_id'] ) : 0;
 							$image_fit         = ( isset( $line['image_fit'] ) && 'cover' === $line['image_fit'] ) ? 'cover' : 'contain';
 							$allow_upload      = ! isset( $line['allow_image_upload'] ) || ! empty( $line['allow_image_upload'] );
@@ -760,7 +762,7 @@ class VisualPlacementStage {
 											<div class="mr-tee-default-img-picker" data-field-index="<?php echo esc_attr( $idx ); ?>">
 												<div class="mr-tee-default-img-preview-wrap">
 													<?php if ( $def_img_url ) : ?>
-														<img src="<?php echo esc_url( $def_img_url ); ?>" alt="" class="mr-tee-default-img-preview" />
+														<img src="<?php echo esc_url( $def_img_url ); ?>" alt="" loading="lazy" decoding="async" class="mr-tee-default-img-preview" />
 													<?php else : ?>
 														<span class="mr-tee-default-img-empty"><?php esc_html_e( 'Aucune image par défaut', 'mr-tee-editor' ); ?></span>
 													<?php endif; ?>

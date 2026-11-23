@@ -204,17 +204,17 @@ class VisualPlacementStage {
 
 					<div class="mr-tee-dim-field">
 						<label for="mr_tee_real_width"><?php esc_html_e( 'Largeur Image/Produit (W)', 'mr-tee-editor' ); ?></label>
-						<input type="number" step="0.1" min="0.5" id="mr_tee_real_width" name="mr_tee_config[print_real_width]" value="<?php echo esc_attr( $real_w ); ?>" class="small-text mr-tee-dim-input" />
+						<input type="number" step="any" min="0.1" id="mr_tee_real_width" name="mr_tee_config[print_real_width]" value="<?php echo esc_attr( $real_w ); ?>" class="small-text mr-tee-dim-input" />
 					</div>
 
 					<div class="mr-tee-dim-field">
 						<label for="mr_tee_real_height"><?php esc_html_e( 'Hauteur Image/Produit (H)', 'mr-tee-editor' ); ?></label>
-						<input type="number" step="0.1" min="0.5" id="mr_tee_real_height" name="mr_tee_config[print_real_height]" value="<?php echo esc_attr( $real_h ); ?>" class="small-text mr-tee-dim-input" />
+						<input type="number" step="any" min="0.1" id="mr_tee_real_height" name="mr_tee_config[print_real_height]" value="<?php echo esc_attr( $real_h ); ?>" class="small-text mr-tee-dim-input" />
 					</div>
 
 					<div class="mr-tee-dim-field">
 						<label for="mr_tee_dpi"><?php esc_html_e( 'DPI', 'mr-tee-editor' ); ?></label>
-						<input type="number" min="72" max="1200" id="mr_tee_dpi" name="mr_tee_config[dpi]" value="<?php echo esc_attr( $dpi ); ?>" class="small-text mr-tee-dim-input" />
+						<input type="number" step="any" min="72" max="1200" id="mr_tee_dpi" name="mr_tee_config[dpi]" value="<?php echo esc_attr( $dpi ); ?>" class="small-text mr-tee-dim-input" />
 					</div>
 
 					<div class="mr-tee-dim-field mr-tee-dim-field-lock">
@@ -775,7 +775,7 @@ class VisualPlacementStage {
 													data-field-index="<?php echo esc_attr( $idx ); ?>"
 												/>
 												<input
-													type="url"
+													type="text"
 													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][default_image]"
 													value="<?php echo esc_attr( $def_img_url ); ?>"
 													placeholder="https://..."
@@ -913,10 +913,11 @@ class VisualPlacementStage {
 										<td>
 											<input
 												type="number"
+												step="any"
 												min="1"
-												max="100"
+												max="500"
 												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][max_chars]"
-												value="<?php echo esc_attr( isset( $line['max_chars'] ) ? $line['max_chars'] : 25 ); ?>"
+												value="<?php echo esc_attr( isset( $line['max_chars'] ) && intval( $line['max_chars'] ) > 0 ? $line['max_chars'] : 25 ); ?>"
 												class="small-text mr-tee-field-max-chars"
 												data-field-index="<?php echo esc_attr( $idx ); ?>"
 											/>
@@ -986,7 +987,7 @@ class VisualPlacementStage {
 										<td>
 											<input
 												type="number"
-												step="0.1"
+												step="any"
 												min="0"
 												max="100"
 												id="mr_tee_field_left_<?php echo esc_attr( $idx ); ?>"
@@ -1002,7 +1003,7 @@ class VisualPlacementStage {
 										<td>
 											<input
 												type="number"
-												step="0.1"
+												step="any"
 												min="0"
 												max="100"
 												id="mr_tee_field_top_<?php echo esc_attr( $idx ); ?>"
@@ -1018,8 +1019,8 @@ class VisualPlacementStage {
 										<td>
 											<input
 												type="number"
-												step="0.1"
-												min="5"
+												step="any"
+												min="1"
 												max="100"
 												id="mr_tee_field_width_<?php echo esc_attr( $idx ); ?>"
 												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][box_width]"
@@ -1034,8 +1035,8 @@ class VisualPlacementStage {
 										<td>
 											<input
 												type="number"
-												step="0.1"
-												min="3"
+												step="any"
+												min="1"
 												max="100"
 												id="mr_tee_field_height_<?php echo esc_attr( $idx ); ?>"
 												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][box_height]"
@@ -1051,9 +1052,9 @@ class VisualPlacementStage {
 											<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
 												<input
 													type="number"
-													step="1"
-													min="-180"
-													max="180"
+													step="any"
+													min="-360"
+													max="360"
 													id="mr_tee_field_rotate_<?php echo esc_attr( $idx ); ?>"
 													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][box_rotate]"
 													value="<?php echo esc_attr( $br ); ?>"

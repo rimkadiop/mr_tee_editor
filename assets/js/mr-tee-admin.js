@@ -1132,7 +1132,7 @@
 										<span class="mr-tee-default-img-empty">Aucune image par défaut</span>
 									</div>
 									<input type="hidden" name="mr_tee_config[text_lines][${newIdx}][default_image_id]" value="0" class="mr-tee-field-default-image-id" data-field-index="${newIdx}" />
-									<input type="url" name="mr_tee_config[text_lines][${newIdx}][default_image]" value="" placeholder="https://..." class="regular-text mr-tee-field-default-image-input" data-field-index="${newIdx}" style="margin-bottom:6px; width:100%;" />
+									<input type="text" name="mr_tee_config[text_lines][${newIdx}][default_image]" value="" placeholder="https://..." class="regular-text mr-tee-field-default-image-input" data-field-index="${newIdx}" style="margin-bottom:6px; width:100%;" />
 									<div class="mr-tee-default-img-actions">
 										<button type="button" class="button button-secondary button-small mr-tee-btn-select-default-image" data-field-index="${newIdx}">📁 Bibliothèque WP</button>
 										<label class="button button-small" style="cursor:pointer; display:inline-flex; align-items:center; gap:4px;">
@@ -1188,7 +1188,7 @@
 						<tr class="mr-tee-row-text-only" ${isImage ? 'style="display:none;"' : ''}>
 							<th><label>Max Caractères</label></th>
 							<td>
-								<input type="number" min="1" max="100" name="mr_tee_config[text_lines][${newIdx}][max_chars]" value="25" class="small-text mr-tee-field-max-chars" data-field-index="${newIdx}" />
+								<input type="number" step="any" min="1" max="500" name="mr_tee_config[text_lines][${newIdx}][max_chars]" value="25" class="small-text mr-tee-field-max-chars" data-field-index="${newIdx}" />
 							</td>
 						</tr>
 						<tr>
@@ -1210,32 +1210,32 @@
 						<tr>
 							<th><label>Position X (Left %)</label></th>
 							<td>
-								<input type="number" step="0.1" min="0" max="100" id="mr_tee_field_left_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_left]" value="${newLeft}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-left" data-field-index="${newIdx}" /> %
+								<input type="number" step="any" min="0" max="100" id="mr_tee_field_left_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_left]" value="${newLeft}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-left" data-field-index="${newIdx}" /> %
 							</td>
 						</tr>
 						<tr>
 							<th><label>Position Y (Top %)</label></th>
 							<td>
-								<input type="number" step="0.1" min="0" max="100" id="mr_tee_field_top_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_top]" value="${newTop}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-top" data-field-index="${newIdx}" /> %
+								<input type="number" step="any" min="0" max="100" id="mr_tee_field_top_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_top]" value="${newTop}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-top" data-field-index="${newIdx}" /> %
 							</td>
 						</tr>
 						<tr>
 							<th><label>Largeur (Width %)</label></th>
 							<td>
-								<input type="number" step="0.1" min="5" max="100" id="mr_tee_field_width_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_width]" value="${newWidth}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-width" data-field-index="${newIdx}" /> %
+								<input type="number" step="any" min="1" max="100" id="mr_tee_field_width_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_width]" value="${newWidth}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-width" data-field-index="${newIdx}" /> %
 							</td>
 						</tr>
 						<tr>
 							<th><label>Hauteur (Height %)</label></th>
 							<td>
-								<input type="number" step="0.1" min="3" max="100" id="mr_tee_field_height_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_height]" value="${newHeight}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-height" data-field-index="${newIdx}" /> %
+								<input type="number" step="any" min="1" max="100" id="mr_tee_field_height_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_height]" value="${newHeight}" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-height" data-field-index="${newIdx}" /> %
 							</td>
 						</tr>
 						<tr>
 							<th><label>Orientation / Rotation (°)</label></th>
 							<td>
 								<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-									<input type="number" step="1" min="-180" max="180" id="mr_tee_field_rotate_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_rotate]" value="0" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-rotate" data-field-index="${newIdx}" /> °
+									<input type="number" step="any" min="-360" max="360" id="mr_tee_field_rotate_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][box_rotate]" value="0" class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-rotate" data-field-index="${newIdx}" /> °
 									<span class="description" style="font-size:11px;">(-180° à 180°)</span>
 								</div>
 								<div class="mr-tee-rotate-presets" style="display:flex; flex-wrap:wrap; gap:4px;">
@@ -2894,34 +2894,51 @@
 		}
 
 		/**
-		 * Flush multi-view hidden JSON inputs and optionally sync each field's
-		 * top-level box_* inputs to the primary/full view of its side before form submit.
+		 * Guarantee no input inside the Mr. Tee metabox (including hidden tabs or inactive field panels)
+		 * can ever fail HTML5 constraint validation and silently freeze the WordPress Update button.
 		 */
-		syncMultiViewInputs(syncPrimaryBoxes = false) {
+		ensureMetaboxInputsValid() {
+			const metabox = document.getElementById('mr_tee_editor_config') || document.querySelector('.mr-tee-admin-wrap');
+			if (!metabox) return;
+
+			const controls = metabox.querySelectorAll('input, select, textarea');
+			for (let i = 0; i < controls.length; i++) {
+				const el = controls[i];
+				if (el.disabled || el.type === 'hidden' || el.type === 'file' || el.type === 'button' || el.type === 'submit') {
+					continue;
+				}
+				if (typeof el.checkValidity === 'function' && !el.checkValidity()) {
+					if (el.type === 'number') {
+						el.step = 'any';
+						let val = parseFloat(el.value);
+						const minAttr = el.min !== '' ? parseFloat(el.min) : null;
+						const maxAttr = el.max !== '' ? parseFloat(el.max) : null;
+						if (Number.isNaN(val)) {
+							val = minAttr !== null ? minAttr : 0;
+						}
+						if (minAttr !== null && val < minAttr) val = minAttr;
+						if (maxAttr !== null && val > maxAttr) val = maxAttr;
+						el.value = String(val);
+					} else if (el.type === 'url') {
+						el.type = 'text';
+					}
+				}
+			}
+		}
+
+		/**
+		 * Flush multi-view hidden JSON inputs idempotently before WordPress form submit.
+		 * Note: Server-side EngineSelectorMetabox::save_meta_box() already synchronizes top-level
+		 * box_* and print_* dimensions from the authoritative `placements` and `print_sides` JSON
+		 * payloads, so we intentionally avoid mutating the active view's DOM inputs on mousedown/click/submit.
+		 */
+		syncMultiViewInputs(isSubmitting = false) {
 			this.flushActiveViewPlacements();
 			this.updateActiveSideDimensionsFromToolbar({ skipJsonSync: true });
 			this.syncHiddenMultiViewJson();
 
-			if (!syncPrimaryBoxes) return;
-
-			const count = $('.mr-tee-field-box').length;
-			for (let i = 0; i < count; i++) {
-				const fieldSide = this.getFieldSideId(i);
-				const primaryView = this.getPrimaryViewForSide(fieldSide);
-				const placements = this.getFieldPlacements(i);
-				if (primaryView && placements[primaryView.id] && placements[primaryView.id].box_left !== undefined) {
-					const p = placements[primaryView.id];
-					$(`#mr_tee_field_left_${i}`).val(p.box_left);
-					$(`#mr_tee_field_top_${i}`).val(p.box_top);
-					$(`#mr_tee_field_width_${i}`).val(p.box_width);
-					$(`#mr_tee_field_height_${i}`).val(p.box_height);
-					$(`#mr_tee_field_rotate_${i}`).val(p.box_rotate !== undefined ? p.box_rotate : 0);
-				}
-			}
-
-			// Ensure top-level legacy product dimension inputs reflect the primary side (printSides[0])
-			if (this.printSides.length > 1 && this.printSides[0]) {
-				this.loadSideDimensionsToToolbar(this.printSides[0].id);
+			if (isSubmitting) {
+				this.ensureMetaboxInputsValid();
 			}
 		}
 

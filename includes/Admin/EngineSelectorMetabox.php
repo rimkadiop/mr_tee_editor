@@ -225,25 +225,25 @@ class EngineSelectorMetabox {
 						<tr>
 							<th><label><?php esc_html_e( 'Nombre par défaut / Max', 'mr-tee-editor' ); ?></label></th>
 							<td>
-								<label><?php esc_html_e( 'Par défaut :', 'mr-tee-editor' ); ?> <input type="number" name="mr_tee_config[repeater][default_count]" value="<?php echo esc_attr( $rep['default_count'] ); ?>" min="0" max="6" class="small-text" /></label>
+								<label><?php esc_html_e( 'Par défaut :', 'mr-tee-editor' ); ?> <input type="number" name="mr_tee_config[repeater][default_count]" value="<?php echo esc_attr( isset( $rep['default_count'] ) ? $rep['default_count'] : 0 ); ?>" min="0" max="6" step="any" class="small-text" /></label>
 								&nbsp;&nbsp;
-								<label><?php esc_html_e( 'Maximum :', 'mr-tee-editor' ); ?> <input type="number" name="mr_tee_config[repeater][max_items]" value="<?php echo esc_attr( $rep['max_items'] ); ?>" min="1" max="6" class="small-text" /></label>
+								<label><?php esc_html_e( 'Maximum :', 'mr-tee-editor' ); ?> <input type="number" name="mr_tee_config[repeater][max_items]" value="<?php echo esc_attr( isset( $rep['max_items'] ) ? $rep['max_items'] : 0 ); ?>" min="0" max="6" step="any" class="small-text" /></label>
 							</td>
 						</tr>
 						<tr>
 							<th><label><?php esc_html_e( 'Hauteur Ligne 1 / Ligne 2 (%)', 'mr-tee-editor' ); ?></label></th>
 							<td>
-								<label><?php esc_html_e( 'Ligne 1 Y :', 'mr-tee-editor' ); ?> <input type="number" step="0.1" name="mr_tee_config[repeater][row1_y_pct]" value="<?php echo esc_attr( $rep['row1_y_pct'] ); ?>" class="small-text" /> %</label>
+								<label><?php esc_html_e( 'Ligne 1 Y :', 'mr-tee-editor' ); ?> <input type="number" step="any" name="mr_tee_config[repeater][row1_y_pct]" value="<?php echo esc_attr( isset( $rep['row1_y_pct'] ) ? $rep['row1_y_pct'] : 50.2 ); ?>" class="small-text" /> %</label>
 								&nbsp;&nbsp;
-								<label><?php esc_html_e( 'Ligne 2 Y :', 'mr-tee-editor' ); ?> <input type="number" step="0.1" name="mr_tee_config[repeater][row2_y_pct]" value="<?php echo esc_attr( $rep['row2_y_pct'] ); ?>" class="small-text" /> %</label>
+								<label><?php esc_html_e( 'Ligne 2 Y :', 'mr-tee-editor' ); ?> <input type="number" step="any" name="mr_tee_config[repeater][row2_y_pct]" value="<?php echo esc_attr( isset( $rep['row2_y_pct'] ) ? $rep['row2_y_pct'] : 73.2 ); ?>" class="small-text" /> %</label>
 							</td>
 						</tr>
 						<tr>
 							<th><label><?php esc_html_e( 'Dimensions des icônes (%)', 'mr-tee-editor' ); ?></label></th>
 							<td>
-								<label><?php esc_html_e( 'Largeur :', 'mr-tee-editor' ); ?> <input type="number" step="0.1" name="mr_tee_config[repeater][icon_width]" value="<?php echo esc_attr( $rep['icon_width'] ); ?>" class="small-text" /> %</label>
+								<label><?php esc_html_e( 'Largeur :', 'mr-tee-editor' ); ?> <input type="number" step="any" name="mr_tee_config[repeater][icon_width]" value="<?php echo esc_attr( isset( $rep['icon_width'] ) ? $rep['icon_width'] : 20 ); ?>" class="small-text" /> %</label>
 								&nbsp;&nbsp;
-								<label><?php esc_html_e( 'Hauteur :', 'mr-tee-editor' ); ?> <input type="number" step="0.1" name="mr_tee_config[repeater][icon_height]" value="<?php echo esc_attr( $rep['icon_height'] ); ?>" class="small-text" /> %</label>
+								<label><?php esc_html_e( 'Hauteur :', 'mr-tee-editor' ); ?> <input type="number" step="any" name="mr_tee_config[repeater][icon_height]" value="<?php echo esc_attr( isset( $rep['icon_height'] ) ? $rep['icon_height'] : 20 ); ?>" class="small-text" /> %</label>
 							</td>
 						</tr>
 					</table>
@@ -268,9 +268,9 @@ class EngineSelectorMetabox {
 						<tr>
 							<th><label><?php esc_html_e( 'Dimensions Physiques Réelles', 'mr-tee-editor' ); ?></label></th>
 							<td>
-								<label><?php esc_html_e( 'Largeur :', 'mr-tee-editor' ); ?> <input type="number" step="0.1" name="mr_tee_config[print_real_width]" id="mr_tee_tab4_real_width" value="<?php echo esc_attr( isset( $config['print_real_width'] ) ? $config['print_real_width'] : 30.0 ); ?>" class="small-text" /></label>
+								<label><?php esc_html_e( 'Largeur :', 'mr-tee-editor' ); ?> <input type="number" step="any" name="mr_tee_config[print_real_width]" id="mr_tee_tab4_real_width" value="<?php echo esc_attr( isset( $config['print_real_width'] ) ? $config['print_real_width'] : 30.0 ); ?>" class="small-text" /></label>
 								&nbsp;&nbsp;
-								<label><?php esc_html_e( 'Hauteur :', 'mr-tee-editor' ); ?> <input type="number" step="0.1" name="mr_tee_config[print_real_height]" id="mr_tee_tab4_real_height" value="<?php echo esc_attr( isset( $config['print_real_height'] ) ? $config['print_real_height'] : 40.0 ); ?>" class="small-text" /></label>
+								<label><?php esc_html_e( 'Hauteur :', 'mr-tee-editor' ); ?> <input type="number" step="any" name="mr_tee_config[print_real_height]" id="mr_tee_tab4_real_height" value="<?php echo esc_attr( isset( $config['print_real_height'] ) ? $config['print_real_height'] : 40.0 ); ?>" class="small-text" /></label>
 								&nbsp;&nbsp;
 								<label><?php esc_html_e( 'Unité :', 'mr-tee-editor' ); ?>
 									<select name="mr_tee_config[print_unit]" id="mr_tee_tab4_print_unit">
@@ -294,11 +294,11 @@ class EngineSelectorMetabox {
 						<tr>
 							<th><label><?php esc_html_e( 'Résolution d\'impression (300 DPI)', 'mr-tee-editor' ); ?></label></th>
 							<td>
-								<label><?php esc_html_e( 'DPI :', 'mr-tee-editor' ); ?> <input type="number" name="mr_tee_config[dpi]" id="mr_tee_tab4_dpi" value="<?php echo esc_attr( isset( $config['dpi'] ) ? $config['dpi'] : 300 ); ?>" class="small-text" /></label>
+								<label><?php esc_html_e( 'DPI :', 'mr-tee-editor' ); ?> <input type="number" step="any" name="mr_tee_config[dpi]" id="mr_tee_tab4_dpi" value="<?php echo esc_attr( isset( $config['dpi'] ) ? $config['dpi'] : 300 ); ?>" class="small-text" /></label>
 								&nbsp;&nbsp;
-								<label><?php esc_html_e( 'Largeur (px) :', 'mr-tee-editor' ); ?> <input type="number" name="mr_tee_config[print_width_px]" id="mr_tee_tab4_width_px" value="<?php echo esc_attr( $config['print_width_px'] ); ?>" class="small-text" /></label>
+								<label><?php esc_html_e( 'Largeur (px) :', 'mr-tee-editor' ); ?> <input type="number" step="any" name="mr_tee_config[print_width_px]" id="mr_tee_tab4_width_px" value="<?php echo esc_attr( isset( $config['print_width_px'] ) ? $config['print_width_px'] : 2400 ); ?>" class="small-text" /></label>
 								&nbsp;&nbsp;
-								<label><?php esc_html_e( 'Hauteur (px) :', 'mr-tee-editor' ); ?> <input type="number" name="mr_tee_config[print_height_px]" id="mr_tee_tab4_height_px" value="<?php echo esc_attr( $config['print_height_px'] ); ?>" class="small-text" /></label>
+								<label><?php esc_html_e( 'Hauteur (px) :', 'mr-tee-editor' ); ?> <input type="number" step="any" name="mr_tee_config[print_height_px]" id="mr_tee_tab4_height_px" value="<?php echo esc_attr( isset( $config['print_height_px'] ) ? $config['print_height_px'] : 3000 ); ?>" class="small-text" /></label>
 							</td>
 						</tr>
 						<tr>

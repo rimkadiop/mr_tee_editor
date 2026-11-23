@@ -1220,6 +1220,11 @@
 	box-sizing: border-box;
 }
 
+#mr-tee-active-view-bar select {
+	padding-right: 28px;
+	min-width: 115px;
+}
+
 #mr-tee-active-view-bar #mr_tee_view_label {
 	min-width: 155px;
 	max-width: 210px;

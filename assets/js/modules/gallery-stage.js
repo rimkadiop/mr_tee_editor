@@ -12,7 +12,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { DedicatedGallery } from './dedicated-gallery.js?v=2.4.0.1';
+import { DedicatedGallery } from './dedicated-gallery.js?v=2.4.0.2';
 
 export class GalleryStage {
 	constructor(config, options = {}) {
@@ -23,6 +23,9 @@ export class GalleryStage {
 			: null;
 		this.onViewChange = typeof this.options.onViewChange === 'function'
 			? this.options.onViewChange
+			: null;
+		this.onSwipeStart = typeof this.options.onSwipeStart === 'function'
+			? this.options.onSwipeStart
 			: null;
 		this.onSlideImageChanged = typeof this.options.onSlideImageChanged === 'function'
 			? this.options.onSlideImageChanged
@@ -113,6 +116,11 @@ export class GalleryStage {
 			onViewChange: (viewId, slideIdx, slideMeta) => {
 				if (this.onViewChange) {
 					this.onViewChange(viewId, slideIdx, slideMeta);
+				}
+			},
+			onSwipeStart: (neighborViewIds) => {
+				if (this.onSwipeStart) {
+					this.onSwipeStart(neighborViewIds);
 				}
 			},
 			onSlideImageChanged: (viewId, imgEl) => {

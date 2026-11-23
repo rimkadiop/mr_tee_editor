@@ -17,6 +17,7 @@ export class DedicatedGallery {
 		this.config = config || {};
 		this.options = options || {};
 		this.onViewChange = typeof this.options.onViewChange === 'function' ? this.options.onViewChange : null;
+		this.onSwipeStart = typeof this.options.onSwipeStart === 'function' ? this.options.onSwipeStart : null;
 		this.onSlideImageChanged = typeof this.options.onSlideImageChanged === 'function' ? this.options.onSlideImageChanged : null;
 		this.getFullscreenSvg = typeof this.options.getFullscreenSvg === 'function' ? this.options.getFullscreenSvg : null;
 		this.patchSvgFn = typeof this.options.patchSvgFn === 'function' ? this.options.patchSvgFn : null;
@@ -169,6 +170,12 @@ export class DedicatedGallery {
 		const i18n = data.i18n || {};
 		const isLocked = Boolean(this.config.lock_aspect_ratio) || this.config.product_type === 'flat_object';
 		const lockRatio = parseFloat(this.config.print_aspect_ratio) || 1.0;
+		const sidesById = new Map();
+		if (Array.isArray(this.config.print_sides)) {
+			for (const ps of this.config.print_sides) {
+				if (ps && ps.id) sidesById.set(String(ps.id), ps);
+			}
+		}
 		const count = rawSlides.length;
 
 		let pillsHtml = '';
@@ -180,6 +187,7 @@ export class DedicatedGallery {
 			pillsHtml = `<div class="mr-tee-view-pills" role="tablist" aria-label="${DedicatedGallery.escHtml(i18n.viewsLabel || 'Vues du produit')}">${pillItems}</div>`;
 		}
 
+		let anySlideLocked = false;
 		const slidesHtml = rawSlides.map((s, idx) => {
 			const imgUrl = DedicatedGallery.normalizeProtocol(s.image_url || '');
 			const srcsetAttr = s.srcset ? ` srcset="${DedicatedGallery.escHtml(s.srcset)}"` : '';
@@ -188,11 +196,22 @@ export class DedicatedGallery {
 			const loadAttrs = idx === 0
 				? ' loading="eager" fetchpriority="high" decoding="sync"'
 				: ' loading="lazy" decoding="async"';
-			const stageStyle = isLocked ? ` style="aspect-ratio:${lockRatio};"` : '';
+			const sideDef = (s.side_id && sidesById.has(String(s.side_id))) ? sidesById.get(String(s.side_id)) : null;
+			const slideLocked = Boolean(s.is_customizable) && (
+				(sideDef && sideDef.lock_aspect_ratio !== undefined)
+					? (Boolean(sideDef.lock_aspect_ratio) || sideDef.product_type === 'flat_object')
+					: isLocked
+			);
+			const sideW = sideDef ? parseFloat(sideDef.print_real_width) : 0;
+			const sideH = sideDef ? parseFloat(sideDef.print_real_height) : 0;
+			const slideRatio = (sideW > 0 && sideH > 0) ? Number((sideW / sideH).toFixed(6)) : lockRatio;
+			if (slideLocked) anySlideLocked = true;
+			const stageClass = slideLocked ? 'mr-tee-slide-stage mr-tee-slide-stage--locked' : 'mr-tee-slide-stage';
+			const stageStyle = slideLocked ? ` style="--mr-tee-slide-ratio:${slideRatio};aspect-ratio:${slideRatio};"` : '';
 			const overlayHtml = s.is_customizable
 				? `<div class="mr-tee-live-stage-overlay" data-view-id="${DedicatedGallery.escHtml(s.view_id)}" data-side-id="${DedicatedGallery.escHtml(s.side_id || 'front')}" data-blend="${DedicatedGallery.escHtml(s.blend_mode || 'normal')}"><div class="mr-tee-live-svg-container"></div></div>`
 				: '';
-			return `<div class="mr-tee-slide${idx === 0 ? ' is-active' : ''}" data-slide-index="${idx}" data-view-id="${DedicatedGallery.escHtml(s.view_id)}" data-side-id="${DedicatedGallery.escHtml(s.side_id || '')}" data-view-role="${DedicatedGallery.escHtml(s.view_role || 'full')}" data-customizable="${s.is_customizable ? '1' : '0'}"><div class="mr-tee-slide-stage"${stageStyle}><img src="${DedicatedGallery.escHtml(imgUrl)}"${srcsetAttr}${sizesAttr} alt="${DedicatedGallery.escHtml(s.alt || s.label || '')}" class="mr-tee-slide-img${idx === 0 ? ' wp-post-image' : ''} skip-lazy no-lazyload" data-no-lazy="1" data-skip-lazy="1" data-large_image="${DedicatedGallery.escHtml(imgUrl)}"${dimAttrs}${loadAttrs} draggable="false" />${overlayHtml}</div></div>`;
+			return `<div class="mr-tee-slide${idx === 0 ? ' is-active' : ''}" data-slide-index="${idx}" data-view-id="${DedicatedGallery.escHtml(s.view_id)}" data-side-id="${DedicatedGallery.escHtml(s.side_id || '')}" data-view-role="${DedicatedGallery.escHtml(s.view_role || 'full')}" data-customizable="${s.is_customizable ? '1' : '0'}"><div class="${stageClass}"${stageStyle}><img src="${DedicatedGallery.escHtml(imgUrl)}"${srcsetAttr}${sizesAttr} alt="${DedicatedGallery.escHtml(s.alt || s.label || '')}" class="mr-tee-slide-img${idx === 0 ? ' wp-post-image' : ''} skip-lazy no-lazyload" data-no-lazy="1" data-skip-lazy="1" data-large_image="${DedicatedGallery.escHtml(imgUrl)}"${dimAttrs}${loadAttrs} draggable="false" />${overlayHtml}</div></div>`;
 		}).join('');
 
 		const arrowsHtml = count > 1
@@ -213,7 +232,7 @@ export class DedicatedGallery {
 
 		const wrapper = document.createElement('div');
 		wrapper.id = 'mr-tee-gallery-root';
-		wrapper.className = `woocommerce-product-gallery images wp-block-woocommerce-product-image-gallery mr-tee-dedicated-gallery${isLocked ? ' mr-tee-gallery--aspect-locked' : ''}`;
+		wrapper.className = `woocommerce-product-gallery images wp-block-woocommerce-product-image-gallery mr-tee-dedicated-gallery${anySlideLocked ? ' mr-tee-gallery--aspect-locked' : ''}`;
 		wrapper.setAttribute('data-product-id', String(data.productId || 0));
 		wrapper.setAttribute('data-columns', '4');
 		wrapper.setAttribute('data-slide-count', String(count));
@@ -397,6 +416,20 @@ export class DedicatedGallery {
 					return;
 				}
 				this.track.classList.add('is-dragging');
+				const neighborIndices = [];
+				if (this.activeIndex > 0) neighborIndices.push(this.activeIndex - 1);
+				if (this.activeIndex < this.slides.length - 1) neighborIndices.push(this.activeIndex + 1);
+				const neighborViewIds = [];
+				for (const nIdx of neighborIndices) {
+					this.preloadSlideImage(nIdx);
+					const ns = this.slides[nIdx];
+					if (ns && ns.customizable && ns.viewId) {
+						neighborViewIds.push(ns.viewId);
+					}
+				}
+				if (this.onSwipeStart && neighborViewIds.length > 0) {
+					this.onSwipeStart(neighborViewIds);
+				}
 			}
 
 			if (axis !== 'x') return;
@@ -607,6 +640,20 @@ export class DedicatedGallery {
 	}
 
 	/**
+	 * Promote a lazy slide image to eager loading just before/during swipe or tab switch
+	 * so adjacent slides decode immediately without hurting initial LCP bandwidth.
+	 *
+	 * @param {number} idx Slide index.
+	 */
+	preloadSlideImage(idx) {
+		const slide = this.slides[idx];
+		if (!slide || !slide.imgEl) return;
+		if (slide.imgEl.getAttribute('loading') === 'lazy') {
+			slide.imgEl.setAttribute('loading', 'eager');
+		}
+	}
+
+	/**
 	 * Navigate smoothly to slide by index.
 	 *
 	 * @param {number} idx Slide index (wraps safely).
@@ -619,6 +666,7 @@ export class DedicatedGallery {
 		const normalized = ((idx % count) + count) % count;
 		const changed = normalized !== this.activeIndex;
 		this.activeIndex = normalized;
+		this.preloadSlideImage(normalized);
 
 		if (this.track) {
 			this.track.classList.remove('is-dragging');

@@ -8,12 +8,12 @@
  * @package MrTeeEditor\Assets
  */
 
-import { StateStore } from './modules/state-store.js?v=2.4.0.1';
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.4.0.1';
-import { SvgRenderer } from './modules/svg-renderer.js?v=2.4.0.1';
-import { GalleryStage } from './modules/gallery-stage.js?v=2.4.0.1';
-import { FormController } from './modules/form-controller.js?v=2.4.0.1';
-import { PrintExporter } from './modules/print-exporter.js?v=2.4.0.1';
+import { StateStore } from './modules/state-store.js?v=2.4.0.2';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.4.0.2';
+import { SvgRenderer } from './modules/svg-renderer.js?v=2.4.0.2';
+import { GalleryStage } from './modules/gallery-stage.js?v=2.4.0.2';
+import { FormController } from './modules/form-controller.js?v=2.4.0.2';
+import { PrintExporter } from './modules/print-exporter.js?v=2.4.0.2';
 
 window.mrTeePrintExporter = PrintExporter;
 window.mrTeeSvgRenderer = SvgRenderer;
@@ -37,6 +37,7 @@ class MrTeeFrontendApp {
 
 		this.dirtyViews = new Set();
 		this.renderedViews = new Set();
+		this._siblingSyncTimer = null;
 
 		this.init();
 	}
@@ -67,6 +68,13 @@ class MrTeeFrontendApp {
 			renderSvgWithPrefix: (idPrefix, viewId) => this.renderViewSvg(viewId || this.stage.getActiveViewId(), { idPrefix }),
 			onViewChange: (viewId) => {
 				this.renderActiveViewIfNeeded(viewId, false);
+			},
+			onSwipeStart: (neighborViewIds) => {
+				if (Array.isArray(neighborViewIds)) {
+					for (const vid of neighborViewIds) {
+						this.renderActiveViewIfNeeded(vid, false);
+					}
+				}
 			},
 			onSlideImageChanged: (viewId) => {
 				if (viewId) {
@@ -106,7 +114,7 @@ class MrTeeFrontendApp {
 			});
 		});
 
-		// Initial Render (renders ONLY the active visible view immediately)
+		// Initial Render (renders ONLY the active visible view immediately; sibling views sync quietly after idle)
 		this.renderSceneGraph();
 
 		// Re-sync SVG aspect ratio once legacy gallery image finishes loading if running in legacy mode
@@ -455,8 +463,37 @@ class MrTeeFrontendApp {
 	}
 
 	/**
+	 * Debounced (~180ms) background sync of dirty customizable sibling views so adjacent
+	 * slides (e.g. Full T-Shirt view paired with Cut-Area Closeup) are already fresh before swiping,
+	 * while keeping active keystroke rendering strictly 1-view at 60 FPS.
+	 */
+	scheduleSiblingViewsSync() {
+		if (!this.stage || !this.stage.isDedicated) return;
+		if (this._siblingSyncTimer) {
+			clearTimeout(this._siblingSyncTimer);
+		}
+		this._siblingSyncTimer = setTimeout(() => {
+			this._siblingSyncTimer = null;
+			if (!this.stage || !this.stage.isDedicated) return;
+			const activeSlide = this.stage.getActiveSlide();
+			const activeViewId = activeSlide ? activeSlide.viewId : '';
+			const activeSideId = activeSlide ? activeSlide.sideId : '';
+			const customViews = this.stage.getCustomizableViews();
+			for (const v of customViews) {
+				if (!v || !v.viewId || v.viewId === activeViewId) continue;
+				const isSameSide = Boolean(activeSideId && v.sideId === activeSideId);
+				const isImmediateNeighbor = activeSlide && Math.abs(v.index - activeSlide.index) === 1;
+				if ((isSameSide || isImmediateNeighbor) && (this.dirtyViews.has(v.viewId) || !this.renderedViews.has(v.viewId))) {
+					this.renderActiveViewIfNeeded(v.viewId, false);
+				}
+			}
+		}, 180);
+	}
+
+	/**
 	 * Compute scene-graph layout, mark customizable views dirty, and immediately update
-	 * ONLY the currently visible view (60 FPS lazy multi-view rendering).
+	 * ONLY the currently visible view (60 FPS lazy multi-view rendering), scheduling
+	 * a debounced background sync for sibling/neighbor slides.
 	 */
 	renderSceneGraph() {
 		this.computeMergedScene();
@@ -464,6 +501,7 @@ class MrTeeFrontendApp {
 		if (this.stage && this.stage.isDedicated) {
 			this.markAllViewsDirty();
 			this.renderActiveViewIfNeeded(this.stage.getActiveViewId(), true);
+			this.scheduleSiblingViewsSync();
 			return;
 		}
 

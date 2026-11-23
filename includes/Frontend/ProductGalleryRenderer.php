@@ -608,11 +608,47 @@ class ProductGalleryRenderer {
 			? floatval( $config['print_aspect_ratio'] )
 			: 1.0;
 
+		$sides_by_id = array();
+		if ( ! empty( $config['print_sides'] ) && is_array( $config['print_sides'] ) ) {
+			foreach ( $config['print_sides'] as $ps ) {
+				if ( is_array( $ps ) && ! empty( $ps['id'] ) ) {
+					$sides_by_id[ (string) $ps['id'] ] = $ps;
+				}
+			}
+		}
+
+		$slide_locks    = array();
+		$any_slide_lock = false;
+		foreach ( $slides as $idx => $slide ) {
+			$s_locked = false;
+			$s_ratio  = $lock_ratio;
+			if ( ! empty( $slide['is_customizable'] ) ) {
+				$s_def    = ( ! empty( $slide['side_id'] ) && isset( $sides_by_id[ (string) $slide['side_id'] ] ) )
+					? $sides_by_id[ (string) $slide['side_id'] ]
+					: null;
+				$s_locked = ( null !== $s_def && array_key_exists( 'lock_aspect_ratio', $s_def ) )
+					? ( ! empty( $s_def['lock_aspect_ratio'] ) || ( isset( $s_def['product_type'] ) && 'flat_object' === $s_def['product_type'] ) )
+					: $is_locked;
+				$s_w      = ( null !== $s_def && ! empty( $s_def['print_real_width'] ) ) ? floatval( $s_def['print_real_width'] ) : 0.0;
+				$s_h      = ( null !== $s_def && ! empty( $s_def['print_real_height'] ) ) ? floatval( $s_def['print_real_height'] ) : 0.0;
+				if ( $s_w > 0 && $s_h > 0 ) {
+					$s_ratio = round( $s_w / $s_h, 6 );
+				}
+			}
+			if ( $s_locked ) {
+				$any_slide_lock = true;
+			}
+			$slide_locks[ $idx ] = array(
+				'locked' => $s_locked,
+				'ratio'  => $s_ratio,
+			);
+		}
+
 		ob_start();
 		?>
 		<div
 			id="mr-tee-gallery-root"
-			class="woocommerce-product-gallery images wp-block-woocommerce-product-image-gallery mr-tee-dedicated-gallery<?php echo $is_locked ? ' mr-tee-gallery--aspect-locked' : ''; ?>"
+			class="woocommerce-product-gallery images wp-block-woocommerce-product-image-gallery mr-tee-dedicated-gallery<?php echo $any_slide_lock ? ' mr-tee-gallery--aspect-locked' : ''; ?>"
 			data-product-id="<?php echo esc_attr( $product_id ); ?>"
 			data-columns="4"
 			data-slide-count="<?php echo esc_attr( $slide_count ); ?>"
@@ -648,6 +684,11 @@ class ProductGalleryRenderer {
 			<div class="mr-tee-gallery-viewport">
 				<div class="mr-tee-gallery-track">
 					<?php foreach ( $slides as $idx => $slide ) : ?>
+						<?php
+						$s_lock_info = isset( $slide_locks[ $idx ] ) ? $slide_locks[ $idx ] : array( 'locked' => false, 'ratio' => $lock_ratio );
+						$s_is_locked = ! empty( $s_lock_info['locked'] );
+						$s_ratio_str = (string) $s_lock_info['ratio'];
+						?>
 						<div
 							class="mr-tee-slide<?php echo 0 === $idx ? ' is-active' : ''; ?>"
 							data-slide-index="<?php echo esc_attr( $idx ); ?>"
@@ -657,9 +698,9 @@ class ProductGalleryRenderer {
 							data-customizable="<?php echo ! empty( $slide['is_customizable'] ) ? '1' : '0'; ?>"
 						>
 							<div
-								class="mr-tee-slide-stage"
-								<?php if ( $is_locked ) : ?>
-									style="aspect-ratio: <?php echo esc_attr( (string) $lock_ratio ); ?>;"
+								class="mr-tee-slide-stage<?php echo $s_is_locked ? ' mr-tee-slide-stage--locked' : ''; ?>"
+								<?php if ( $s_is_locked ) : ?>
+									style="--mr-tee-slide-ratio: <?php echo esc_attr( $s_ratio_str ); ?>; aspect-ratio: <?php echo esc_attr( $s_ratio_str ); ?>;"
 								<?php endif; ?>
 							>
 								<img

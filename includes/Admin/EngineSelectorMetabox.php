@@ -622,9 +622,9 @@ class EngineSelectorMetabox {
 						$default_text = isset( $line_data['default_text'] ) ? sanitize_textarea_field( $line_data['default_text'] ) : ( isset( $existing_text['default_text'] ) ? $existing_text['default_text'] : sprintf( __( 'Texte %d', 'mr-tee-editor' ), $line_num ) );
 						$font         = isset( $line_data['font'] ) ? sanitize_text_field( $line_data['font'] ) : ( isset( $existing_text['font'] ) ? $existing_text['font'] : 'super_mario' );
 
-						// If product-level allowed_fonts is defined, enforce first font as default
+						// If product-level allowed_fonts is defined, fall back to first font only when unset or disallowed
 						if ( ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
-							if ( 0 === $text_line_order || ! in_array( $font, $config['allowed_fonts'], true ) ) {
+							if ( '' === $font || ! in_array( $font, $config['allowed_fonts'], true ) ) {
 								$font = $config['allowed_fonts'][0];
 							}
 						}

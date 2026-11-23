@@ -189,8 +189,26 @@ export class StateStore {
 			if (ref.colorRefId) {
 				const colorRef = this.getReference(ref.colorRefId);
 				if (colorRef) {
-					if (fontDef.palette && colorRef.colorMode === 'multi') {
-						colorRef.palette = fontDef.palette;
+					if (colorRef._initialColorHex === undefined) {
+						colorRef._initialColorHex = colorRef.colorHex || '';
+						colorRef._initialColorMode = colorRef.colorMode || 'solid';
+					}
+					const wantsMulti = Boolean(fontDef.multi_color) && Array.isArray(fontDef.palette) && fontDef.palette.length > 1;
+					if (wantsMulti && !colorRef._userPickedColor) {
+						colorRef.colorMode = 'multi';
+						colorRef.palette = fontDef.palette.slice();
+					} else {
+						colorRef.colorMode = 'solid';
+						if (Array.isArray(fontDef.palette) && fontDef.palette.length > 0) {
+							colorRef.palette = fontDef.palette.slice();
+						}
+						if (!colorRef._userPickedColor) {
+							const fallbackHex = (Array.isArray(fontDef.palette) && fontDef.palette[0]) ? fontDef.palette[0] : '#111827';
+							const savedSolid = (colorRef._initialColorMode === 'solid' && colorRef._initialColorHex) ? colorRef._initialColorHex : '';
+							const nextHex = savedSolid || ((!colorRef.colorHex || colorRef.colorHex.toLowerCase() === '#ffffff') ? fallbackHex : colorRef.colorHex);
+							colorRef.colorHex = nextHex;
+							colorRef.color = { hex: nextHex };
+						}
 					}
 					if (fontDef.stroke !== undefined) {
 						colorRef.strokeHex = fontDef.stroke;
@@ -215,8 +233,10 @@ export class StateStore {
 	setColorSelection(colorRefId, colorHex) {
 		const colorRef = this.getReference(colorRefId);
 		if (!colorRef) return;
-		if (colorRef.colorHex === colorHex) return;
+		if (colorRef.colorMode === 'solid' && colorRef.colorHex === colorHex) return;
 
+		colorRef._userPickedColor = true;
+		colorRef.colorMode = 'solid';
 		colorRef.colorHex = colorHex;
 		colorRef.color = { hex: colorHex };
 

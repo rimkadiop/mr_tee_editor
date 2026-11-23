@@ -374,12 +374,25 @@ class CartIntegration {
 		$previews          = array();
 		$seen_preview_urls = array();
 
-		$primary_view_id = ! empty( $config['preview_views'][0]['id'] ) ? (string) $config['preview_views'][0]['id'] : 'front';
-		$primary_side_id = ! empty( $config['preview_views'][0]['side_id'] )
-			? (string) $config['preview_views'][0]['side_id']
+		$primary_view_cfg = null;
+		if ( ! empty( $config['preview_views'] ) && is_array( $config['preview_views'] ) ) {
+			foreach ( $config['preview_views'] as $pv ) {
+				if ( is_array( $pv ) && ( ! isset( $pv['is_cart_preview'] ) || false !== $pv['is_cart_preview'] ) ) {
+					$primary_view_cfg = $pv;
+					break;
+				}
+			}
+			if ( null === $primary_view_cfg && ! empty( $config['preview_views'][0] ) && is_array( $config['preview_views'][0] ) ) {
+				$primary_view_cfg = $config['preview_views'][0];
+			}
+		}
+
+		$primary_view_id = ! empty( $primary_view_cfg['id'] ) ? (string) $primary_view_cfg['id'] : 'front';
+		$primary_side_id = ! empty( $primary_view_cfg['side_id'] )
+			? (string) $primary_view_cfg['side_id']
 			: ( ! empty( $config['print_sides'][0]['id'] ) ? (string) $config['print_sides'][0]['id'] : 'front' );
-		$primary_label   = ! empty( $config['preview_views'][0]['label'] )
-			? (string) $config['preview_views'][0]['label']
+		$primary_label   = ! empty( $primary_view_cfg['label'] )
+			? (string) $primary_view_cfg['label']
 			: ( ! empty( $config['print_sides'][0]['label'] ) ? (string) $config['print_sides'][0]['label'] : __( 'Recto', 'mr-tee-editor' ) );
 
 		if ( is_array( $decoded_previews ) && ! empty( $decoded_previews[0] ) && is_array( $decoded_previews[0] ) ) {
@@ -993,9 +1006,14 @@ class CartIntegration {
 			return;
 		}
 
-		$cart_previews_map = array();
+		$has_mr_tee_in_cart = false;
+		$cart_previews_map  = array();
 		if ( function_exists( 'WC' ) && WC() && ! empty( WC()->cart ) && method_exists( WC()->cart, 'get_cart' ) ) {
 			foreach ( WC()->cart->get_cart() as $c_item ) {
+				if ( empty( $c_item['mr_tee_editor'] ) || ! is_array( $c_item['mr_tee_editor'] ) ) {
+					continue;
+				}
+				$has_mr_tee_in_cart = true;
 				if ( empty( $c_item['mr_tee_editor']['preview_url'] ) || empty( $c_item['mr_tee_editor']['previews'] ) || ! is_array( $c_item['mr_tee_editor']['previews'] ) ) {
 					continue;
 				}
@@ -1003,8 +1021,21 @@ class CartIntegration {
 				$lb_list      = self::format_previews_for_lightbox( $c_item['mr_tee_editor']['previews'], $primary_norm );
 				if ( '' !== $primary_norm && count( $lb_list ) > 1 ) {
 					$cart_previews_map[ $primary_norm ] = $lb_list;
+					$parsed_path                        = wp_parse_url( $primary_norm, PHP_URL_PATH );
+					if ( is_string( $parsed_path ) && '' !== $parsed_path ) {
+						$cart_previews_map[ $parsed_path ] = $lb_list;
+					}
 				}
 			}
+		}
+
+		$is_commerce_view = ( function_exists( 'is_cart' ) && is_cart() )
+			|| ( function_exists( 'is_checkout' ) && is_checkout() )
+			|| ( function_exists( 'is_account_page' ) && is_account_page() )
+			|| ( function_exists( 'is_wc_endpoint_url' ) && is_wc_endpoint_url() );
+
+		if ( ! $has_mr_tee_in_cart && ! $is_commerce_view ) {
+			return;
 		}
 		?>
 		<style id="mr-tee-cart-preview-lightbox-css">
@@ -1349,8 +1380,19 @@ class CartIntegration {
 						}
 					} catch (e) {}
 				}
-				if (list.length <= 1 && fullSrc && CART_PREVIEWS_MAP[fullSrc] && Array.isArray(CART_PREVIEWS_MAP[fullSrc])) {
-					list = CART_PREVIEWS_MAP[fullSrc].slice();
+				if (list.length <= 1 && fullSrc) {
+					var mapped = CART_PREVIEWS_MAP[fullSrc];
+					if (!mapped) {
+						try {
+							var parsedPath = new URL(fullSrc, window.location.origin).pathname;
+							if (parsedPath && CART_PREVIEWS_MAP[parsedPath]) {
+								mapped = CART_PREVIEWS_MAP[parsedPath];
+							}
+						} catch (e) {}
+					}
+					if (Array.isArray(mapped)) {
+						list = mapped.slice();
+					}
 				}
 				if (list.length === 0 && fullSrc) {
 					list.push({ label: '', src: fullSrc });
@@ -1593,8 +1635,37 @@ class CartIntegration {
 			}
 
 			if (typeof MutationObserver !== 'undefined' && document.body) {
-				var obs = new MutationObserver(function() {
-					neutralizeThumbnailLinks();
+				var obsTimer = null;
+				var scheduleNeutralize = function() {
+					if (obsTimer) clearTimeout(obsTimer);
+					obsTimer = setTimeout(function() {
+						obsTimer = null;
+						neutralizeThumbnailLinks();
+					}, 150);
+				};
+				var obs = new MutationObserver(function(mutations) {
+					var relevant = false;
+					for (var i = 0; i < mutations.length; i++) {
+						var m = mutations[i];
+						if (!m.addedNodes || !m.addedNodes.length) continue;
+						var t = m.target;
+						if (t && t.nodeType === 1) {
+							if (t.namespaceURI === 'http://www.w3.org/2000/svg' || isInsideProductStage(t)) {
+								continue;
+							}
+						}
+						for (var j = 0; j < m.addedNodes.length; j++) {
+							var added = m.addedNodes[j];
+							if (added && added.nodeType === 1 && added.namespaceURI !== 'http://www.w3.org/2000/svg' && !isInsideProductStage(added)) {
+								relevant = true;
+								break;
+							}
+						}
+						if (relevant) break;
+					}
+					if (relevant) {
+						scheduleNeutralize();
+					}
 				});
 				obs.observe(document.body, { childList: true, subtree: true });
 			}

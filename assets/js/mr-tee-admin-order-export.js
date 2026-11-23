@@ -9,9 +9,9 @@
  * @package MrTeeEditor\Assets
  */
 
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.4.0.1';
-import { SvgRenderer } from './modules/svg-renderer.js?v=2.4.0.1';
-import { PrintExporter } from './modules/print-exporter.js?v=2.4.0.1';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.4.0.2';
+import { SvgRenderer } from './modules/svg-renderer.js?v=2.4.0.2';
+import { PrintExporter } from './modules/print-exporter.js?v=2.4.0.2';
 
 class MrTeeAdminOrderExporter {
 	constructor() {
@@ -604,6 +604,12 @@ class MrTeeAdminOrderExporter {
 					svg_file_name: (svgUpload && svgUpload.file_name) || (suffix ? `design_${suffix}.svg` : 'design.svg'),
 					print_file_name: (printUpload && printUpload.file_name) || (suffix ? `print_300dpi_${suffix}.png` : 'print_300dpi.png'),
 					print_dimensions: `${metrics.exportRealW} × ${metrics.exportRealH} ${metrics.unit} (${metrics.dpi} DPI | ${metrics.exportPxW} × ${metrics.exportPxH} px)`,
+					real_width: metrics.exportRealW,
+					real_height: metrics.exportRealH,
+					width_px: metrics.exportPxW,
+					height_px: metrics.exportPxH,
+					unit: metrics.unit,
+					dpi: metrics.dpi,
 				});
 			}
 

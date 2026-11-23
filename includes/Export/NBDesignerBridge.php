@@ -218,23 +218,36 @@ class NBDesignerBridge {
 
 		if ( count( $print_sides ) > 1 ) {
 			$product_sides = array();
+			$side_metrics  = ( ! empty( $custom_data['side_export_metrics'] ) && is_array( $custom_data['side_export_metrics'] ) )
+				? $custom_data['side_export_metrics']
+				: array();
 			foreach ( $print_sides as $s_idx => $side ) {
+				$s_id      = ! empty( $side['id'] ) ? (string) $side['id'] : ( 0 === $s_idx ? 'front' : 'side_' . $s_idx );
+				$s_m       = ( isset( $side_metrics[ $s_id ] ) && is_array( $side_metrics[ $s_id ] ) ) ? $side_metrics[ $s_id ] : array();
 				$s_label   = ! empty( $side['label'] ) ? (string) $side['label'] : ( 0 === $s_idx ? 'Front' : 'Side ' . ( $s_idx + 1 ) );
-				$s_unit    = ! empty( $side['print_unit'] ) ? (string) $side['print_unit'] : $unit;
-				$s_dpi     = ! empty( $side['dpi'] ) ? intval( $side['dpi'] ) : $dpi;
-				$s_real_w  = ( 0 === $s_idx && ! empty( $custom_data['crop_print_width'] ) )
-					? floatval( $custom_data['crop_print_width'] )
-					: ( ! empty( $side['print_real_width'] ) ? floatval( $side['print_real_width'] ) : $prod_w );
-				$s_real_h  = ( 0 === $s_idx && ! empty( $custom_data['crop_print_height'] ) )
-					? floatval( $custom_data['crop_print_height'] )
-					: ( ! empty( $side['print_real_height'] ) ? floatval( $side['print_real_height'] ) : $prod_h );
+				$s_unit    = ! empty( $s_m['print_unit'] ) ? (string) $s_m['print_unit'] : ( ! empty( $side['print_unit'] ) ? (string) $side['print_unit'] : $unit );
+				$s_dpi     = ! empty( $s_m['dpi'] ) ? intval( $s_m['dpi'] ) : ( ! empty( $side['dpi'] ) ? intval( $side['dpi'] ) : $dpi );
+				$s_real_w  = ! empty( $s_m['crop_print_width'] )
+					? floatval( $s_m['crop_print_width'] )
+					: ( ( 0 === $s_idx && ! empty( $custom_data['crop_print_width'] ) )
+						? floatval( $custom_data['crop_print_width'] )
+						: ( ! empty( $side['print_real_width'] ) ? floatval( $side['print_real_width'] ) : $prod_w ) );
+				$s_real_h  = ! empty( $s_m['crop_print_height'] )
+					? floatval( $s_m['crop_print_height'] )
+					: ( ( 0 === $s_idx && ! empty( $custom_data['crop_print_height'] ) )
+						? floatval( $custom_data['crop_print_height'] )
+						: ( ! empty( $side['print_real_height'] ) ? floatval( $side['print_real_height'] ) : $prod_h ) );
 				$to_inches = ( 'mm' === $s_unit ) ? ( 1 / 25.4 ) : ( ( 'in' === $s_unit ) ? 1.0 : ( 1 / 2.54 ) );
-				$s_area_w  = ( 0 === $s_idx && ! empty( $custom_data['crop_width_px'] ) )
-					? intval( $custom_data['crop_width_px'] )
-					: max( 10, (int) round( $s_real_w * $to_inches * $s_dpi ) );
-				$s_area_h  = ( 0 === $s_idx && ! empty( $custom_data['crop_height_px'] ) )
-					? intval( $custom_data['crop_height_px'] )
-					: max( 10, (int) round( $s_real_h * $to_inches * $s_dpi ) );
+				$s_area_w  = ! empty( $s_m['crop_width_px'] )
+					? intval( $s_m['crop_width_px'] )
+					: ( ( 0 === $s_idx && ! empty( $custom_data['crop_width_px'] ) )
+						? intval( $custom_data['crop_width_px'] )
+						: max( 10, (int) round( $s_real_w * $to_inches * $s_dpi ) ) );
+				$s_area_h  = ! empty( $s_m['crop_height_px'] )
+					? intval( $s_m['crop_height_px'] )
+					: ( ( 0 === $s_idx && ! empty( $custom_data['crop_height_px'] ) )
+						? intval( $custom_data['crop_height_px'] )
+						: max( 10, (int) round( $s_real_h * $to_inches * $s_dpi ) ) );
 
 				$product_sides[] = array(
 					'orientation_name'   => $s_label,
@@ -517,6 +530,19 @@ class NBDesignerBridge {
 			wp_mkdir_p( $nbd_dir . '/svg' );
 		}
 
+		$product_json_path = trailingslashit( $nbd_dir ) . 'product.json';
+		$product_sides     = null;
+		$product_modified  = false;
+		if ( file_exists( $product_json_path ) ) {
+			$raw_prod = @file_get_contents( $product_json_path );
+			if ( is_string( $raw_prod ) && '' !== $raw_prod ) {
+				$decoded_prod = @unserialize( $raw_prod, array( 'allowed_classes' => false ) );
+				if ( is_array( $decoded_prod ) ) {
+					$product_sides = $decoded_prod;
+				}
+			}
+		}
+
 		$idx = 0;
 		foreach ( $side_exports as $key => $side ) {
 			if ( ! is_array( $side ) ) {
@@ -553,12 +579,35 @@ class NBDesignerBridge {
 				}
 			}
 
+			if ( is_array( $product_sides ) && isset( $product_sides[ $idx ] ) && is_array( $product_sides[ $idx ] ) ) {
+				$rw = ! empty( $side['real_width'] ) ? floatval( $side['real_width'] ) : 0.0;
+				$rh = ! empty( $side['real_height'] ) ? floatval( $side['real_height'] ) : 0.0;
+				$pw = ! empty( $side['width_px'] ) ? intval( $side['width_px'] ) : 0;
+				$ph = ! empty( $side['height_px'] ) ? intval( $side['height_px'] ) : 0;
+				if ( $rw > 0 && $rh > 0 ) {
+					$product_sides[ $idx ]['product_width']  = $rw;
+					$product_sides[ $idx ]['product_height'] = $rh;
+					$product_sides[ $idx ]['real_width']     = $rw;
+					$product_sides[ $idx ]['real_height']    = $rh;
+					$product_modified                        = true;
+				}
+				if ( $pw > 0 && $ph > 0 ) {
+					$product_sides[ $idx ]['area_design_width']  = $pw;
+					$product_sides[ $idx ]['area_design_height'] = $ph;
+					$product_modified                            = true;
+				}
+			}
+
 			$out['sides'][ $side_id ] = array(
 				'frame_index' => $idx,
 				'svg'         => $side_svg_url,
 				'print_file'  => $side_print_url,
 			);
 			$idx++;
+		}
+
+		if ( $product_modified && is_array( $product_sides ) ) {
+			@file_put_contents( $product_json_path, serialize( $product_sides ) );
 		}
 
 		return $out;

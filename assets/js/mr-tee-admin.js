@@ -212,6 +212,7 @@
 			const self = this;
 			$('#mr-tee-stage-garment-img').on('load', function() {
 				self._cachedStageRatio = 0;
+				self.recalculateDimensions();
 				self.renderAllBoxesPreviews();
 			});
 
@@ -2276,13 +2277,10 @@
 			const self = this;
 			const allowed = self.getAllowedFonts();
 			const defaultFontId = allowed[0] || '';
-			const firstTextIdx = self.getFirstTextFieldIndex();
 
-			$('.mr-tee-field-font-select').each(function(domIdx) {
-				const attrIdx = parseInt($(this).attr('data-field-index'), 10);
-				const idx = Number.isNaN(attrIdx) ? domIdx : attrIdx;
+			$('.mr-tee-field-font-select').each(function() {
 				const prevVal = $(this).val();
-				const targetVal = (idx === firstTextIdx || !prevVal || !allowed.includes(prevVal)) ? defaultFontId : prevVal;
+				const targetVal = (!prevVal || !allowed.includes(prevVal)) ? defaultFontId : prevVal;
 
 				const html = self.generateFontSelectOptions(targetVal, allowed);
 				$(this).html(html);
@@ -3483,11 +3481,15 @@
 					const attId = (att && att.id) ? parseInt(att.id, 10) : 0;
 					if (!url) return;
 
+					const normUrl = self.normalizeAdminAssetUrl(url);
 					view.image_id = attId || 0;
-					view.image_url = url;
-					$('#mr-tee-stage-garment-img').attr('src', url);
+					view.image_url = normUrl;
+					self._cachedStageRatio = 0;
+					$('#mr-tee-stage-garment-img').attr('src', normUrl);
 					self.renderViewsBar();
 					self.syncHiddenMultiViewJson();
+					self.recalculateDimensions();
+					self.renderAllBoxesPreviews();
 					self.setViewUploadStatus('✅ Image mockup mise à jour !', 'success');
 				});
 
@@ -3521,11 +3523,15 @@
 					success: function(resp) {
 						inputEl.value = '';
 						if (resp && resp.success && resp.data && resp.data.url) {
+							const normUrl = self.normalizeAdminAssetUrl(resp.data.url);
 							view.image_id = parseInt(resp.data.id, 10) || 0;
-							view.image_url = resp.data.url;
+							view.image_url = normUrl;
 							$('#mr_tee_view_image_btn').removeClass('mr-tee-attention-pulse');
 							if (self.activeViewId === view.id) {
-								$('#mr-tee-stage-garment-img').attr('src', resp.data.url);
+								self._cachedStageRatio = 0;
+								$('#mr-tee-stage-garment-img').attr('src', normUrl);
+								self.recalculateDimensions();
+								self.renderAllBoxesPreviews();
 							}
 							self.renderViewsBar();
 							self.syncHiddenMultiViewJson();

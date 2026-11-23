@@ -11,8 +11,8 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.4.0.1';
-import { PrintExporter } from './print-exporter.js?v=2.4.0.1';
+import { SvgRenderer } from './svg-renderer.js?v=2.4.0.2';
+import { PrintExporter } from './print-exporter.js?v=2.4.0.2';
 
 export class FormController {
 	constructor(store, config, onExportRequested, options = {}) {
@@ -47,6 +47,27 @@ export class FormController {
 		}
 	}
 
+	/**
+	 * Horizontally scroll each `.mr-tee-font-pills` strip so its active pill is visible on load
+	 * without ever causing vertical page scroll.
+	 */
+	scrollActiveFontPillsIntoView() {
+		if (!this.container) return;
+		this.container.querySelectorAll('.mr-tee-font-pills').forEach((scroller) => {
+			if (scroller._mrTeeUserScrolled) return;
+			const activePill = scroller.querySelector('.mr-tee-font-pill.is-active');
+			if (!activePill) return;
+			const viewW = scroller.clientWidth || 0;
+			const pillLeft = activePill.offsetLeft;
+			const pillRight = pillLeft + activePill.offsetWidth;
+			const currentLeft = scroller.scrollLeft;
+			if (viewW > 0 && (pillLeft < currentLeft || pillRight > currentLeft + viewW)) {
+				const targetLeft = Math.max(0, pillLeft - Math.max(8, Math.round((viewW - activePill.offsetWidth) / 2)));
+				scroller.scrollLeft = targetLeft;
+			}
+		});
+	}
+
 	initDom() {
 		this.container = document.getElementById('mr-tee-editor-container');
 		this.countModal = document.getElementById('mr-tee-count-modal');
@@ -64,6 +85,21 @@ export class FormController {
 		const parentCartForm = this.container ? this.container.closest('form.cart') : null;
 		this.addToCartBtn = (parentCartForm && parentCartForm.querySelector('button[type="submit"], input[type="submit"], .single_add_to_cart_button'))
 			|| document.querySelector('form.cart button[type="submit"], form.cart input[type="submit"], .single_add_to_cart_button');
+
+		if (this.container) {
+			this.container.querySelectorAll('.mr-tee-font-pills').forEach((scroller) => {
+				scroller.addEventListener('pointerdown', () => {
+					scroller._mrTeeUserScrolled = true;
+				}, { once: true, passive: true });
+				scroller.addEventListener('wheel', () => {
+					scroller._mrTeeUserScrolled = true;
+				}, { once: true, passive: true });
+			});
+			requestAnimationFrame(() => this.scrollActiveFontPillsIntoView());
+			if (document.fonts && document.fonts.ready && typeof document.fonts.ready.then === 'function') {
+				document.fonts.ready.then(() => this.scrollActiveFontPillsIntoView()).catch(() => {});
+			}
+		}
 	}
 
 	bindEvents() {
@@ -697,7 +733,7 @@ export class FormController {
 		const cartUrl = (window.mrTeeProductData && window.mrTeeProductData.cartUrl) || '';
 		if (window.jQuery && cartUrl && !this._boundAjaxRedirect) {
 			this._boundAjaxRedirect = true;
-			window.jQuery(document.body).one('added_to_cart', () => {
+			window.jQuery(document.body).on('added_to_cart.mrTeeRedirect', () => {
 				if (this._awaitingCartRedirect) {
 					this._awaitingCartRedirect = false;
 					window.location.href = PrintExporter.normalizeSameHostUrl(cartUrl) || cartUrl;

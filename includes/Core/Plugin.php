@@ -612,6 +612,12 @@ final class Plugin {
 					'print_file'       => $s_print_file,
 					'print_url'        => $s_print_url,
 					'print_dimensions' => ! empty( $entry['print_dimensions'] ) ? sanitize_text_field( (string) $entry['print_dimensions'] ) : '',
+					'real_width'       => ! empty( $entry['real_width'] ) ? floatval( $entry['real_width'] ) : 0.0,
+					'real_height'      => ! empty( $entry['real_height'] ) ? floatval( $entry['real_height'] ) : 0.0,
+					'width_px'         => ! empty( $entry['width_px'] ) ? intval( $entry['width_px'] ) : 0,
+					'height_px'        => ! empty( $entry['height_px'] ) ? intval( $entry['height_px'] ) : 0,
+					'unit'             => ! empty( $entry['unit'] ) ? sanitize_key( (string) $entry['unit'] ) : '',
+					'dpi'              => ! empty( $entry['dpi'] ) ? intval( $entry['dpi'] ) : 0,
 				);
 			}
 		}

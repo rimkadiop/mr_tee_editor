@@ -683,13 +683,14 @@ export class SvgRenderer {
 	 */
 	static renderMaskNode(node, options = {}) {
 		const idPrefix = options.idPrefix ? String(options.idPrefix).replace(/[^a-zA-Z0-9_-]/g, '') : '';
-		const maskId = `${idPrefix}mrtee-mask-${Math.random().toString(36).substr(2, 9)}`;
 		const childItems = node.items || [];
 		const textureUrl = node.textureUrl || (node.image && node.image.url) || this.getLocalAssetUrl('assets/images/leopard-pattern.png');
 
 		const ratio = (options.ratio && options.ratio > 0) ? options.ratio : 1.0;
 		const hasPerLine = Boolean(options.hasPerLineBoxes);
 		const firstTextChild = childItems.find(c => c && c.type === 'TEXT') || {};
+		const rawMaskKey = String(node.id || node.reference || node.name || firstTextChild.reference || firstTextChild.id || 'default');
+		const maskId = `${idPrefix}mrtee-mask-${rawMaskKey.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 		const vp = this.resolveNodeViewPlacement(node, options.viewId) || this.resolveNodeViewPlacement(firstTextChild, options.viewId);
 		if (vp && (vp.hidden === true || vp.visible === false)) {
 			return '';

@@ -7,7 +7,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.4.0.1';
+import { SvgRenderer } from './svg-renderer.js?v=2.4.0.2';
 
 export class PrintExporter {
 	static CHUNK_SIZE_BYTES = 600 * 1024; // 600 KB binary chunks fit cleanly under 1 MB proxy/WAF limits while minimizing round-trips
@@ -582,6 +582,53 @@ export class PrintExporter {
 	}
 
 	/**
+	 * Ensure any OpenType-SVG color font referenced by layers across any garment side
+	 * (including unvisited secondary sides like Back) has its manifest loaded before cart rendering.
+	 *
+	 * @param {Array} layers Merged scene-graph layers.
+	 * @param {Object} config Product configuration.
+	 * @return {Promise<void>}
+	 */
+	static async ensureActiveSvgFontsLoaded(layers, config = {}) {
+		if (typeof window === 'undefined') return;
+		const fonts = (window.mrTeeProductData && window.mrTeeProductData.fonts)
+			|| (window.mrTeeAdminData && window.mrTeeAdminData.fonts)
+			|| (window.mrTeeOrderExportData && window.mrTeeOrderExportData.fonts)
+			|| (config && config.fonts)
+			|| {};
+		const neededIds = new Set();
+
+		const walk = (nodes) => {
+			if (!Array.isArray(nodes)) return;
+			for (const n of nodes) {
+				if (!n || typeof n !== 'object') continue;
+				if (n.fontId) neededIds.add(String(n.fontId));
+				if (Array.isArray(n.items)) walk(n.items);
+			}
+		};
+		walk(layers);
+
+		if (Array.isArray(config.text_lines)) {
+			for (const tl of config.text_lines) {
+				if (tl && tl.font) neededIds.add(String(tl.font));
+			}
+		}
+
+		const tasks = [];
+		for (const fId of neededIds) {
+			const cleanKey = fId.toLowerCase().replace(/[\s\-]+/g, '_');
+			const fDef = fonts[fId] || fonts[cleanKey] || null;
+			if (!fDef || (fDef.font_type !== 'opentype_svg' && !fDef.color_svg)) continue;
+			if (!SvgRenderer.getSvgFontData(fId)) {
+				tasks.push(SvgRenderer.ensureSvgFontLoaded(fId, fDef, { prewarmGlyphs: false }).catch(() => null));
+			}
+		}
+		if (tasks.length > 0) {
+			await Promise.all(tasks);
+		}
+	}
+
+	/**
 	 * Prepare ONLY the lightweight composite thumbnail preview(s) and scene-graph payload
 	 * on the customer product page. Full 300 DPI PNG & vector SVG generation are deferred
 	 * exclusively to WP Admin order screens for maximum client speed and IP protection.
@@ -599,6 +646,8 @@ export class PrintExporter {
 			const merged = window.mrTeeSceneGraphEngine.getLayersMergedWithRefs(store.state.layers, store.state.references);
 			layers = window.mrTeeSceneGraphEngine.applyRowCentering(merged, store.state.activeCount);
 		}
+
+		await this.ensureActiveSvgFontsLoaded(layers, config);
 
 		const primaryMetrics = this.computeExportMetrics(config);
 		const allPreviewViews = Array.isArray(config.preview_views) ? config.preview_views.filter(Boolean) : [];
@@ -710,6 +759,21 @@ export class PrintExporter {
 		const primaryEntry = renderedViews[0] || { view: cartViews[0], b64: '' };
 		const compositeB64 = primaryEntry.b64;
 
+		const sideExportMetrics = {};
+		const sidesForMetrics = allPrintSides.length > 0 ? allPrintSides : [{ id: primaryMetrics.sideId || 'front' }];
+		for (const sideDef of sidesForMetrics) {
+			const sid = (sideDef && sideDef.id) ? String(sideDef.id) : 'front';
+			const sm = this.computeSideExportMetrics(config, null, sid);
+			sideExportMetrics[sid] = {
+				crop_print_width: sm.exportRealW,
+				crop_print_height: sm.exportRealH,
+				crop_width_px: sm.exportPxW,
+				crop_height_px: sm.exportPxH,
+				print_unit: sm.unit,
+				dpi: sm.dpi,
+			};
+		}
+
 		const payload = store.getExportPayload();
 		payload.crop_print_width = primaryMetrics.exportRealW;
 		payload.crop_print_height = primaryMetrics.exportRealH;
@@ -717,6 +781,7 @@ export class PrintExporter {
 		payload.crop_height_px = primaryMetrics.exportPxH;
 		payload.print_unit = primaryMetrics.unit;
 		payload.dpi = primaryMetrics.dpi;
+		payload.side_export_metrics = sideExportMetrics;
 		const payloadJson = JSON.stringify(payload);
 
 		const designKeyInput = document.getElementById('mr_tee_design_key');

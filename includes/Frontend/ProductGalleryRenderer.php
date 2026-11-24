@@ -131,8 +131,8 @@ class ProductGalleryRenderer {
 			return $block_content;
 		}
 
-		$product_id = ProductPageRenderer::get_active_product_id();
-		if ( $product_id <= 0 || ! empty( self::$rendered_galleries[ $product_id ] ) ) {
+		$product_id = self::resolve_mr_tee_product_id();
+		if ( $product_id <= 0 ) {
 			return $block_content;
 		}
 
@@ -261,8 +261,8 @@ class ProductGalleryRenderer {
 		if ( ! is_string( $path ) || '' === $path ) {
 			return strtolower( trim( $url ) );
 		}
-		// Strip WP scaled/resized size suffixes like -1024x1024 for robust deduplication.
-		$clean = preg_replace( '/-\d+x\d+(?=\.[a-z0-9]+$)/i', '', $path );
+		// Strip WP scaled/resized size suffixes (-scaled, -1024x1024, or both) for robust deduplication.
+		$clean = preg_replace( '/(?:-scaled|-\d+x\d+)+(?=\.[a-z0-9]+$)/i', '', $path );
 		return strtolower( $clean );
 	}
 
@@ -644,6 +644,18 @@ class ProductGalleryRenderer {
 			);
 		}
 
+		$wp_post_image_idx = 0;
+		foreach ( $slides as $idx => $slide ) {
+			if ( ! empty( $slide['is_customizable'] ) && 'front' === $slide['side_id'] && 'full' === $slide['view_role'] ) {
+				$wp_post_image_idx = $idx;
+				break;
+			}
+		}
+
+		$svg_icon_shirt = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.38 3.46L16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 .99.84H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.15a1 1 0 0 0 .99-.84l.58-3.47a2 2 0 0 0-1.34-2.23z"/></svg>';
+		$svg_icon_zoom  = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
+		$svg_icon_photo = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
+
 		ob_start();
 		?>
 		<div
@@ -657,11 +669,11 @@ class ProductGalleryRenderer {
 				<div class="mr-tee-view-pills" role="tablist" aria-label="<?php esc_attr_e( 'Vues du produit', 'mr-tee-editor' ); ?>">
 					<?php foreach ( $slides as $idx => $slide ) : ?>
 						<?php
-						$pill_icon = '👕';
+						$pill_icon = $svg_icon_shirt;
 						if ( empty( $slide['is_customizable'] ) ) {
-							$pill_icon = '🖼️';
+							$pill_icon = $svg_icon_photo;
 						} elseif ( in_array( $slide['view_role'], array( 'closeup', 'detail' ), true ) ) {
-							$pill_icon = '🔍';
+							$pill_icon = $svg_icon_zoom;
 						}
 						?>
 						<button
@@ -669,12 +681,13 @@ class ProductGalleryRenderer {
 							role="tab"
 							class="mr-tee-view-pill<?php echo 0 === $idx ? ' is-active' : ''; ?>"
 							aria-selected="<?php echo 0 === $idx ? 'true' : 'false'; ?>"
+							tabindex="<?php echo 0 === $idx ? '0' : '-1'; ?>"
 							data-slide-index="<?php echo esc_attr( $idx ); ?>"
 							data-view-id="<?php echo esc_attr( $slide['view_id'] ); ?>"
 							data-side-id="<?php echo esc_attr( $slide['side_id'] ); ?>"
 							data-view-role="<?php echo esc_attr( $slide['view_role'] ); ?>"
 						>
-							<span class="mr-tee-view-pill-icon" aria-hidden="true"><?php echo esc_html( $pill_icon ); ?></span>
+							<span class="mr-tee-view-pill-icon" aria-hidden="true"><?php echo $pill_icon; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></span>
 							<span class="mr-tee-view-pill-label"><?php echo esc_html( $slide['label'] ); ?></span>
 						</button>
 					<?php endforeach; ?>
@@ -712,7 +725,7 @@ class ProductGalleryRenderer {
 										sizes="<?php echo esc_attr( $slide['sizes'] ); ?>"
 									<?php endif; ?>
 									alt="<?php echo esc_attr( $slide['alt'] ); ?>"
-									class="mr-tee-slide-img<?php echo 0 === $idx ? ' wp-post-image' : ''; ?> skip-lazy no-lazyload"
+									class="mr-tee-slide-img<?php echo $wp_post_image_idx === $idx ? ' wp-post-image' : ''; ?> skip-lazy no-lazyload"
 									data-no-lazy="1"
 									data-skip-lazy="1"
 									data-large_image="<?php echo esc_url( $slide['image_url'] ); ?>"
@@ -783,6 +796,7 @@ class ProductGalleryRenderer {
 						<button
 							type="button"
 							class="mr-tee-gallery-thumb<?php echo 0 === $idx ? ' is-active' : ''; ?>"
+							<?php echo 0 === $idx ? 'aria-current="true"' : ''; ?>
 							data-slide-index="<?php echo esc_attr( $idx ); ?>"
 							data-view-id="<?php echo esc_attr( $slide['view_id'] ); ?>"
 							data-side-id="<?php echo esc_attr( $slide['side_id'] ); ?>"
@@ -793,6 +807,7 @@ class ProductGalleryRenderer {
 								alt="<?php echo esc_attr( $slide['label'] ); ?>"
 								class="skip-lazy no-lazyload"
 								data-no-lazy="1"
+								data-skip-lazy="1"
 								loading="lazy"
 								decoding="async"
 								draggable="false"

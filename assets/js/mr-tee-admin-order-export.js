@@ -9,9 +9,9 @@
  * @package MrTeeEditor\Assets
  */
 
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.4.0.2';
-import { SvgRenderer } from './modules/svg-renderer.js?v=2.4.0.2';
-import { PrintExporter } from './modules/print-exporter.js?v=2.4.0.2';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.5.0';
+import { SvgRenderer } from './modules/svg-renderer.js?v=2.5.0';
+import { PrintExporter } from './modules/print-exporter.js?v=2.5.0';
 
 class MrTeeAdminOrderExporter {
 	constructor() {
@@ -21,12 +21,19 @@ class MrTeeAdminOrderExporter {
 	}
 
 	/**
-	 * Initialize button listeners and start automatic queue for pending items.
+	 * Initialize button listeners, unload guard, and start automatic queue for pending items.
 	 */
 	init() {
 		if (!this.data || !this.data.nonce) {
 			return;
 		}
+
+		window.addEventListener('beforeunload', (e) => {
+			if (this.activeItems.size > 0) {
+				e.preventDefault();
+				e.returnValue = '';
+			}
+		});
 
 		document.addEventListener('click', (e) => {
 			const btn = e.target.closest('.mr-tee-admin-gen-print-btn');
@@ -43,6 +50,33 @@ class MrTeeAdminOrderExporter {
 		this.processPendingItemsSequentially().catch((err) => {
 			console.warn('[MrTee AdminOrderExport] Auto-queue error:', err);
 		});
+	}
+
+	/**
+	 * Safely parse a WP Admin AJAX response, handling expired nonces ("-1") or HTML error pages cleanly.
+	 *
+	 * @param {Response} resp        Fetch response.
+	 * @param {string}   fallbackMsg Fallback error message.
+	 * @return {Promise<Object>}
+	 */
+	async parseJsonResponse(resp, fallbackMsg) {
+		const rawText = await resp.text();
+		let json = null;
+		try {
+			json = rawText ? JSON.parse(rawText) : null;
+		} catch (e) {
+			json = null;
+		}
+		if (!json) {
+			if (rawText.trim() === '-1' || resp.status === 403) {
+				throw new Error('Session WP Admin expirée. Rechargez la page puis réessayez.');
+			}
+			throw new Error(`${fallbackMsg} (HTTP ${resp.status})`);
+		}
+		if (!resp.ok || !json.success || !json.data) {
+			throw new Error((json.data && json.data.message) || fallbackMsg);
+		}
+		return json.data;
 	}
 
 	/**
@@ -121,12 +155,12 @@ class MrTeeAdminOrderExporter {
 	}
 
 	/**
-	 * Update UI status, buttons, and download links across all matching item panels.
+	 * Update UI status, buttons, dimensions, and download links across all matching item panels.
 	 *
 	 * @param {number} orderId Order ID.
 	 * @param {number} itemId  Order item ID.
 	 * @param {string} state   'working' | 'ready' | 'error'
-	 * @param {Object} details Optional details ({ message, printUrl, svgUrl, sideExports }).
+	 * @param {Object} details Optional details ({ message, printUrl, svgUrl, sideExports, printDimensions }).
 	 */
 	setItemUiState(orderId, itemId, state, details = {}) {
 		const containers = this.getItemContainers(orderId, itemId);
@@ -167,6 +201,7 @@ class MrTeeAdminOrderExporter {
 					actionsEl.querySelectorAll('.mr-tee-btn-side-export').forEach((el) => el.remove());
 				}
 
+				const dimsEl = box.querySelector('.mr-tee-print-dimensions span');
 				if (isMultiSides && actionsEl) {
 					if (pngBtn) pngBtn.style.display = 'none';
 					if (svgBtn) svgBtn.style.display = 'none';
@@ -181,7 +216,6 @@ class MrTeeAdminOrderExporter {
 						}
 					});
 
-					const dimsEl = box.querySelector('.mr-tee-print-dimensions span');
 					if (dimsEl) {
 						const parts = sideList
 							.filter((s) => s.print_dimensions)
@@ -198,6 +232,12 @@ class MrTeeAdminOrderExporter {
 					if (svgBtn && details.svgUrl) {
 						svgBtn.setAttribute('href', details.svgUrl);
 						svgBtn.style.display = '';
+					}
+					if (dimsEl) {
+						const singleDims = (sideList[0] && sideList[0].print_dimensions) || details.printDimensions || '';
+						if (singleDims) {
+							dimsEl.textContent = singleDims;
+						}
 					}
 				}
 
@@ -310,8 +350,9 @@ class MrTeeAdminOrderExporter {
 			}
 		};
 
-		registerLines(config && config.text_lines);
+		// Prefer order-time snapshot metadata over live product config
 		registerLines(payload && payload.text_lines);
+		registerLines(config && config.text_lines);
 
 		const walk = (nodes, inheritedSide = null) => {
 			if (!Array.isArray(nodes)) return;
@@ -384,7 +425,8 @@ class MrTeeAdminOrderExporter {
 	}
 
 	/**
-	 * Ensure all full-res OpenType-SVG fonts required for export have intact `fullMap` glyph URLs.
+	 * Ensure all required OpenType-SVG fonts (with fullMap for raster-bitmap fonts) and
+	 * browser TTF @font-face families are ready before measuring and rendering export SVGs.
 	 *
 	 * @param {Object} ctx Context returned by mr_tee_admin_get_order_item_context.
 	 */
@@ -412,6 +454,7 @@ class MrTeeAdminOrderExporter {
 
 		const allFonts = window.mrTeeOrderExportData.fonts || {};
 		const neededKeys = this.collectFontKeys(ctx.editor_data, ctx.config || {});
+		const ttfFamiliesToLoad = new Set();
 
 		for (const rawKey of neededKeys) {
 			const cleanKey = String(rawKey).toLowerCase().replace(/[\s\-]+/g, '_');
@@ -435,16 +478,45 @@ class MrTeeAdminOrderExporter {
 			}
 
 			const isOtSvg = Boolean(matchedDef && (matchedDef.font_type === 'opentype_svg' || matchedDef.color_svg));
-			if (!isOtSvg) continue;
+			if (!isOtSvg) {
+				if (matchedDef && matchedDef.family) {
+					ttfFamiliesToLoad.add(matchedDef.family);
+				}
+				continue;
+			}
 
 			const checkId = (matchedId || cleanKey).toLowerCase().replace(/[\s\-]+/g, '_');
 			const cached = window.mrTeeSvgFonts[checkId] || window.mrTeeSvgFonts[matchedId];
+			const hasGlyphs = Boolean(cached && cached.glyphs && Object.keys(cached.glyphs).length > 0);
+			const usesRasterBitmaps = Boolean(cached && cached.thumbMap && Object.keys(cached.thumbMap).length > 0);
 			const hasFullMap = Boolean(cached && cached.fullMap && Object.keys(cached.fullMap).length > 0);
-			if (!hasFullMap) {
+			// Pure-vector OpenType-SVG fonts have inline <path> glyphs and empty thumbMap/fullMap: do not re-fetch them.
+			if (!hasGlyphs || (usesRasterBitmaps && !hasFullMap)) {
 				delete window.mrTeeSvgFonts[checkId];
 				if (matchedId) delete window.mrTeeSvgFonts[matchedId];
 				await SvgRenderer.ensureSvgFontLoaded(matchedId || checkId, matchedDef, { prewarmGlyphs: false });
 			}
+		}
+
+		// Ensure standard TTF/OTF @font-face families are decoded so Canvas text metrics match storefront 1:1
+		if (typeof document !== 'undefined' && document.fonts) {
+			try {
+				const fontTasks = [];
+				if (typeof document.fonts.load === 'function') {
+					ttfFamiliesToLoad.forEach((fam) => {
+						fontTasks.push(document.fonts.load(`400 24px "${fam.replace(/"/g, '')}"`).catch(() => null));
+					});
+				}
+				if (document.fonts.ready) {
+					fontTasks.push(document.fonts.ready.catch(() => null));
+				}
+				if (fontTasks.length > 0) {
+					await Promise.race([
+						Promise.all(fontTasks),
+						new Promise((resolve) => setTimeout(resolve, 3000)),
+					]);
+				}
+			} catch (e) {}
 		}
 	}
 
@@ -478,12 +550,8 @@ class MrTeeAdminOrderExporter {
 				item_id: String(itemId),
 			});
 			const ctxResp = await fetch(ajaxUrl, { method: 'POST', body: ctxBody });
-			const ctxJson = await ctxResp.json();
-			if (!ctxResp.ok || !ctxJson || !ctxJson.success || !ctxJson.data) {
-				throw new Error((ctxJson && ctxJson.data && ctxJson.data.message) || 'Impossible de charger les données de la commande.');
-			}
+			const ctx = await this.parseJsonResponse(ctxResp, 'Impossible de charger les données de la commande.');
 
-			const ctx = ctxJson.data;
 			const editorData = ctx.editor_data || {};
 			const config = ctx.config || {};
 			const designKey = ctx.design_key || editorData.key || '';
@@ -491,7 +559,7 @@ class MrTeeAdminOrderExporter {
 				throw new Error('Clé de création manquante pour cet article.');
 			}
 
-			// 2. Hydrate fullMap OpenType-SVG datasets (never exposed to customers)
+			// 2. Hydrate fullMap OpenType-SVG datasets & decode browser TTF fonts
 			await this.ensureAdminFontsLoaded(ctx);
 
 			// 3. Reconstruct scene-graph layers & zoom transform identically to frontend
@@ -521,7 +589,6 @@ class MrTeeAdminOrderExporter {
 			const sidesToExport = activeSides.length > 0 ? activeSides : [printSides[0]];
 			const isMultiSide = sidesToExport.length > 1;
 
-			const bbox = SceneGraphEngine.getAllLayersBBox(layers);
 			const fontFaceCss = (window.mrTeeOrderExportData && window.mrTeeOrderExportData.fontFaceCss) || ctx.fontFaceCss || '';
 			const exportedSides = [];
 
@@ -534,9 +601,13 @@ class MrTeeAdminOrderExporter {
 				const refView = sideViews.find((v) => v.view_role === 'full') || sideViews[0] || null;
 
 				const metrics = PrintExporter.computeSideExportMetrics(config, editorData, sideId);
+				const sideLayersForBBox = (isMultiSide || printSides.length > 1)
+					? SvgRenderer.filterLayersBySide(layers, sideId)
+					: layers;
+				const sideBBox = SceneGraphEngine.getAllLayersBBox(sideLayersForBBox);
 				const zoomTransform = metrics.hasPerLineBoxes
 					? { scale: 1.0, translateX: 0.0, translateY: 0.0 }
-					: SceneGraphEngine.getAreaTransformValuesZoom(bbox, perso.area && perso.area.transform);
+					: SceneGraphEngine.getAreaTransformValuesZoom(sideBBox, perso.area && perso.area.transform);
 
 				this.setItemUiState(orderId, itemId, 'working', {
 					message: isMultiSide
@@ -563,12 +634,14 @@ class MrTeeAdminOrderExporter {
 				}
 
 				const rawSvgMarkup = SvgRenderer.renderToString(layers, zoomTransform, renderOptions);
-				const inlinedImagesSvg = await PrintExporter.inlineExternalImages(rawSvgMarkup);
-				const inlinedSvg = await PrintExporter.inlineExternalFonts(inlinedImagesSvg);
-				const printB64 = await PrintExporter.rasterizeSvgToPng(inlinedSvg, metrics.exportPxW, metrics.exportPxH);
+				const inlinedImagesSvg = await PrintExporter.inlineExternalImages(rawSvgMarkup, { strict: true });
+				const inlinedSvg = await PrintExporter.inlineExternalFonts(inlinedImagesSvg, { stripUnused: true });
+				const printBlob = await PrintExporter.rasterizeSvgToPng(inlinedSvg, metrics.exportPxW, metrics.exportPxH, {
+					dpi: metrics.dpi,
+					asBlob: true,
+				});
 
 				const svgBlob = new Blob([inlinedSvg], { type: 'image/svg+xml;charset=utf-8' });
-				const printBlob = PrintExporter.dataUrlToBlob(printB64);
 				if (!svgBlob || svgBlob.size === 0 || !printBlob || printBlob.size === 0) {
 					throw new Error(`La rastérisation 300 DPI (${sideLabel}) a produit un fichier vide.`);
 				}
@@ -623,15 +696,13 @@ class MrTeeAdminOrderExporter {
 				sides_json: JSON.stringify(exportedSides),
 			});
 			const saveResp = await fetch(ajaxUrl, { method: 'POST', body: saveBody });
-			const saveJson = await saveResp.json();
-			if (!saveResp.ok || !saveJson || !saveJson.success || !saveJson.data) {
-				throw new Error((saveJson && saveJson.data && saveJson.data.message) || 'Impossible de lier les fichiers 300 DPI à la commande.');
-			}
+			const saveData = await this.parseJsonResponse(saveResp, 'Impossible de lier les fichiers 300 DPI à la commande.');
 
 			this.setItemUiState(orderId, itemId, 'ready', {
-				printUrl: saveJson.data.print_url,
-				svgUrl: saveJson.data.svg_url,
-				sideExports: saveJson.data.side_exports || null,
+				printUrl: saveData.print_url,
+				svgUrl: saveData.svg_url,
+				sideExports: saveData.side_exports || null,
+				printDimensions: (exportedSides[0] && exportedSides[0].print_dimensions) || '',
 			});
 
 			return true;

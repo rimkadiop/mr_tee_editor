@@ -29,6 +29,21 @@ class CartIntegration {
 	private static $suppress_nbd_for_item = false;
 
 	/**
+	 * Per-request cache of product ID => bool indicating Mr. Tee Editor mode.
+	 *
+	 * @var array<int, bool>
+	 */
+	private static $mr_tee_product_cache = array();
+
+	/**
+	 * In-memory per-request map keyed by spl_object_id( $product ) holding personalized
+	 * cart preview data so customer previews are never written onto WC_Product meta / wp_postmeta.
+	 *
+	 * @var array<int, array{url: string, previews: array<int, mixed>}>
+	 */
+	private static $runtime_cart_previews = array();
+
+	/**
 	 * Register hooks.
 	 */
 	public static function init() {
@@ -47,6 +62,11 @@ class CartIntegration {
 		add_filter( 'woocommerce_cart_item_thumbnail', array( __CLASS__, 'filter_cart_item_thumbnail' ), 999, 3 );
 		add_filter( 'woocommerce_store_api_cart_item_images', array( __CLASS__, 'filter_store_api_cart_item_images' ), 999, 3 );
 		add_filter( 'woocommerce_cart_item_name', array( __CLASS__, 'filter_checkout_item_name' ), 25, 3 );
+		add_filter( 'woocommerce_product_supports', array( __CLASS__, 'filter_product_supports' ), 20, 3 );
+		add_filter( 'woocommerce_product_add_to_cart_url', array( __CLASS__, 'filter_product_add_to_cart_url' ), 20, 2 );
+		add_filter( 'woocommerce_product_add_to_cart_text', array( __CLASS__, 'filter_product_add_to_cart_text' ), 20, 2 );
+		add_filter( 'woocommerce_loop_add_to_cart_link', array( __CLASS__, 'filter_loop_add_to_cart_link' ), 20, 3 );
+		add_filter( 'woocommerce_order_again_cart_item_data', array( __CLASS__, 'filter_order_again_cart_item_data' ), 20, 3 );
 		add_filter( 'nbd_show_design_section_in_cart', array( __CLASS__, 'filter_nbd_show_design_in_cart' ), 999, 2 );
 		add_filter( 'nbd_show_edit_design_link_in_cart', array( __CLASS__, 'filter_nbd_show_edit_in_cart' ), 999, 2 );
 		add_action( 'wp_footer', array( __CLASS__, 'render_cart_preview_lightbox' ), 99 );
@@ -138,6 +158,9 @@ class CartIntegration {
 		if ( $pid <= 0 ) {
 			return false;
 		}
+		if ( array_key_exists( $pid, self::$mr_tee_product_cache ) ) {
+			return self::$mr_tee_product_cache[ $pid ];
+		}
 		$engine = get_post_meta( $pid, '_mr_tee_engine_mode', true );
 		if ( empty( $engine ) ) {
 			$engine = get_post_meta( $pid, '_mr_tee_editor_mode', true );
@@ -148,28 +171,302 @@ class CartIntegration {
 				$engine = $saved['editor_mode'];
 			}
 		}
-		return 'mr_tee_editor' === $engine;
+		self::$mr_tee_product_cache[ $pid ] = ( 'mr_tee_editor' === $engine );
+		return self::$mr_tee_product_cache[ $pid ];
 	}
 
 	/**
-	 * Normalize same-site asset URLs to match the active HTTP/HTTPS request scheme
-	 * so browsers never hit mixed-content blocks or cross-scheme failures.
+	 * Resolve canonical parent product ID from a WC_Product instance.
 	 *
-	 * @param string $url Raw URL.
+	 * @param \WC_Product $product Product instance.
+	 * @return int
+	 */
+	private static function resolve_parent_product_id( $product ) {
+		if ( ! is_object( $product ) || ! method_exists( $product, 'get_id' ) ) {
+			return 0;
+		}
+		$pid = (int) $product->get_id();
+		if ( method_exists( $product, 'is_type' ) && $product->is_type( 'variation' ) && method_exists( $product, 'get_parent_id' ) ) {
+			$parent_id = (int) $product->get_parent_id();
+			if ( $parent_id > 0 ) {
+				return $parent_id;
+			}
+		}
+		return $pid;
+	}
+
+	/**
+	 * Disable AJAX add-to-cart on Shop/Archive grids for Mr. Tee Editor products
+	 * so customers cannot add blank uncustomized products from product loops.
+	 *
+	 * @param bool        $supports Existing feature support flag.
+	 * @param string      $feature  Feature name.
+	 * @param \WC_Product $product  Product object.
+	 * @return bool
+	 */
+	public static function filter_product_supports( $supports, $feature, $product ) {
+		if ( 'ajax_add_to_cart' === $feature ) {
+			$pid = self::resolve_parent_product_id( $product );
+			if ( $pid > 0 && self::is_mr_tee_product( $pid ) ) {
+				return false;
+			}
+		}
+		return $supports;
+	}
+
+	/**
+	 * Route archive/Block-theme loop add-to-cart URLs to the single product customizer page.
+	 *
+	 * @param string      $url     Default add-to-cart URL.
+	 * @param \WC_Product $product Product object.
 	 * @return string
 	 */
-	private static function normalize_url( $url ) {
+	public static function filter_product_add_to_cart_url( $url, $product ) {
+		$pid = self::resolve_parent_product_id( $product );
+		if ( $pid <= 0 || ! self::is_mr_tee_product( $pid ) ) {
+			return $url;
+		}
+		$permalink = ( is_object( $product ) && method_exists( $product, 'get_permalink' ) )
+			? $product->get_permalink()
+			: get_permalink( $pid );
+		return ! empty( $permalink ) ? $permalink : $url;
+	}
+
+	/**
+	 * Replace archive/Block-theme loop add-to-cart button label with "Personnaliser".
+	 *
+	 * @param string      $text    Default loop button text.
+	 * @param \WC_Product $product Product object.
+	 * @return string
+	 */
+	public static function filter_product_add_to_cart_text( $text, $product ) {
+		$pid = self::resolve_parent_product_id( $product );
+		if ( $pid > 0 && self::is_mr_tee_product( $pid ) ) {
+			return __( 'Personnaliser', 'mr-tee-editor' );
+		}
+		return $text;
+	}
+
+	/**
+	 * Replace Shop/Category archive add-to-cart button with a clean "Personnaliser" link
+	 * pointing to the product page for Mr. Tee Editor products.
+	 *
+	 * @param string               $html    Existing loop button HTML.
+	 * @param \WC_Product          $product Product object.
+	 * @param array<string, mixed> $args    Optional button arguments.
+	 * @return string
+	 */
+	public static function filter_loop_add_to_cart_link( $html, $product, $args = array() ) {
+		$pid = self::resolve_parent_product_id( $product );
+		if ( $pid <= 0 || ! self::is_mr_tee_product( $pid ) ) {
+			return $html;
+		}
+
+		$permalink = ( is_object( $product ) && method_exists( $product, 'get_permalink' ) )
+			? $product->get_permalink()
+			: get_permalink( $pid );
+		if ( empty( $permalink ) ) {
+			return $html;
+		}
+
+		$raw_class = ( is_array( $args ) && ! empty( $args['class'] ) ) ? (string) $args['class'] : 'button';
+		$classes   = preg_split( '/\s+/', $raw_class );
+		$classes   = array_filter(
+			is_array( $classes ) ? $classes : array( 'button' ),
+			static function ( $cls ) {
+				return '' !== $cls && ! in_array( $cls, array( 'ajax_add_to_cart', 'add_to_cart_button' ), true );
+			}
+		);
+		if ( ! in_array( 'button', $classes, true ) ) {
+			array_unshift( $classes, 'button' );
+		}
+		$classes[] = 'mr-tee-customize-loop-btn';
+
+		$aria_label = ( is_object( $product ) && method_exists( $product, 'get_name' ) )
+			? sprintf( __( 'Personnaliser « %s »', 'mr-tee-editor' ), $product->get_name() )
+			: __( 'Personnaliser', 'mr-tee-editor' );
+
+		return sprintf(
+			'<a href="%s" class="%s" aria-label="%s">%s</a>',
+			esc_url( $permalink ),
+			esc_attr( implode( ' ', array_unique( $classes ) ) ),
+			esc_attr( $aria_label ),
+			esc_html__( 'Personnaliser', 'mr-tee-editor' )
+		);
+	}
+
+	/**
+	 * Preserve Mr. Tee customization data when a customer clicks "Order Again" ("Commander à nouveau")
+	 * from My Account -> Orders, isolating the reordered item into a fresh design directory.
+	 *
+	 * @param array<string, mixed>   $cart_item_data Cart item data being built.
+	 * @param \WC_Order_Item_Product $item           Original order line item.
+	 * @param \WC_Order              $order          Original order object.
+	 * @return array<string, mixed>
+	 */
+	public static function filter_order_again_cart_item_data( $cart_item_data, $item, $order ) {
+		if ( ! is_object( $item ) || ! method_exists( $item, 'get_meta' ) ) {
+			return $cart_item_data;
+		}
+		$orig_data = $item->get_meta( '_mr_tee_editor_data', true );
+		if ( empty( $orig_data ) || ! is_array( $orig_data ) ) {
+			return $cart_item_data;
+		}
+
+		$cloned  = $orig_data;
+		$new_key = 'mrtee_' . wp_generate_uuid4();
+		$paths   = PrintAssetGenerator::get_upload_dir( 'designs/' . $new_key );
+
+		$cloned['key']        = $new_key;
+		$cloned['svg_url']    = '';
+		$cloned['svg_file']   = '';
+		$cloned['print_url']  = '';
+		$cloned['print_file'] = '';
+		unset( $cloned['side_exports'], $cloned['nbd'] );
+
+		// Clone preview files on disk into the new design directory so each order stays isolated.
+		$copied_primary_file = '';
+		$copied_primary_url  = '';
+		if ( ! empty( $orig_data['preview_file'] ) && is_string( $orig_data['preview_file'] ) && file_exists( $orig_data['preview_file'] ) && filesize( $orig_data['preview_file'] ) > 0 ) {
+			$base = sanitize_file_name( basename( $orig_data['preview_file'] ) );
+			if ( '' !== $base ) {
+				$dest = trailingslashit( $paths['dir'] ) . $base;
+				if ( @copy( $orig_data['preview_file'], $dest ) ) {
+					$copied_primary_file    = $dest;
+					$copied_primary_url     = trailingslashit( $paths['url'] ) . $base;
+					$cloned['preview_file'] = $copied_primary_file;
+					$cloned['preview_url']  = $copied_primary_url;
+				}
+			}
+		}
+
+		if ( ! empty( $orig_data['previews'] ) && is_array( $orig_data['previews'] ) ) {
+			$cloned_previews = array();
+			foreach ( $orig_data['previews'] as $p_idx => $pv ) {
+				if ( ! is_array( $pv ) ) {
+					continue;
+				}
+				$pv_copy = $pv;
+				if ( ! empty( $pv['file'] ) && is_string( $pv['file'] ) && file_exists( $pv['file'] ) && filesize( $pv['file'] ) > 0 ) {
+					$base = sanitize_file_name( basename( $pv['file'] ) );
+					if ( '' !== $base ) {
+						$dest = trailingslashit( $paths['dir'] ) . $base;
+						if ( ! file_exists( $dest ) ) {
+							@copy( $pv['file'], $dest );
+						}
+						if ( file_exists( $dest ) && filesize( $dest ) > 0 ) {
+							$pv_copy['file'] = $dest;
+							$pv_copy['url']  = trailingslashit( $paths['url'] ) . $base;
+						}
+					}
+				} elseif ( 0 === $p_idx && '' !== $copied_primary_url ) {
+					$pv_copy['file'] = $copied_primary_file;
+					$pv_copy['url']  = $copied_primary_url;
+				}
+				$cloned_previews[] = $pv_copy;
+			}
+			$cloned['previews'] = $cloned_previews;
+		}
+
+		$product_id = method_exists( $item, 'get_product_id' ) ? (int) $item->get_product_id() : 0;
+		if ( $product_id > 0 && NBDesignerBridge::is_nbd_active() ) {
+			$cfg              = SceneGraphSchema::get_product_config( $product_id );
+			$should_handshake = isset( $cfg['nbd_handshake'] ) ? ! empty( $cfg['nbd_handshake'] ) : true;
+			if ( $should_handshake && ! empty( $cloned['payload'] ) && is_array( $cloned['payload'] ) ) {
+				$cloned['nbd'] = NBDesignerBridge::inject_nbd_artifacts(
+					$new_key,
+					$cloned['payload'],
+					'',
+					'',
+					'',
+					$product_id,
+					array(
+						'preview_file' => ! empty( $cloned['preview_file'] ) ? $cloned['preview_file'] : '',
+						'previews'     => ! empty( $cloned['previews'] ) ? $cloned['previews'] : array(),
+					)
+				);
+			}
+		}
+
+		$cart_item_data['mr_tee_editor'] = $cloned;
+		$cart_item_data['unique_key']    = $new_key;
+
+		return $cart_item_data;
+	}
+
+	/**
+	 * Strictly validate that a URL points to this WordPress site (comparing against
+	 * `wp_parse_url( home_url(), PHP_URL_HOST )` — never trusting `$_SERVER['HTTP_HOST']`).
+	 *
+	 * @param string $raw_url Raw URL or root-relative path.
+	 * @return string Sanitized same-site URL, or empty string if invalid/off-site.
+	 */
+	private static function sanitize_same_site_url( $raw_url ) {
+		if ( ! is_string( $raw_url ) ) {
+			return '';
+		}
+		$url = trim( $raw_url );
+		if ( '' === $url ) {
+			return '';
+		}
+
+		// Allow clean root-relative same-site paths (reject protocol-relative `//` and traversal).
+		if ( 0 === strpos( $url, '/' ) && 0 !== strpos( $url, '//' ) ) {
+			if ( false !== strpos( $url, '..' ) || preg_match( '/[\r\n\0]/', $url ) ) {
+				return '';
+			}
+			$resolved = esc_url_raw( rtrim( home_url(), '/' ) . $url );
+			if ( '' === $resolved ) {
+				return '';
+			}
+			$url = $resolved;
+		}
+
+		if ( ! preg_match( '#^https?://#i', $url ) ) {
+			return '';
+		}
+
+		$site_host = strtolower( (string) wp_parse_url( home_url(), PHP_URL_HOST ) );
+		$url_host  = strtolower( (string) wp_parse_url( $url, PHP_URL_HOST ) );
+		if ( '' === $site_host || $url_host !== $site_host ) {
+			return '';
+		}
+
+		return esc_url_raw( $url );
+	}
+
+	/**
+	 * Normalize same-site asset URLs to match the active HTTP/HTTPS scheme (or `home_url()` scheme
+	 * when rendering asynchronous emails where `is_ssl()` may be false).
+	 *
+	 * @param string $url             Raw URL.
+	 * @param bool   $use_home_scheme When true (e.g. emails), preserve `home_url()` scheme instead of `is_ssl()`.
+	 * @return string
+	 */
+	private static function normalize_url( $url, $use_home_scheme = false ) {
 		if ( empty( $url ) || ! is_string( $url ) ) {
 			return '';
 		}
-		if ( 0 !== strpos( $url, 'http' ) ) {
+		$url = trim( $url );
+		if ( 0 === strpos( $url, '/' ) && 0 !== strpos( $url, '//' ) ) {
+			if ( $use_home_scheme ) {
+				return rtrim( home_url(), '/' ) . $url;
+			}
 			return $url;
 		}
-		$site_host = wp_parse_url( home_url(), PHP_URL_HOST );
-		$http_host = isset( $_SERVER['HTTP_HOST'] ) ? preg_replace( '/:\d+$/', '', sanitize_text_field( wp_unslash( $_SERVER['HTTP_HOST'] ) ) ) : '';
-		$url_host  = wp_parse_url( $url, PHP_URL_HOST );
+		if ( 0 !== strpos( $url, 'http://' ) && 0 !== strpos( $url, 'https://' ) ) {
+			return $url;
+		}
 
-		if ( $url_host && ( $url_host === $site_host || ( $http_host && $url_host === $http_host ) ) ) {
+		$site_host = strtolower( (string) wp_parse_url( home_url(), PHP_URL_HOST ) );
+		$url_host  = strtolower( (string) wp_parse_url( $url, PHP_URL_HOST ) );
+
+		if ( '' !== $site_host && $url_host === $site_host ) {
+			if ( $use_home_scheme ) {
+				$home_scheme   = wp_parse_url( home_url(), PHP_URL_SCHEME );
+				$target_scheme = ( 'https' === $home_scheme || 'http' === $home_scheme ) ? $home_scheme : ( is_ssl() ? 'https' : 'http' );
+				return set_url_scheme( $url, $target_scheme );
+			}
 			return set_url_scheme( $url, is_ssl() ? 'https' : 'http' );
 		}
 		return $url;
@@ -186,23 +483,12 @@ class CartIntegration {
 	public static function filter_add_to_cart_redirect( $url, $adding_to_cart = null ) {
 		$product_id = 0;
 		if ( is_object( $adding_to_cart ) && method_exists( $adding_to_cart, 'get_id' ) ) {
-			$product_id = (int) $adding_to_cart->get_id();
-			if ( method_exists( $adding_to_cart, 'is_type' ) && $adding_to_cart->is_type( 'variation' ) && method_exists( $adding_to_cart, 'get_parent_id' ) ) {
-				$parent_id = (int) $adding_to_cart->get_parent_id();
-				if ( $parent_id > 0 ) {
-					$product_id = $parent_id;
-				}
-			}
+			$product_id = self::resolve_parent_product_id( $adding_to_cart );
 		} elseif ( ! empty( $_REQUEST['add-to-cart'] ) && is_numeric( $_REQUEST['add-to-cart'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 			$product_id = absint( wp_unslash( $_REQUEST['add-to-cart'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		}
 
-		$is_mr_tee = false;
-		if ( $product_id > 0 && self::is_mr_tee_product( $product_id ) ) {
-			$is_mr_tee = true;
-		} elseif ( ! empty( $_POST['mr_tee_editor_payload'] ) || ! empty( $_POST['mr_tee_design_key'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
-			$is_mr_tee = true;
-		}
+		$is_mr_tee = ( $product_id > 0 && self::is_mr_tee_product( $product_id ) );
 
 		if ( $is_mr_tee && function_exists( 'wc_get_cart_url' ) ) {
 			$cart_url = wc_get_cart_url();
@@ -216,7 +502,7 @@ class CartIntegration {
 
 	/**
 	 * Safely resolve and validate a preview entry belonging to the current design_key directory
-	 * (or a verified same-site URL).
+	 * (or a strictly verified same-site URL matching `home_url()` host).
 	 *
 	 * @param string               $raw_url Raw posted URL.
 	 * @param string               $view_id Optional view identifier.
@@ -255,19 +541,14 @@ class CartIntegration {
 			}
 		}
 
-		// 3. Fallback: accept strictly validated same-site HTTP(S) URLs
-		if ( '' !== $url_str && preg_match( '#^https?://#i', $url_str ) ) {
-			$site_host = wp_parse_url( home_url(), PHP_URL_HOST );
-			$http_host = isset( $_SERVER['HTTP_HOST'] ) ? preg_replace( '/:\d+$/', '', sanitize_text_field( wp_unslash( $_SERVER['HTTP_HOST'] ) ) ) : '';
-			$url_host  = wp_parse_url( $url_str, PHP_URL_HOST );
-			if ( $url_host && ( $url_host === $site_host || ( $http_host && $url_host === $http_host ) ) ) {
-				$clean_url = esc_url_raw( $url_str );
-				if ( '' !== $clean_url ) {
-					return array(
-						'file' => '',
-						'url'  => $clean_url,
-					);
-				}
+		// 3. Fallback: accept strictly validated same-site HTTP(S) URLs (home_url host only, never HTTP_HOST)
+		if ( '' !== $url_str ) {
+			$clean_url = self::sanitize_same_site_url( $url_str );
+			if ( '' !== $clean_url ) {
+				return array(
+					'file' => '',
+					'url'  => $clean_url,
+				);
 			}
 		}
 
@@ -275,13 +556,14 @@ class CartIntegration {
 	}
 
 	/**
-	 * Normalize a previews list into compact `[{ label, src }]` entries for the lightbox.
+	 * Normalize a previews list into compact `[{ label, src }]` entries for the lightbox or emails.
 	 *
-	 * @param array<int, mixed> $previews     Raw previews array.
-	 * @param string            $fallback_url Optional primary fallback URL.
+	 * @param array<int, mixed> $previews        Raw previews array.
+	 * @param string            $fallback_url    Optional primary fallback URL.
+	 * @param bool              $use_home_scheme Whether to normalize using `home_url()` scheme (emails).
 	 * @return array<int, array{label: string, src: string}>
 	 */
-	private static function format_previews_for_lightbox( array $previews, $fallback_url = '' ) {
+	private static function format_previews_for_lightbox( array $previews, $fallback_url = '', $use_home_scheme = false ) {
 		$out  = array();
 		$seen = array();
 
@@ -290,7 +572,7 @@ class CartIntegration {
 				continue;
 			}
 			$raw_src = ! empty( $entry['url'] ) ? $entry['url'] : ( ! empty( $entry['src'] ) ? $entry['src'] : '' );
-			$src     = self::normalize_url( $raw_src );
+			$src     = self::normalize_url( $raw_src, $use_home_scheme );
 			if ( '' === $src || isset( $seen[ $src ] ) ) {
 				continue;
 			}
@@ -303,7 +585,7 @@ class CartIntegration {
 		}
 
 		if ( empty( $out ) && '' !== $fallback_url ) {
-			$norm = self::normalize_url( $fallback_url );
+			$norm = self::normalize_url( $fallback_url, $use_home_scheme );
 			if ( '' !== $norm ) {
 				$out[] = array(
 					'label' => __( 'Aperçu', 'mr-tee-editor' ),
@@ -325,7 +607,7 @@ class CartIntegration {
 	 * @return array<string, mixed>
 	 */
 	public static function capture_cart_item_data( $cart_item_data, $product_id, $variation_id ) {
-		if ( ! self::is_mr_tee_product( $product_id ) && empty( $_POST['mr_tee_editor_payload'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		if ( ! self::is_mr_tee_product( $product_id ) ) {
 			return $cart_item_data;
 		}
 
@@ -338,6 +620,68 @@ class CartIntegration {
 
 		if ( ! is_array( $payload ) ) {
 			return $cart_item_data;
+		}
+
+		// Sanitize text_lines labels/values cleanly while preserving Worker 3 geometry & color fields and '0' values.
+		if ( ! empty( $payload['text_lines'] ) && is_array( $payload['text_lines'] ) ) {
+			$sanitized_lines = array();
+			foreach ( $payload['text_lines'] as $line ) {
+				if ( ! is_array( $line ) ) {
+					continue;
+				}
+				$is_image           = isset( $line['fieldType'] ) && 'image' === $line['fieldType'];
+				$line['fieldType']  = $is_image ? 'image' : 'text';
+				$line['label']      = isset( $line['label'] ) ? sanitize_text_field( (string) $line['label'] ) : '';
+				if ( isset( $line['sideId'] ) ) {
+					$line['sideId'] = substr( preg_replace( '/[^a-zA-Z0-9_-]/', '', (string) $line['sideId'] ), 0, 32 );
+				}
+				if ( isset( $line['side_id'] ) ) {
+					$line['side_id'] = substr( preg_replace( '/[^a-zA-Z0-9_-]/', '', (string) $line['side_id'] ), 0, 32 );
+				}
+				if ( isset( $line['fontId'] ) ) {
+					$line['fontId'] = sanitize_text_field( (string) $line['fontId'] );
+				}
+				if ( isset( $line['colorHex'] ) ) {
+					$line['colorHex'] = sanitize_text_field( (string) $line['colorHex'] );
+				}
+				if ( isset( $line['fileName'] ) ) {
+					$line['fileName'] = sanitize_text_field( (string) $line['fileName'] );
+				}
+
+				if ( $is_image ) {
+					$line['value'] = isset( $line['value'] ) ? sanitize_text_field( (string) $line['value'] ) : '';
+					$raw_img_url   = isset( $line['imageUrl'] ) ? (string) $line['imageUrl'] : '';
+					$safe_img_url  = self::sanitize_same_site_url( $raw_img_url );
+					$line['imageUrl'] = $safe_img_url;
+					if ( '' !== trim( $raw_img_url ) && '' === $safe_img_url ) {
+						// Reject off-site or invalid image URLs cleanly.
+						$line['value']  = '';
+						$line['edited'] = false;
+					}
+				} else {
+					$line['value'] = isset( $line['value'] ) ? sanitize_textarea_field( (string) $line['value'] ) : '';
+					if ( isset( $line['imageUrl'] ) ) {
+						unset( $line['imageUrl'] );
+					}
+				}
+
+				$sanitized_lines[] = $line;
+			}
+			$payload['text_lines'] = $sanitized_lines;
+		}
+
+		// Sanitize repeater item names/icons while preserving '0' names.
+		if ( ! empty( $payload['repeater_items'] ) && is_array( $payload['repeater_items'] ) ) {
+			$sanitized_rep = array();
+			foreach ( $payload['repeater_items'] as $m_item ) {
+				if ( ! is_array( $m_item ) ) {
+					continue;
+				}
+				$m_item['name'] = isset( $m_item['name'] ) ? sanitize_text_field( (string) $m_item['name'] ) : '';
+				$m_item['icon'] = isset( $m_item['icon'] ) ? sanitize_key( (string) $m_item['icon'] ) : 'mushroom_red';
+				$sanitized_rep[] = $m_item;
+			}
+			$payload['repeater_items'] = $sanitized_rep;
 		}
 
 		$posted_key  = isset( $_POST['mr_tee_design_key'] ) ? preg_replace( '/[^a-zA-Z0-9_-]/', '', wp_unslash( $_POST['mr_tee_design_key'] ) ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.NonceVerification.Missing
@@ -445,12 +789,19 @@ class CartIntegration {
 			}
 		}
 
-		$crop_w    = ! empty( $payload['crop_print_width'] ) ? floatval( $payload['crop_print_width'] ) : ( isset( $config['crop_print_width'] ) ? $config['crop_print_width'] : ( isset( $config['print_real_width'] ) ? $config['print_real_width'] : 30.0 ) );
-		$crop_h    = ! empty( $payload['crop_print_height'] ) ? floatval( $payload['crop_print_height'] ) : ( isset( $config['crop_print_height'] ) ? $config['crop_print_height'] : ( isset( $config['print_real_height'] ) ? $config['print_real_height'] : 40.0 ) );
-		$crop_px_w = ! empty( $payload['crop_width_px'] ) ? intval( $payload['crop_width_px'] ) : ( isset( $config['print_width_px'] ) ? $config['print_width_px'] : 2400 );
-		$crop_px_h = ! empty( $payload['crop_height_px'] ) ? intval( $payload['crop_height_px'] ) : ( isset( $config['print_height_px'] ) ? $config['print_height_px'] : 3000 );
-		$unit      = ! empty( $payload['print_unit'] ) ? $payload['print_unit'] : ( isset( $config['print_unit'] ) ? $config['print_unit'] : 'cm' );
-		$dpi       = ! empty( $payload['dpi'] ) ? intval( $payload['dpi'] ) : ( isset( $config['dpi'] ) ? $config['dpi'] : 300 );
+		$allowed_units = array( 'cm', 'mm', 'in' );
+		$raw_unit      = ! empty( $payload['print_unit'] )
+			? strtolower( trim( (string) $payload['print_unit'] ) )
+			: ( isset( $config['print_unit'] ) ? strtolower( trim( (string) $config['print_unit'] ) ) : 'cm' );
+		$unit          = in_array( $raw_unit, $allowed_units, true ) ? $raw_unit : 'cm';
+		$payload['print_unit'] = $unit;
+
+		$crop_w     = ! empty( $payload['crop_print_width'] ) ? floatval( $payload['crop_print_width'] ) : ( isset( $config['crop_print_width'] ) ? floatval( $config['crop_print_width'] ) : ( isset( $config['print_real_width'] ) ? floatval( $config['print_real_width'] ) : 30.0 ) );
+		$crop_h     = ! empty( $payload['crop_print_height'] ) ? floatval( $payload['crop_print_height'] ) : ( isset( $config['crop_print_height'] ) ? floatval( $config['crop_print_height'] ) : ( isset( $config['print_real_height'] ) ? floatval( $config['print_real_height'] ) : 40.0 ) );
+		$crop_px_w  = ! empty( $payload['crop_width_px'] ) ? intval( $payload['crop_width_px'] ) : ( isset( $config['print_width_px'] ) ? intval( $config['print_width_px'] ) : 2400 );
+		$crop_px_h  = ! empty( $payload['crop_height_px'] ) ? intval( $payload['crop_height_px'] ) : ( isset( $config['print_height_px'] ) ? intval( $config['print_height_px'] ) : 3000 );
+		$dpi        = ! empty( $payload['dpi'] ) ? intval( $payload['dpi'] ) : ( isset( $config['dpi'] ) ? intval( $config['dpi'] ) : 300 );
+		$dpi        = max( 72, min( 1200, $dpi ) );
 		$crop_ratio = ( $crop_h > 0 ) ? round( $crop_w / $crop_h, 3 ) : 1.0;
 
 		$dims_summary = sprintf(
@@ -463,27 +814,32 @@ class CartIntegration {
 			$crop_px_h
 		);
 
+		$repeater_label      = ! empty( $config['repeater']['label'] ) ? sanitize_text_field( (string) $config['repeater']['label'] ) : '';
+		$repeater_item_label = ! empty( $config['repeater']['item_label'] ) ? sanitize_text_field( (string) $config['repeater']['item_label'] ) : '';
+
 		$cart_item_data['mr_tee_editor'] = array(
-			'key'                => $design_key,
-			'payload'            => $payload,
-			'print_dimensions'   => $dims_summary,
-			'print_real_width'   => $crop_w,
-			'print_real_height'  => $crop_h,
-			'print_width_px'     => $crop_px_w,
-			'print_height_px'    => $crop_px_h,
-			'ref_real_width'     => isset( $config['print_real_width'] ) ? $config['print_real_width'] : 30.0,
-			'ref_real_height'    => isset( $config['print_real_height'] ) ? $config['print_real_height'] : 40.0,
-			'print_unit'         => $unit,
-			'print_aspect_ratio' => $crop_ratio,
-			'product_type'       => isset( $config['product_type'] ) ? $config['product_type'] : 'garment',
-			'repeater_enabled'   => ! empty( $config['repeater']['enabled'] ),
-			'preview_url'        => $preview_res ? $preview_res['url'] : ( ! empty( $previews[0]['url'] ) ? $previews[0]['url'] : '' ),
-			'preview_file'       => $preview_res ? $preview_res['file'] : ( ! empty( $previews[0]['file'] ) ? $previews[0]['file'] : '' ),
-			'previews'           => $previews,
-			'svg_url'            => '',
-			'svg_file'           => '',
-			'print_url'          => '',
-			'print_file'         => '',
+			'key'                 => $design_key,
+			'payload'             => $payload,
+			'print_dimensions'    => $dims_summary,
+			'print_real_width'    => $crop_w,
+			'print_real_height'   => $crop_h,
+			'print_width_px'      => $crop_px_w,
+			'print_height_px'     => $crop_px_h,
+			'ref_real_width'      => isset( $config['print_real_width'] ) ? $config['print_real_width'] : 30.0,
+			'ref_real_height'     => isset( $config['print_real_height'] ) ? $config['print_real_height'] : 40.0,
+			'print_unit'          => $unit,
+			'print_aspect_ratio'  => $crop_ratio,
+			'product_type'        => isset( $config['product_type'] ) ? $config['product_type'] : 'garment',
+			'repeater_enabled'    => ! empty( $config['repeater']['enabled'] ),
+			'repeater_label'      => $repeater_label,
+			'repeater_item_label' => $repeater_item_label,
+			'preview_url'         => $preview_res ? $preview_res['url'] : ( ! empty( $previews[0]['url'] ) ? $previews[0]['url'] : '' ),
+			'preview_file'        => $preview_res ? $preview_res['file'] : ( ! empty( $previews[0]['file'] ) ? $previews[0]['file'] : '' ),
+			'previews'            => $previews,
+			'svg_url'             => '',
+			'svg_file'            => '',
+			'print_url'           => '',
+			'print_file'          => '',
 		);
 
 		// Handle NBDesigner Handshake if enabled or if NBDesigner plugin is active
@@ -510,8 +866,174 @@ class CartIntegration {
 	}
 
 	/**
-	 * Render non-clickable composite preview thumbnail on Customer Order Confirmation ("Thank You"),
+	 * Build normalized, disambiguated, customer-safe display entries for text & image fields.
+	 * Strips leading underscores so meta keys can never clobber hidden `_mr_tee_*` / `_nbd` keys,
+	 * preserves `'0'` values, hides unedited `"Image par défaut"` rows, and disambiguates duplicate labels.
+	 *
+	 * @param array<string, mixed> $payload Sanitized customization payload.
+	 * @return array<int, array{key: string, value: string, is_image: bool}>
+	 */
+	private static function build_display_text_line_entries( array $payload ) {
+		if ( empty( $payload['text_lines'] ) || ! is_array( $payload['text_lines'] ) ) {
+			return array();
+		}
+
+		$side_labels = array(
+			'front' => __( 'Recto', 'mr-tee-editor' ),
+			'back'  => __( 'Verso', 'mr-tee-editor' ),
+		);
+		if ( ! empty( $payload['print_sides'] ) && is_array( $payload['print_sides'] ) ) {
+			foreach ( $payload['print_sides'] as $ps ) {
+				if ( is_array( $ps ) && ! empty( $ps['id'] ) && ! empty( $ps['label'] ) ) {
+					$side_labels[ (string) $ps['id'] ] = sanitize_text_field( (string) $ps['label'] );
+				}
+			}
+		}
+
+		$raw_entries = array();
+		foreach ( $payload['text_lines'] as $line ) {
+			if ( ! is_array( $line ) ) {
+				continue;
+			}
+			$is_image    = isset( $line['fieldType'] ) && 'image' === $line['fieldType'];
+			$raw_val     = isset( $line['value'] ) ? (string) $line['value'] : '';
+			$trimmed_val = trim( $raw_val );
+
+			if ( $is_image ) {
+				$is_unedited_default = ( isset( $line['edited'] ) && ! $line['edited'] )
+					|| ( 0 === strcasecmp( $trimmed_val, 'Image par défaut' ) );
+				if ( $is_unedited_default ) {
+					continue;
+				}
+				$img_url     = ! empty( $line['imageUrl'] ) ? self::sanitize_same_site_url( (string) $line['imageUrl'] ) : '';
+				$img_summary = ( '' !== $trimmed_val )
+					? sanitize_text_field( $raw_val )
+					: ( '' !== $img_url ? __( 'Image personnalisée', 'mr-tee-editor' ) : '' );
+				if ( '' === trim( $img_summary ) ) {
+					continue;
+				}
+				$clean_val = $img_summary;
+			} else {
+				if ( '' === $trimmed_val ) {
+					continue;
+				}
+				$clean_val = sanitize_textarea_field( $raw_val );
+				if ( '' === trim( $clean_val ) ) {
+					continue;
+				}
+			}
+
+			$raw_label  = isset( $line['label'] ) ? sanitize_text_field( (string) $line['label'] ) : '';
+			$base_label = trim( ltrim( trim( $raw_label ), '_' ) );
+			if ( '' === $base_label ) {
+				$base_label = $is_image ? __( 'Image', 'mr-tee-editor' ) : __( 'Texte', 'mr-tee-editor' );
+			}
+
+			$side_id    = ! empty( $line['sideId'] ) ? (string) $line['sideId'] : ( ! empty( $line['side_id'] ) ? (string) $line['side_id'] : '' );
+			$side_label = ( '' !== $side_id && isset( $side_labels[ $side_id ] ) ) ? $side_labels[ $side_id ] : '';
+
+			$raw_entries[] = array(
+				'base_label' => $base_label,
+				'side_id'    => $side_id,
+				'side_label' => $side_label,
+				'value'      => $clean_val,
+				'is_image'   => $is_image,
+			);
+		}
+
+		// Count duplicates across base labels so unique labels remain clean while colliding labels disambiguate.
+		$label_counts = array();
+		$label_sides  = array();
+		foreach ( $raw_entries as $entry ) {
+			$lk = function_exists( 'mb_strtolower' ) ? mb_strtolower( $entry['base_label'], 'UTF-8' ) : strtolower( $entry['base_label'] );
+			if ( ! isset( $label_counts[ $lk ] ) ) {
+				$label_counts[ $lk ] = 0;
+				$label_sides[ $lk ]  = array();
+			}
+			$label_counts[ $lk ]++;
+			if ( '' !== $entry['side_id'] ) {
+				$label_sides[ $lk ][ $entry['side_id'] ] = true;
+			}
+		}
+
+		$used_keys = array();
+		$entries   = array();
+		foreach ( $raw_entries as $entry ) {
+			$lk        = function_exists( 'mb_strtolower' ) ? mb_strtolower( $entry['base_label'], 'UTF-8' ) : strtolower( $entry['base_label'] );
+			$candidate = $entry['base_label'];
+
+			if ( $label_counts[ $lk ] > 1 && '' !== $entry['side_label'] && count( $label_sides[ $lk ] ) > 1 ) {
+				$candidate = sprintf( '%s (%s)', $entry['base_label'], $entry['side_label'] );
+			}
+
+			$candidate = trim( ltrim( $candidate, '_' ) );
+			if ( '' === $candidate ) {
+				$candidate = $entry['is_image'] ? __( 'Image', 'mr-tee-editor' ) : __( 'Texte', 'mr-tee-editor' );
+			}
+
+			$final_key = $candidate;
+			$ck        = function_exists( 'mb_strtolower' ) ? mb_strtolower( $final_key, 'UTF-8' ) : strtolower( $final_key );
+			$suffix    = 2;
+			while ( isset( $used_keys[ $ck ] ) ) {
+				$final_key = sprintf( '%s #%d', $candidate, $suffix );
+				$ck        = function_exists( 'mb_strtolower' ) ? mb_strtolower( $final_key, 'UTF-8' ) : strtolower( $final_key );
+				$suffix++;
+			}
+			$used_keys[ $ck ] = true;
+
+			$entries[] = array(
+				'key'      => $final_key,
+				'value'    => $entry['value'],
+				'is_image' => $entry['is_image'],
+			);
+		}
+
+		return $entries;
+	}
+
+	/**
+	 * Resolve merchant-configured repeater count & detail labels (avoiding hardcoded "champignons").
+	 *
+	 * @param array<string, mixed> $data       Mr. Tee editor cart/order data array.
+	 * @param int                  $product_id Optional product ID fallback for pre-existing cart items.
+	 * @return array{count_label: string, detail_label: string, item_label: string}
+	 */
+	private static function resolve_repeater_labels( array $data, $product_id = 0 ) {
+		$count_label = ! empty( $data['repeater_label'] ) ? sanitize_text_field( (string) $data['repeater_label'] ) : '';
+		$item_label  = ! empty( $data['repeater_item_label'] ) ? sanitize_text_field( (string) $data['repeater_item_label'] ) : '';
+
+		if ( '' === $count_label && $product_id > 0 ) {
+			$cfg = SceneGraphSchema::get_product_config( $product_id );
+			if ( ! empty( $cfg['repeater']['label'] ) ) {
+				$count_label = sanitize_text_field( (string) $cfg['repeater']['label'] );
+			}
+			if ( '' === $item_label && ! empty( $cfg['repeater']['item_label'] ) ) {
+				$item_label = sanitize_text_field( (string) $cfg['repeater']['item_label'] );
+			}
+		}
+
+		$count_label = trim( ltrim( $count_label, '_' ) );
+		$item_label  = trim( ltrim( $item_label, '_' ) );
+
+		if ( '' === $count_label ) {
+			$count_label = __( "Nombre d'éléments", 'mr-tee-editor' );
+		}
+
+		$detail_label = '' !== $item_label
+			? sprintf( __( 'Détail — %s', 'mr-tee-editor' ), $item_label )
+			: __( 'Détail des éléments', 'mr-tee-editor' );
+
+		return array(
+			'count_label'  => trim( ltrim( $count_label, '_' ) ),
+			'detail_label' => trim( ltrim( $detail_label, '_' ) ),
+			'item_label'   => $item_label,
+		);
+	}
+
+	/**
+	 * Render composite preview thumbnail on Customer Order Confirmation ("Thank You"),
 	 * View Order, and Order Email views without any file download links.
+	 * Uses an email-safe table layout with explicit width and home_url() scheme in emails.
 	 *
 	 * @param int                    $item_id    Order item ID.
 	 * @param \WC_Order_Item_Product $item       Order item object.
@@ -522,48 +1044,67 @@ class CartIntegration {
 		if ( $plain_text || ! is_object( $item ) || ! method_exists( $item, 'get_meta' ) ) {
 			return;
 		}
+		$is_email    = did_action( 'woocommerce_email_header' ) > did_action( 'woocommerce_email_footer' );
 		$data        = $item->get_meta( '_mr_tee_editor_data', true );
 		$raw_preview = ! empty( $data['preview_url'] ) ? $data['preview_url'] : $item->get_meta( '_mr_tee_preview_url', true );
 		$raw_list    = ( is_array( $data ) && ! empty( $data['previews'] ) && is_array( $data['previews'] ) ) ? $data['previews'] : array();
-		$lb_previews = self::format_previews_for_lightbox( $raw_list, $raw_preview );
+		$lb_previews = self::format_previews_for_lightbox( $raw_list, $raw_preview, $is_email );
 		if ( empty( $lb_previews ) ) {
 			return;
 		}
+
+		if ( $is_email ) {
+			$is_multi = count( $lb_previews ) > 1;
+			?>
+			<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 6px;border-collapse:collapse;">
+				<tr>
+					<?php foreach ( $lb_previews as $pv ) : ?>
+						<td valign="top" align="center" style="padding:0 8px 4px 0;border:0;">
+							<img
+								src="<?php echo esc_url( $pv['src'] ); ?>"
+								width="72"
+								alt="<?php echo esc_attr( $is_multi ? sprintf( __( 'Aperçu du produit personnalisé — %s', 'mr-tee-editor' ), $pv['label'] ) : __( 'Aperçu du produit personnalisé', 'mr-tee-editor' ) ); ?>"
+								style="width:72px;max-width:72px;height:auto;border-radius:6px;border:1px solid #cbd5e1;background:#ffffff;display:block;"
+							/>
+							<?php if ( $is_multi && '' !== $pv['label'] ) : ?>
+								<span style="display:block;margin-top:3px;font-size:11px;font-weight:600;color:#475569;text-align:center;"><?php echo esc_html( $pv['label'] ); ?></span>
+							<?php endif; ?>
+						</td>
+					<?php endforeach; ?>
+				</tr>
+			</table>
+			<?php
+			return;
+		}
+
 		$preview_url = $lb_previews[0]['src'];
 		if ( count( $lb_previews ) > 1 ) {
 			$previews_json = wp_json_encode( $lb_previews );
 			?>
-			<div class="mr-tee-order-preview-attachment" style="margin:8px 0 6px;display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;padding:6px 8px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;max-width:400px;">
-				<div style="display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap;">
-					<?php foreach ( $lb_previews as $p_idx => $pv ) : ?>
-						<div style="display:flex;flex-direction:column;align-items:center;gap:3px;">
-							<img
-								src="<?php echo esc_url( $pv['src'] ); ?>"
-								data-mr-tee-preview="1"
-								data-mr-tee-full-src="<?php echo esc_url( $pv['src'] ); ?>"
-								data-mr-tee-previews="<?php echo esc_attr( $previews_json ); ?>"
-								data-mr-tee-preview-index="<?php echo esc_attr( (string) $p_idx ); ?>"
-								alt="<?php echo esc_attr( sprintf( __( 'Aperçu du produit personnalisé — %s', 'mr-tee-editor' ), $pv['label'] ) ); ?>"
-								class="skip-lazy mr-tee-cart-thumb"
-								style="width:72px;height:auto;max-height:96px;object-fit:contain;border-radius:6px;border:1px solid #cbd5e1;background:#ffffff;display:block;flex-shrink:0;cursor:zoom-in;"
-							/>
-							<span style="font-size:11px;font-weight:600;color:#475569;"><?php echo esc_html( $pv['label'] ); ?></span>
-						</div>
-					<?php endforeach; ?>
-				</div>
-				<div style="flex:1 1 110px;min-width:0;font-size:12px;line-height:1.35;align-self:center;">
-					<span style="display:block;font-weight:700;color:#0f172a;"><?php esc_html_e( 'Aperçus personnalisés', 'mr-tee-editor' ); ?></span>
-				</div>
+			<div class="mr-tee-order-preview-attachment" style="margin:8px 0 6px;display:inline-flex;align-items:flex-start;gap:8px;flex-wrap:wrap;padding:6px 8px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;">
+				<?php foreach ( $lb_previews as $p_idx => $pv ) : ?>
+					<div class="mr-tee-order-view-card" data-mr-tee-view-card="1" style="display:flex;flex-direction:column;align-items:center;gap:3px;cursor:zoom-in;">
+						<img
+							src="<?php echo esc_url( $pv['src'] ); ?>"
+							width="72"
+							data-mr-tee-preview="1"
+							data-mr-tee-full-src="<?php echo esc_url( $pv['src'] ); ?>"
+							data-mr-tee-previews="<?php echo esc_attr( $previews_json ); ?>"
+							data-mr-tee-preview-index="<?php echo esc_attr( (string) $p_idx ); ?>"
+							alt="<?php echo esc_attr( sprintf( __( 'Aperçu du produit personnalisé — %s', 'mr-tee-editor' ), $pv['label'] ) ); ?>"
+							class="skip-lazy mr-tee-cart-thumb"
+							style="width:72px;height:auto;max-height:96px;object-fit:contain;border-radius:6px;border:1px solid #cbd5e1;background:#ffffff;display:block;flex-shrink:0;cursor:zoom-in;"
+						/>
+						<span style="font-size:11px;font-weight:600;color:#475569;"><?php echo esc_html( $pv['label'] ); ?></span>
+					</div>
+				<?php endforeach; ?>
 			</div>
 			<?php
 			return;
 		}
 		?>
-		<div class="mr-tee-order-preview-attachment" style="margin:8px 0 6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 8px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;max-width:340px;">
-			<img src="<?php echo esc_url( $preview_url ); ?>" data-mr-tee-preview="1" data-mr-tee-full-src="<?php echo esc_url( $preview_url ); ?>" alt="<?php esc_attr_e( 'Aperçu du produit personnalisé', 'mr-tee-editor' ); ?>" class="skip-lazy mr-tee-cart-thumb" style="width:72px;height:auto;max-height:96px;object-fit:contain;border-radius:6px;border:1px solid #cbd5e1;background:#ffffff;display:block;flex-shrink:0;cursor:zoom-in;" />
-			<div style="flex:1 1 130px;min-width:0;font-size:12px;line-height:1.35;">
-				<span style="display:block;font-weight:700;color:#0f172a;"><?php esc_html_e( 'Aperçu personnalisé', 'mr-tee-editor' ); ?></span>
-			</div>
+		<div class="mr-tee-order-preview-attachment" style="margin:8px 0 6px;display:inline-flex;align-items:center;padding:6px 8px;background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;">
+			<img src="<?php echo esc_url( $preview_url ); ?>" width="72" data-mr-tee-preview="1" data-mr-tee-full-src="<?php echo esc_url( $preview_url ); ?>" alt="<?php esc_attr_e( 'Aperçu du produit personnalisé', 'mr-tee-editor' ); ?>" class="skip-lazy mr-tee-cart-thumb" style="width:72px;height:auto;max-height:96px;object-fit:contain;border-radius:6px;border:1px solid #cbd5e1;background:#ffffff;display:block;flex-shrink:0;cursor:zoom-in;" />
 		</div>
 		<?php
 	}
@@ -576,81 +1117,57 @@ class CartIntegration {
 	 * @return array<int, array<string, mixed>>
 	 */
 	public static function display_cart_item_data( $item_data, $cart_item ) {
-		if ( empty( $cart_item['mr_tee_editor'] ) ) {
+		if ( empty( $cart_item['mr_tee_editor'] ) || ! is_array( $cart_item['mr_tee_editor'] ) ) {
 			return $item_data;
 		}
 
-		$data    = $cart_item['mr_tee_editor'];
-		$payload = $data['payload'];
-		$icons   = IconSetRegistry::get_mushroom_icons();
+		$data       = $cart_item['mr_tee_editor'];
+		$payload    = ( ! empty( $data['payload'] ) && is_array( $data['payload'] ) ) ? $data['payload'] : array();
+		$icons      = IconSetRegistry::get_mushroom_icons();
+		$product_id = ! empty( $cart_item['product_id'] ) ? (int) $cart_item['product_id'] : 0;
 
-		// Text & Image fields
-		if ( ! empty( $payload['text_lines'] ) && is_array( $payload['text_lines'] ) ) {
-			foreach ( $payload['text_lines'] as $line ) {
-				$is_image = isset( $line['fieldType'] ) && 'image' === $line['fieldType'];
-				$label    = ! empty( $line['label'] ) ? $line['label'] : ( $is_image ? 'Image' : 'Texte' );
-				$val      = ! empty( $line['value'] ) ? $line['value'] : '';
-				$rot      = isset( $line['rotate'] ) ? floatval( $line['rotate'] ) : ( isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0 );
-
-				if ( $is_image ) {
-					$img_url     = ! empty( $line['imageUrl'] ) ? $line['imageUrl'] : '';
-					$img_summary = ! empty( $val ) ? $val : ( ! empty( $img_url ) ? __( 'Image', 'mr-tee-editor' ) : '' );
-					if ( ! empty( $img_summary ) ) {
-						$item_data[] = array(
-							'key'     => $label,
-							'value'   => esc_html( $img_summary ),
-							'display' => esc_html( $img_summary ),
-						);
-					}
-					continue;
-				}
-
-				if ( ! empty( $val ) ) {
-					$rot_label = '';
-					if ( 0.0 !== $rot ) {
-						if ( 90.0 === $rot || -90.0 === $rot ) {
-							$rot_label = ' ' . sprintf( __( '(Vertical %d°)', 'mr-tee-editor' ), $rot );
-						} else {
-							$rot_label = ' ' . sprintf( __( '(%d°)', 'mr-tee-editor' ), $rot );
-						}
-					}
-					$display_val = esc_html( $val ) . ( ! empty( $rot_label ) ? ' <small style="color:#64748b; font-weight:normal;">' . esc_html( $rot_label ) . '</small>' : '' );
-					$item_data[] = array(
-						'key'     => $label,
-						'value'   => esc_html( $val . $rot_label ),
-						'display' => $display_val,
-					);
-				}
-			}
+		// Text & Image fields (raw sanitized value, ' | ' display separator, no double-escaping, no rotation degrees, no default image rows)
+		foreach ( self::build_display_text_line_entries( $payload ) as $entry ) {
+			$display_text = str_replace( array( "\r\n", "\r", "\n" ), ' | ', $entry['value'] );
+			$item_data[]  = array(
+				'key'     => $entry['key'],
+				'value'   => $entry['value'],
+				'display' => ( '0' === $display_text ) ? '0&nbsp;' : esc_html( $display_text ),
+			);
 		}
 
-		// Repeater items (Mushrooms)
+		// Repeater items using merchant's configured repeater label
 		if ( isset( $payload['repeater_count'] ) ) {
 			$count            = intval( $payload['repeater_count'] );
 			$repeater_enabled = array_key_exists( 'repeater_enabled', $data ) ? ! empty( $data['repeater_enabled'] ) : ( $count > 0 );
 			if ( $repeater_enabled || $count > 0 ) {
+				$rep_labels  = self::resolve_repeater_labels( $data, $product_id );
 				$item_data[] = array(
-					'key'     => __( 'Nombre de champignons', 'mr-tee-editor' ),
+					'key'     => $rep_labels['count_label'],
 					'value'   => (string) $count,
-					'display' => 0 === $count ? '0&nbsp;' : (string) $count,
+					'display' => ( 0 === $count ) ? '0&nbsp;' : (string) $count,
 				);
 
-				if ( ! empty( $payload['repeater_items'] ) && is_array( $payload['repeater_items'] ) ) {
-					$mushroom_summary = array();
+				if ( $count > 0 && ! empty( $payload['repeater_items'] ) && is_array( $payload['repeater_items'] ) ) {
+					$repeater_summary = array();
 					foreach ( $payload['repeater_items'] as $idx => $m_item ) {
 						if ( $idx >= $count ) {
 							break;
 						}
-						$name     = ! empty( $m_item['name'] ) ? $m_item['name'] : 'Sans nom';
-						$ic_key   = ! empty( $m_item['icon'] ) ? $m_item['icon'] : 'mushroom_red';
+						if ( ! is_array( $m_item ) ) {
+							continue;
+						}
+						$raw_name = isset( $m_item['name'] ) ? sanitize_text_field( (string) $m_item['name'] ) : '';
+						$name     = ( '' !== trim( $raw_name ) ) ? $raw_name : __( 'Sans nom', 'mr-tee-editor' );
+						$ic_key   = ! empty( $m_item['icon'] ) ? sanitize_key( (string) $m_item['icon'] ) : 'mushroom_red';
 						$ic_name  = isset( $icons[ $ic_key ] ) ? $icons[ $ic_key ]['name'] : $ic_key;
-						$mushroom_summary[] = sprintf( '%s (%s)', $name, $ic_name );
+						$repeater_summary[] = sprintf( '%s (%s)', $name, $ic_name );
 					}
-					if ( ! empty( $mushroom_summary ) ) {
+					if ( ! empty( $repeater_summary ) ) {
 						$item_data[] = array(
-							'key'     => __( 'Détail des champignons', 'mr-tee-editor' ),
-							'value'   => implode( ', ', $mushroom_summary ),
-							'display' => implode( '<br>', array_map( 'esc_html', $mushroom_summary ) ),
+							'key'     => $rep_labels['detail_label'],
+							'value'   => implode( ' | ', $repeater_summary ),
+							'display' => implode( ' | ', array_map( 'esc_html', $repeater_summary ) ),
 						);
 					}
 				}
@@ -669,55 +1186,61 @@ class CartIntegration {
 	 * @param \WC_Order              $order         Order object.
 	 */
 	public static function save_order_line_item_data( $item, $cart_item_key, $values, $order ) {
-		if ( empty( $values['mr_tee_editor'] ) ) {
+		if ( empty( $values['mr_tee_editor'] ) || ! is_array( $values['mr_tee_editor'] ) ) {
 			return;
 		}
 
-		$data    = $values['mr_tee_editor'];
-		$payload = $data['payload'];
-		$icons   = IconSetRegistry::get_mushroom_icons();
+		$data       = $values['mr_tee_editor'];
+		$payload    = ( ! empty( $data['payload'] ) && is_array( $data['payload'] ) ) ? $data['payload'] : array();
+		$icons      = IconSetRegistry::get_mushroom_icons();
+		$product_id = ! empty( $values['product_id'] ) ? (int) $values['product_id'] : ( method_exists( $item, 'get_product_id' ) ? (int) $item->get_product_id() : 0 );
 
 		$item->add_meta_data( '_mr_tee_editor_data', $data, true );
 
-		// Text & Image fields readable meta (no raw file URLs exposed on customer order/email)
-		if ( ! empty( $payload['text_lines'] ) && is_array( $payload['text_lines'] ) ) {
-			foreach ( $payload['text_lines'] as $line ) {
-				$is_image = isset( $line['fieldType'] ) && 'image' === $line['fieldType'];
-				$label    = ! empty( $line['label'] ) ? $line['label'] : ( $is_image ? 'Image' : 'Texte' );
-				$val      = ! empty( $line['value'] ) ? $line['value'] : '';
-				if ( $is_image ) {
-					$img_url = ! empty( $line['imageUrl'] ) ? $line['imageUrl'] : '';
-					$summary = ! empty( $val ) ? $val : ( ! empty( $img_url ) ? __( 'Image', 'mr-tee-editor' ) : '' );
-					if ( ! empty( $summary ) ) {
-						$item->add_meta_data( $label, $summary, true );
-					}
-					continue;
-				}
-				if ( ! empty( $val ) ) {
-					$item->add_meta_data( $label, $val, true );
-				}
-			}
+		// Text & Image fields readable meta (disambiguated keys, leading '_' stripped, '0' preserved, unedited default images omitted)
+		$used_meta_keys = array();
+		foreach ( self::build_display_text_line_entries( $payload ) as $entry ) {
+			$item->add_meta_data( $entry['key'], $entry['value'], true );
+			$uk                    = function_exists( 'mb_strtolower' ) ? mb_strtolower( $entry['key'], 'UTF-8' ) : strtolower( $entry['key'] );
+			$used_meta_keys[ $uk ] = true;
 		}
 
-		// Repeater summary readable meta
+		// Repeater summary readable meta using merchant's configured label and guarding empty summaries
 		if ( isset( $payload['repeater_count'] ) ) {
 			$count            = intval( $payload['repeater_count'] );
 			$repeater_enabled = array_key_exists( 'repeater_enabled', $data ) ? ! empty( $data['repeater_enabled'] ) : ( $count > 0 );
 			if ( $repeater_enabled || $count > 0 ) {
-				$item->add_meta_data( __( 'Nombre de champignons', 'mr-tee-editor' ), $count, true );
+				$rep_labels = self::resolve_repeater_labels( $data, $product_id );
+				$count_key  = $rep_labels['count_label'];
+				$ck         = function_exists( 'mb_strtolower' ) ? mb_strtolower( $count_key, 'UTF-8' ) : strtolower( $count_key );
+				if ( isset( $used_meta_keys[ $ck ] ) ) {
+					$count_key .= ' #2';
+				}
+				$item->add_meta_data( $count_key, (string) $count, true );
 
-				if ( ! empty( $payload['repeater_items'] ) && is_array( $payload['repeater_items'] ) ) {
+				if ( $count > 0 && ! empty( $payload['repeater_items'] ) && is_array( $payload['repeater_items'] ) ) {
 					$summary = array();
 					foreach ( $payload['repeater_items'] as $idx => $m_item ) {
 						if ( $idx >= $count ) {
 							break;
 						}
-						$name     = ! empty( $m_item['name'] ) ? $m_item['name'] : 'Sans nom';
-						$ic_key   = ! empty( $m_item['icon'] ) ? $m_item['icon'] : 'mushroom_red';
-						$ic_name  = isset( $icons[ $ic_key ] ) ? $icons[ $ic_key ]['name'] : $ic_key;
+						if ( ! is_array( $m_item ) ) {
+							continue;
+						}
+						$raw_name  = isset( $m_item['name'] ) ? sanitize_text_field( (string) $m_item['name'] ) : '';
+						$name      = ( '' !== trim( $raw_name ) ) ? $raw_name : __( 'Sans nom', 'mr-tee-editor' );
+						$ic_key    = ! empty( $m_item['icon'] ) ? sanitize_key( (string) $m_item['icon'] ) : 'mushroom_red';
+						$ic_name   = isset( $icons[ $ic_key ] ) ? $icons[ $ic_key ]['name'] : $ic_key;
 						$summary[] = sprintf( '%d. %s (%s)', $idx + 1, $name, $ic_name );
 					}
-					$item->add_meta_data( __( 'Détail des champignons', 'mr-tee-editor' ), implode( "\n", $summary ), true );
+					if ( ! empty( $summary ) ) {
+						$detail_key = $rep_labels['detail_label'];
+						$dk         = function_exists( 'mb_strtolower' ) ? mb_strtolower( $detail_key, 'UTF-8' ) : strtolower( $detail_key );
+						if ( isset( $used_meta_keys[ $dk ] ) ) {
+							$detail_key .= ' #2';
+						}
+						$item->add_meta_data( $detail_key, implode( "\n", $summary ), true );
+					}
 				}
 			}
 		}
@@ -728,12 +1251,6 @@ class CartIntegration {
 		}
 		if ( ! empty( $data['preview_url'] ) ) {
 			$item->add_meta_data( '_mr_tee_preview_url', $data['preview_url'], true );
-		}
-		if ( ! empty( $data['svg_url'] ) ) {
-			$item->add_meta_data( '_mr_tee_svg_url', $data['svg_url'], true );
-		}
-		if ( ! empty( $data['print_url'] ) ) {
-			$item->add_meta_data( '_mr_tee_print_url', $data['print_url'], true );
 		}
 
 		// NBDesigner native handshake meta
@@ -775,25 +1292,28 @@ class CartIntegration {
 	}
 
 	/**
-	 * Attach in-memory preview URL metadata onto the cart item's WC_Product instance
-	 * so themes/side-carts that call $_product->get_image() directly without
-	 * woocommerce_cart_item_thumbnail still render the personalized preview.
+	 * Register the personalized preview in an in-memory per-request PHP map keyed by `spl_object_id( $product )`
+	 * so themes/side-carts that call `$_product->get_image()` directly still render the custom preview
+	 * WITHOUT ever calling `$product->update_meta_data()` (preventing leakage into global `wp_postmeta`).
 	 *
 	 * @param array<string, mixed> $cart_item Cart item array.
 	 * @return array<string, mixed>
 	 */
 	public static function attach_preview_to_cart_product( $cart_item ) {
-		if ( ! empty( $cart_item['mr_tee_editor']['preview_url'] ) && ! empty( $cart_item['data'] ) && is_object( $cart_item['data'] ) && method_exists( $cart_item['data'], 'update_meta_data' ) ) {
-			$cart_item['data']->update_meta_data( '_mr_tee_cart_preview_url', $cart_item['mr_tee_editor']['preview_url'] );
-			if ( ! empty( $cart_item['mr_tee_editor']['previews'] ) && is_array( $cart_item['mr_tee_editor']['previews'] ) ) {
-				$cart_item['data']->update_meta_data( '_mr_tee_cart_previews', $cart_item['mr_tee_editor']['previews'] );
-			}
+		if ( ! empty( $cart_item['mr_tee_editor']['preview_url'] ) && ! empty( $cart_item['data'] ) && is_object( $cart_item['data'] ) ) {
+			$obj_id                                  = spl_object_id( $cart_item['data'] );
+			self::$runtime_cart_previews[ $obj_id ] = array(
+				'url'      => (string) $cart_item['mr_tee_editor']['preview_url'],
+				'previews' => ( ! empty( $cart_item['mr_tee_editor']['previews'] ) && is_array( $cart_item['mr_tee_editor']['previews'] ) )
+					? $cart_item['mr_tee_editor']['previews']
+					: array(),
+			);
 		}
 		return $cart_item;
 	}
 
 	/**
-	 * Restore in-memory preview URL metadata onto the WC_Product instance when cart loads from session.
+	 * Restore in-memory preview mapping when cart loads from session.
 	 *
 	 * @param array<string, mixed> $cart_item Cart item array.
 	 * @param array<string, mixed> $values    Session values.
@@ -826,16 +1346,19 @@ class CartIntegration {
 		$lb_previews   = self::format_previews_for_lightbox( $previews, $preview_url );
 		$previews_attr = '';
 		$views_badge   = '';
+		$wrap_class    = 'mr-tee-cart-thumb-wrap';
 		if ( count( $lb_previews ) > 1 ) {
 			$previews_attr = sprintf( ' data-mr-tee-previews="%s"', esc_attr( wp_json_encode( $lb_previews ) ) );
 			$views_badge   = sprintf(
 				'<span class="mr-tee-cart-views-badge" aria-hidden="true">%s</span>',
 				esc_html( sprintf( _n( '%d vue', '%d vues', count( $lb_previews ), 'mr-tee-editor' ), count( $lb_previews ) ) )
 			);
+			$wrap_class   .= ' mr-tee-has-views-badge';
 		}
 
 		return sprintf(
-			'<span class="mr-tee-cart-thumb-wrap" data-mr-tee-preview-wrap="1" title="%s"><img src="%s" data-mr-tee-preview="1" data-mr-tee-full-src="%s"%s class="attachment-woocommerce_thumbnail size-woocommerce_thumbnail mr-tee-cart-thumb skip-lazy" alt="%s" style="width:80px;max-width:100%%;height:auto;max-height:110px;object-fit:contain;border-radius:6px;border:1px solid #e2e8f0;background:#ffffff;display:block;cursor:zoom-in;" />%s<span class="mr-tee-cart-zoom-hint" aria-hidden="true">+</span></span>',
+			'<span class="%s" data-mr-tee-preview-wrap="1" title="%s"><img src="%s" data-mr-tee-preview="1" data-mr-tee-full-src="%s"%s class="attachment-woocommerce_thumbnail size-woocommerce_thumbnail mr-tee-cart-thumb skip-lazy" alt="%s" style="width:80px;max-width:100%%;height:auto;max-height:110px;object-fit:contain;border-radius:6px;border:1px solid #e2e8f0;background:#ffffff;display:block;cursor:zoom-in;" />%s<span class="mr-tee-cart-zoom-hint" aria-hidden="true">+</span></span>',
+			esc_attr( $wrap_class ),
 			esc_attr__( 'Cliquer pour agrandir votre aperçu personnalisé', 'mr-tee-editor' ),
 			esc_url( $preview_url ),
 			esc_url( $preview_url ),
@@ -857,16 +1380,16 @@ class CartIntegration {
 	 * @return string
 	 */
 	public static function filter_product_get_image_in_cart( $image, $product, $size = 'woocommerce_thumbnail', $attr = array(), $placeholder = true ) {
-		if ( ! is_object( $product ) || ! method_exists( $product, 'get_meta' ) ) {
+		if ( ! is_object( $product ) ) {
 			return $image;
 		}
-		$preview_url = $product->get_meta( '_mr_tee_cart_preview_url', true );
-		if ( empty( $preview_url ) ) {
+		$obj_id = spl_object_id( $product );
+		if ( empty( self::$runtime_cart_previews[ $obj_id ]['url'] ) ) {
 			return $image;
 		}
-		$previews = $product->get_meta( '_mr_tee_cart_previews', true );
-		$name     = method_exists( $product, 'get_name' ) ? $product->get_name() : '';
-		$html     = self::build_cart_thumb_html( $preview_url, $name, is_array( $previews ) ? $previews : array() );
+		$entry = self::$runtime_cart_previews[ $obj_id ];
+		$name  = method_exists( $product, 'get_name' ) ? $product->get_name() : '';
+		$html  = self::build_cart_thumb_html( $entry['url'], $name, is_array( $entry['previews'] ) ? $entry['previews'] : array() );
 		return ! empty( $html ) ? $html : $image;
 	}
 
@@ -935,7 +1458,8 @@ class CartIntegration {
 	}
 
 	/**
-	 * Render or replace checkout review item thumbnail with the composite preview image across all themes.
+	 * Render or replace checkout review item thumbnail with the composite preview image across all themes,
+	 * skipping Mini-Cart widgets so they never get duplicate thumbnails.
 	 *
 	 * @param string               $product_name  Checkout item name HTML.
 	 * @param array<string, mixed> $cart_item     Cart item array.
@@ -946,7 +1470,13 @@ class CartIntegration {
 		if ( ! function_exists( 'is_checkout' ) || ! is_checkout() ) {
 			return $product_name;
 		}
+		if ( did_action( 'woocommerce_before_mini_cart' ) > did_action( 'woocommerce_after_mini_cart' ) ) {
+			return $product_name;
+		}
 		if ( empty( $cart_item['mr_tee_editor']['preview_url'] ) ) {
+			return $product_name;
+		}
+		if ( false !== strpos( $product_name, 'mr-tee-checkout-thumb' ) || false !== strpos( $product_name, 'mr-tee-cart-thumb' ) ) {
 			return $product_name;
 		}
 		$preview_url = self::normalize_url( $cart_item['mr_tee_editor']['preview_url'] );
@@ -971,9 +1501,11 @@ class CartIntegration {
 		);
 
 		if ( false !== strpos( $product_name, 'product-item-thumbnail' ) ) {
-			$replaced = preg_replace(
+			$replaced = preg_replace_callback(
 				'#(<div\b[^>]*class="[^"]*\bproduct-item-thumbnail\b[^"]*"[^>]*>).*?(</div>)#s',
-				'$1' . $thumb_html . '$2',
+				static function ( $matches ) use ( $thumb_html ) {
+					return $matches[1] . $thumb_html . $matches[2];
+				},
 				$product_name,
 				1
 			);
@@ -982,18 +1514,21 @@ class CartIntegration {
 			}
 		}
 
-		if ( false === strpos( $product_name, 'mr-tee-checkout-thumb' ) && preg_match( '#<img\b[^>]*>#i', $product_name ) ) {
-			$replaced_img = preg_replace( '#<img\b[^>]*>#i', $thumb_html, $product_name, 1 );
+		if ( preg_match( '#<img\b[^>]*>#i', $product_name ) ) {
+			$replaced_img = preg_replace_callback(
+				'#<img\b[^>]*>#i',
+				static function () use ( $thumb_html ) {
+					return $thumb_html;
+				},
+				$product_name,
+				1
+			);
 			if ( is_string( $replaced_img ) && '' !== $replaced_img ) {
 				return $replaced_img;
 			}
 		}
 
-		if ( false === strpos( $product_name, 'mr-tee-checkout-thumb' ) ) {
-			return '<div class="mr-tee-checkout-thumb-wrap" style="display:inline-flex;align-items:center;gap:10px;vertical-align:middle;"><span style="flex-shrink:0;line-height:0;">' . $thumb_html . '</span><span>' . $product_name . '</span></div>';
-		}
-
-		return $product_name;
+		return '<span class="mr-tee-checkout-thumb-wrap" style="display:inline-flex;align-items:center;gap:10px;vertical-align:middle;"><span style="flex-shrink:0;line-height:0;">' . $thumb_html . '</span><span>' . $product_name . '</span></span>';
 	}
 
 	/**
@@ -1094,6 +1629,12 @@ class CartIntegration {
 				white-space: nowrap !important;
 				pointer-events: none !important;
 				box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22) !important;
+			}
+			.mr-tee-cart-thumb-wrap.mr-tee-has-views-badge .mr-tee-cart-zoom-hint,
+			.mr-tee-cart-thumb-wrap:has(.mr-tee-cart-views-badge) .mr-tee-cart-zoom-hint {
+				top: 4px !important;
+				bottom: auto !important;
+				right: 4px !important;
 			}
 			#mr-tee-cart-preview-modal {
 				position: fixed !important;
@@ -1516,6 +2057,12 @@ class CartIntegration {
 				var directImg = target.closest(PREVIEW_SEL);
 				if (directImg && !isInsideProductStage(directImg)) {
 					return directImg;
+				}
+
+				var viewCard = target.closest('[data-mr-tee-view-card]');
+				if (viewCard) {
+					var cardImg = viewCard.querySelector(PREVIEW_SEL);
+					if (cardImg) return cardImg;
 				}
 
 				var wrap = target.closest('.mr-tee-cart-thumb-wrap, [data-mr-tee-preview-wrap="1"], .mr-tee-order-preview-attachment');

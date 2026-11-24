@@ -25,9 +25,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 class SceneGraphSchema {
 
 	/**
-	 * Per-request in-memory cache of compiled product configurations keyed by product ID.
+	 * Per-request in-memory cache of product configurations keyed by `"{product_id}:{full|lite}"`.
 	 *
-	 * @var array<int, array<string, mixed>>
+	 * @var array<string, array<string, mixed>>
 	 */
 	private static $product_config_cache = array();
 
@@ -39,10 +39,29 @@ class SceneGraphSchema {
 	public static function clear_product_config_cache( $product_id = 0 ) {
 		$pid = (int) $product_id;
 		if ( $pid > 0 ) {
-			unset( self::$product_config_cache[ $pid ] );
+			unset(
+				self::$product_config_cache[ $pid . ':full' ],
+				self::$product_config_cache[ $pid . ':lite' ]
+			);
 		} else {
 			self::$product_config_cache = array();
 		}
+	}
+
+	/**
+	 * Convert ColorPaletteRegistry solid swatches into an associative `#hex => Label` map
+	 * suitable for text line `color_swatches` pickers.
+	 *
+	 * @return array<string, string>
+	 */
+	private static function get_default_color_swatches_map() {
+		$map = array();
+		foreach ( ColorPaletteRegistry::get_solid_swatches() as $swatch ) {
+			if ( is_array( $swatch ) && ! empty( $swatch['hex'] ) && 0 === strpos( (string) $swatch['hex'], '#' ) ) {
+				$map[ (string) $swatch['hex'] ] = ! empty( $swatch['name'] ) ? (string) $swatch['name'] : (string) $swatch['hex'];
+			}
+		}
+		return $map;
 	}
 
 	/**
@@ -82,13 +101,75 @@ class SceneGraphSchema {
 	/**
 	 * Return the default product configuration structure for a given preset.
 	 *
-	 * @param string $preset_id One of 'super_mushroom_24987', 'multicolor_embroidered_34225', 'leopard_pattern_mask_24000', 'vintage_date_names_34359'.
+	 * @param string $preset_id One of 'classic_custom_text', 'super_mushroom_24987', 'multicolor_embroidered_34225', 'leopard_pattern_mask_24000', 'vintage_date_names_34359'.
 	 * @return array<string, mixed>
 	 */
-	public static function get_default_config( $preset_id = 'super_mushroom_24987' ) {
+	public static function get_default_config( $preset_id = 'classic_custom_text' ) {
 		$icons = IconSetRegistry::get_mushroom_icons();
 
 		switch ( $preset_id ) {
+			case 'classic_custom_text':
+				return array(
+					'engine'              => 'none',
+					'template_preset'     => 'classic_custom_text',
+					'nbd_handshake'       => true,
+					'print_Effect3D'      => true,
+					'dpi'                 => 300,
+					'print_unit'          => 'cm',
+					'print_real_width'    => 30.0,
+					'print_real_height'   => 40.0,
+					'print_aspect_ratio'  => 0.75,
+					'product_type'        => 'garment',
+					'lock_aspect_ratio'   => false,
+					'print_width_px'      => 3543,
+					'print_height_px'     => 4724,
+					'box_left'            => 26.0,
+					'box_top'             => 28.0,
+					'box_width'           => 48.0,
+					'box_height'          => 16.0,
+					'perso_scale'         => 0.40,
+					'perso_translate_x'   => 0.0,
+					'perso_translate_y'   => 0.0,
+					'perso_rotate_degree' => 0.0,
+					'allowed_fonts'       => array( 'super_mario', 'bungee', 'luckiest_guy', 'bebas', 'cocogoose', 'pacifico', 'marker' ),
+					'garment_colors'      => ColorPaletteRegistry::get_default_garment_colors(),
+					'text_lines'          => array(
+						array(
+							'id'               => 'line_1',
+							'ref_id'           => 'id-ref-text-line-1',
+							'color_ref_id'     => 'id-ref-color-line-1',
+							'field_type'       => 'text',
+							'side_id'          => 'front',
+							'label'            => __( 'Votre texte', 'mr-tee-editor' ),
+							'default_text'     => __( 'Votre texte', 'mr-tee-editor' ),
+							'box_left'         => 26.0,
+							'box_top'          => 30.0,
+							'box_width'        => 48.0,
+							'box_height'       => 12.0,
+							'max_chars'        => 25,
+							'font'             => 'bebas',
+							'allowed_fonts'    => array( 'super_mario', 'bungee', 'luckiest_guy', 'bebas', 'cocogoose', 'pacifico', 'marker' ),
+							'color_mode'       => 'solid',
+							'color_hex'        => '#111827',
+							'stroke_hex'       => 'transparent',
+							'y_pct'            => 36.0,
+							'font_size'        => 16.0,
+							'max_width'        => 84.0,
+							'casing'           => 'ORIGINAL',
+							'allow_font_pick'  => true,
+							'allow_color_pick' => true,
+							'warning_unedited' => false,
+						),
+					),
+					'repeater'            => array(
+						'enabled'       => false,
+						'label'         => __( 'Nombre d\'éléments', 'mr-tee-editor' ),
+						'default_count' => 0,
+						'max_items'     => 0,
+					),
+					'icons'               => $icons,
+				);
+
 			case 'multicolor_embroidered_34225':
 				return array(
 					'engine'              => 'mr_tee_editor',
@@ -365,7 +446,6 @@ class SceneGraphSchema {
 				);
 
 			case 'super_mushroom_24987':
-			default:
 				return array(
 					'engine'              => 'none', // 'none' | 'nbdesigner' | 'mr_tee_editor'
 					'template_preset'     => 'super_mushroom_24987',
@@ -479,20 +559,26 @@ class SceneGraphSchema {
 					),
 					'icons'               => $icons,
 				);
+
+			default:
+				return self::get_default_config( 'classic_custom_text' );
 		}
 	}
 
 	/**
 	 * Retrieve normalized configuration for a given WooCommerce product ID,
-	 * including its compiled Monsieur TSHIRT scene-graph (`perso_visual`).
+	 * optionally including its compiled scene-graph (`perso_visual`).
 	 *
-	 * @param int $product_id WooCommerce Product ID.
+	 * @param int                  $product_id WooCommerce Product ID.
+	 * @param array<string, mixed> $options    Optional flags (`compile_scene_graph` => bool, default true).
 	 * @return array<string, mixed>
 	 */
-	public static function get_product_config( $product_id ) {
-		$cache_key = (int) $product_id;
-		if ( $cache_key > 0 && isset( self::$product_config_cache[ $cache_key ] ) ) {
-			return self::$product_config_cache[ $cache_key ];
+	public static function get_product_config( $product_id, array $options = array() ) {
+		$compile_scene_graph = ! array_key_exists( 'compile_scene_graph', $options ) || ! empty( $options['compile_scene_graph'] );
+		$cache_key           = (int) $product_id;
+		$bucket_key          = $cache_key . ':' . ( $compile_scene_graph ? 'full' : 'lite' );
+		if ( $cache_key > 0 && isset( self::$product_config_cache[ $bucket_key ] ) ) {
+			return self::$product_config_cache[ $bucket_key ];
 		}
 
 		$saved  = get_post_meta( $product_id, '_mr_tee_config', true );
@@ -502,17 +588,23 @@ class SceneGraphSchema {
 			$saved = array();
 		}
 
-		$preset   = ! empty( $saved['template_preset'] ) ? $saved['template_preset'] : 'super_mushroom_24987';
-		$defaults = self::get_default_config( $preset );
-
-		$config = wp_parse_args( $saved, $defaults );
-
 		if ( empty( $engine ) ) {
 			$engine = get_post_meta( $product_id, '_mr_tee_editor_mode', true );
 		}
 		if ( empty( $engine ) && ! empty( $saved['editor_mode'] ) ) {
 			$engine = $saved['editor_mode'];
 		}
+
+		if ( ! empty( $saved['template_preset'] ) ) {
+			$preset = $saved['template_preset'];
+		} elseif ( ( ! empty( $saved['repeater'] ) && is_array( $saved['repeater'] ) && ! empty( $saved['repeater']['enabled'] ) ) || ( empty( $saved ) && 'mr_tee_editor' === $engine ) ) {
+			$preset = 'super_mushroom_24987';
+		} else {
+			$preset = 'classic_custom_text';
+		}
+
+		$defaults                = self::get_default_config( $preset );
+		$config                  = wp_parse_args( $saved, $defaults );
 		$config['engine']        = ! empty( $engine ) ? $engine : ( isset( $defaults['engine'] ) ? $defaults['engine'] : 'none' );
 		$config['nbd_handshake'] = isset( $saved['nbd_handshake'] ) ? (bool) $saved['nbd_handshake'] : true;
 
@@ -659,6 +751,9 @@ class SceneGraphSchema {
 						$first_line_allowed_fonts = $merged['allowed_fonts'];
 					}
 				}
+				if ( ! empty( $merged['allow_color_pick'] ) && ( empty( $merged['color_swatches'] ) || ! is_array( $merged['color_swatches'] ) ) ) {
+					$merged['color_swatches'] = self::get_default_color_swatches_map();
+				}
 			}
 
 			// Ensure per-line box coordinates exist
@@ -774,14 +869,18 @@ class SceneGraphSchema {
 		$config['crop_ratio_str']        = $cumulative_dims['ratio_str'];
 		$config['crop_simplified_ratio'] = $cumulative_dims['simplified_ratio'];
 
-		$config['icons']        = IconSetRegistry::get_mushroom_icons();
-		$config['fonts']        = FontRegistry::get_fonts();
-		$config['color_sets']   = ColorPaletteRegistry::get_color_sets();
-		$config['solid_colors'] = ColorPaletteRegistry::get_solid_swatches();
-		$config['perso_visual'] = self::compile_scene_graph( $config );
+		if ( $compile_scene_graph ) {
+			$config['icons']        = IconSetRegistry::get_mushroom_icons();
+			$config['fonts']        = FontRegistry::get_fonts();
+			$config['color_sets']   = ColorPaletteRegistry::get_color_sets();
+			$config['solid_colors'] = ColorPaletteRegistry::get_solid_swatches();
+			$config['perso_visual'] = self::compile_scene_graph( $config );
+		} else {
+			$config['perso_visual'] = array();
+		}
 
 		if ( $cache_key > 0 ) {
-			self::$product_config_cache[ $cache_key ] = $config;
+			self::$product_config_cache[ $bucket_key ] = $config;
 		}
 
 		return $config;
@@ -915,13 +1014,21 @@ class SceneGraphSchema {
 
 		$valid_side_ids  = ! empty( $print_sides ) ? array_column( $print_sides, 'id' ) : array( 'front' );
 		$default_side_id = ! empty( $valid_side_ids[0] ) ? $valid_side_ids[0] : 'front';
-		$allowed_roles   = array( 'full', 'closeup', 'detail' );
-		$allowed_blends  = array( 'normal', 'multiply', 'soft_ink' );
-		$thumb_id        = (int) $thumb_id;
-		$featured_url    = is_string( $featured_url ) ? self::normalize_url_scheme( $featured_url ) : '';
+		$side_labels_map = array();
+		foreach ( $print_sides as $s ) {
+			if ( is_array( $s ) && ! empty( $s['id'] ) ) {
+				$side_labels_map[ $s['id'] ] = ! empty( $s['label'] ) ? (string) $s['label'] : ucfirst( (string) $s['id'] );
+			}
+		}
 
-		$views    = array();
-		$used_ids = array();
+		$allowed_roles  = array( 'full', 'closeup', 'detail' );
+		$allowed_blends = array( 'normal', 'multiply', 'soft_ink' );
+		$thumb_id       = (int) $thumb_id;
+		$featured_url   = is_string( $featured_url ) ? self::normalize_url_scheme( $featured_url ) : '';
+
+		$views          = array();
+		$used_ids       = array();
+		$views_per_side = array();
 
 		if ( is_array( $raw_views ) ) {
 			$idx = 0;
@@ -968,7 +1075,10 @@ class SceneGraphSchema {
 					$v_img_url = is_string( $resolved ) ? esc_url_raw( $resolved ) : '';
 				}
 
-				if ( 0 === $v_img_id && '' === $v_img_url ) {
+				// Only fall back to the product featured image on the primary ('front') side's first view.
+				// Never silently assign the front featured image to empty 'back' or custom side views.
+				$is_primary_first_view = ( $v_side === $default_side_id && empty( $views_per_side[ $v_side ] ) );
+				if ( 0 === $v_img_id && '' === $v_img_url && $is_primary_first_view ) {
 					$v_img_id  = $thumb_id;
 					$v_img_url = $featured_url;
 				}
@@ -976,7 +1086,7 @@ class SceneGraphSchema {
 
 				$v_cart = ! empty( $raw_view['is_cart_preview'] );
 
-				$views[] = array(
+				$views[]                   = array(
 					'id'              => $vid,
 					'label'           => $v_label,
 					'side_id'         => $v_side,
@@ -986,18 +1096,35 @@ class SceneGraphSchema {
 					'blend_mode'      => $v_blend,
 					'is_cart_preview' => $v_cart,
 				);
+				$views_per_side[ $v_side ] = ( isset( $views_per_side[ $v_side ] ) ? $views_per_side[ $v_side ] : 0 ) + 1;
 				$idx++;
 			}
 		}
 
-		if ( empty( $views ) ) {
-			$views[] = array(
-				'id'              => 'view_1',
-				'label'           => __( 'Aperçu', 'mr-tee-editor' ),
-				'side_id'         => $default_side_id,
+		// Guarantee every side in $print_sides has at least one view (never orphaned sides).
+		foreach ( $valid_side_ids as $sid ) {
+			if ( ! empty( $views_per_side[ $sid ] ) ) {
+				continue;
+			}
+			$is_primary_side = ( $sid === $default_side_id );
+			$base_vid        = $is_primary_side ? 'view_1' : 'view_' . $sid;
+			$vid             = $base_vid;
+			$suffix          = 2;
+			while ( isset( $used_ids[ $vid ] ) ) {
+				$vid = $base_vid . '_' . $suffix;
+				$suffix++;
+			}
+			$used_ids[ $vid ]       = true;
+			$views_per_side[ $sid ] = 1;
+
+			$side_lbl = isset( $side_labels_map[ $sid ] ) ? $side_labels_map[ $sid ] : ucfirst( $sid );
+			$views[]  = array(
+				'id'              => $vid,
+				'label'           => $is_primary_side ? __( 'Aperçu', 'mr-tee-editor' ) : $side_lbl,
+				'side_id'         => $sid,
 				'view_role'       => 'full',
-				'image_id'        => $thumb_id,
-				'image_url'       => $featured_url,
+				'image_id'        => $is_primary_side ? $thumb_id : 0,
+				'image_url'       => $is_primary_side ? $featured_url : '',
 				'blend_mode'      => 'normal',
 				'is_cart_preview' => true,
 			);
@@ -1191,18 +1318,18 @@ class SceneGraphSchema {
 
 		// Scale decimal to integer (handling tenths, e.g. 8.5 -> 85, 5.5 -> 55)
 		$factor = 10;
-		$int_w  = (int) round( $w * $factor );
-		$int_h  = (int) round( $h * $factor );
+		$int_w  = max( 1, (int) round( $w * $factor ) );
+		$int_h  = max( 1, (int) round( $h * $factor ) );
 
 		// Greatest common divisor (GCD)
-		$a = $int_w;
-		$b = $int_h;
+		$a = max( 1, $int_w );
+		$b = max( 1, $int_h );
 		while ( $b !== 0 ) {
 			$t = $b;
 			$b = $a % $b;
 			$a = $t;
 		}
-		$gcd = ( $a > 0 ) ? $a : 1;
+		$gcd = max( 1, $a );
 
 		$num_w = $int_w / $gcd;
 		$num_h = $int_h / $gcd;
@@ -1221,6 +1348,9 @@ class SceneGraphSchema {
 	 * Calculates real physical dimensions (e.g. 3 × 4 cm) relative to the product image reference size (e.g. 12 × 20 cm)
 	 * and derives the 300 DPI pixel dimensions for the final print-ready output.
 	 *
+	 * When `product_type === 'flat_object'`, `repeater.enabled` is true, or `vector_clipart.path` is present,
+	 * returns full platen dimensions so repeater icons/clipart are never cropped off.
+	 *
 	 * @param array $config Product configuration.
 	 * @return array{
 	 *     box_x_min: float, box_y_min: float, box_x_max: float, box_y_max: float,
@@ -1231,13 +1361,15 @@ class SceneGraphSchema {
 	 * }
 	 */
 	public static function compute_cumulative_design_area( $config ) {
-		$prod_type = isset( $config['product_type'] ) ? $config['product_type'] : 'garment';
-		$real_w    = isset( $config['print_real_width'] ) ? floatval( $config['print_real_width'] ) : 30.0;
-		$real_h    = isset( $config['print_real_height'] ) ? floatval( $config['print_real_height'] ) : 40.0;
-		$unit      = ! empty( $config['print_unit'] ) ? $config['print_unit'] : 'cm';
-		$dpi       = isset( $config['dpi'] ) ? max( 72, intval( $config['dpi'] ) ) : 300;
+		$prod_type    = isset( $config['product_type'] ) ? $config['product_type'] : 'garment';
+		$real_w       = isset( $config['print_real_width'] ) ? floatval( $config['print_real_width'] ) : 30.0;
+		$real_h       = isset( $config['print_real_height'] ) ? floatval( $config['print_real_height'] ) : 40.0;
+		$unit         = ! empty( $config['print_unit'] ) ? $config['print_unit'] : 'cm';
+		$dpi          = isset( $config['dpi'] ) ? max( 72, intval( $config['dpi'] ) ) : 300;
+		$has_repeater = ! empty( $config['repeater'] ) && is_array( $config['repeater'] ) && ! empty( $config['repeater']['enabled'] );
+		$has_clipart  = ! empty( $config['vector_clipart'] ) && is_array( $config['vector_clipart'] ) && ! empty( $config['vector_clipart']['path'] );
 
-		if ( 'flat_object' === $prod_type ) {
+		if ( 'flat_object' === $prod_type || $has_repeater || $has_clipart ) {
 			$dims = self::compute_print_dimensions( $real_w, $real_h, $unit, $dpi );
 			return array_merge( $dims, array(
 				'box_x_min'         => 0.0,
@@ -1279,8 +1411,6 @@ class SceneGraphSchema {
 		$x_max = 0.0;
 		$y_max = 0.0;
 
-		$real_w    = isset( $config['print_real_width'] ) ? floatval( $config['print_real_width'] ) : 30.0;
-		$real_h    = isset( $config['print_real_height'] ) ? floatval( $config['print_real_height'] ) : 40.0;
 		$ref_ratio = ( $real_w > 0 && $real_h > 0 ) ? ( $real_w / $real_h ) : 1.0;
 
 		foreach ( $boxes as $b ) {
@@ -1305,6 +1435,12 @@ class SceneGraphSchema {
 				$y_max = max( $y_max, $b['t'] + $b['h'] );
 			}
 		}
+
+		// Clamp bounding box coordinates strictly to [0, 100].
+		$x_min = max( 0.0, min( 100.0, $x_min ) );
+		$y_min = max( 0.0, min( 100.0, $y_min ) );
+		$x_max = max( 0.0, min( 100.0, $x_max ) );
+		$y_max = max( 0.0, min( 100.0, $y_max ) );
 
 		$span_w = max( 1.0, $x_max - $x_min );
 		$span_h = max( 1.0, $y_max - $y_min );
@@ -1439,6 +1575,15 @@ class SceneGraphSchema {
 			'text_lines'        => $side_lines,
 		);
 
+		if ( $resolved_side_id === $default_side_id ) {
+			if ( ! empty( $config['repeater'] ) && is_array( $config['repeater'] ) ) {
+				$side_config['repeater'] = $config['repeater'];
+			}
+			if ( ! empty( $config['vector_clipart'] ) && is_array( $config['vector_clipart'] ) ) {
+				$side_config['vector_clipart'] = $config['vector_clipart'];
+			}
+		}
+
 		$metrics = self::compute_cumulative_design_area( $side_config );
 
 		return array_merge(
@@ -1458,106 +1603,17 @@ class SceneGraphSchema {
 	}
 
 	/**
-	 * Return standard physical product presets for POD items.
-	 *
-	 * @return array<string, array<string, mixed>>
-	 */
-	public static function get_standard_physical_presets() {
-		return array(
-			'business_card' => array(
-				'id'               => 'business_card',
-				'name'             => __( 'Carte de Visite', 'mr-tee-editor' ),
-				'dimensions'       => '8.5 × 5.5 cm',
-				'width'            => 8.5,
-				'height'           => 5.5,
-				'unit'             => 'cm',
-				'simplified_ratio' => '17:11',
-				'decimal_ratio'    => 1.545,
-				'orientation'      => 'Landscape',
-				'product_type'     => 'flat_object',
-				'lock_ratio'       => true,
-				'print_px_300dpi'  => '1004 × 650 px',
-			),
-			'postcard' => array(
-				'id'               => 'postcard',
-				'name'             => __( 'Carte Postale / Photo', 'mr-tee-editor' ),
-				'dimensions'       => '15 × 10 cm',
-				'width'            => 15.0,
-				'height'           => 10.0,
-				'unit'             => 'cm',
-				'simplified_ratio' => '3:2',
-				'decimal_ratio'    => 1.500,
-				'orientation'      => 'Landscape',
-				'product_type'     => 'flat_object',
-				'lock_ratio'       => true,
-				'print_px_300dpi'  => '1772 × 1181 px',
-			),
-			'mug_wrap' => array(
-				'id'               => 'mug_wrap',
-				'name'             => __( 'Mug Céramique (Wrap Complet)', 'mr-tee-editor' ),
-				'dimensions'       => '20 × 9.5 cm',
-				'width'            => 20.0,
-				'height'           => 9.5,
-				'unit'             => 'cm',
-				'simplified_ratio' => '40:19',
-				'decimal_ratio'    => 2.105,
-				'orientation'      => 'Panoramic strip',
-				'product_type'     => 'flat_object',
-				'lock_ratio'       => true,
-				'print_px_300dpi'  => '2362 × 1122 px',
-			),
-			'poster_a4' => array(
-				'id'               => 'poster_a4',
-				'name'             => __( 'Flyer / Affiche Poster (A4)', 'mr-tee-editor' ),
-				'dimensions'       => '21 × 29.7 cm',
-				'width'            => 21.0,
-				'height'           => 29.7,
-				'unit'             => 'cm',
-				'simplified_ratio' => '1:1.414 (~5:7)',
-				'decimal_ratio'    => 0.707,
-				'orientation'      => 'Portrait',
-				'product_type'     => 'flat_object',
-				'lock_ratio'       => true,
-				'print_px_300dpi'  => '2480 × 3508 px',
-			),
-			'coaster_square' => array(
-				'id'               => 'coaster_square',
-				'name'             => __( 'Sous-verre / Patch Carré', 'mr-tee-editor' ),
-				'dimensions'       => '10 × 10 cm',
-				'width'            => 10.0,
-				'height'           => 10.0,
-				'unit'             => 'cm',
-				'simplified_ratio' => '1:1',
-				'decimal_ratio'    => 1.000,
-				'orientation'      => 'Square',
-				'product_type'     => 'flat_object',
-				'lock_ratio'       => true,
-				'print_px_300dpi'  => '1181 × 1181 px',
-			),
-			'tshirt_platen' => array(
-				'id'               => 'tshirt_platen',
-				'name'             => __( 'T-Shirt Textile (Plateau DTG)', 'mr-tee-editor' ),
-				'dimensions'       => '30 × 40 cm',
-				'width'            => 30.0,
-				'height'           => 40.0,
-				'unit'             => 'cm',
-				'simplified_ratio' => '3:4',
-				'decimal_ratio'    => 0.750,
-				'orientation'      => 'Portrait',
-				'product_type'     => 'garment',
-				'lock_ratio'       => false,
-				'print_px_300dpi'  => '3543 × 4724 px',
-			),
-		);
-	}
-
-	/**
-	 * Return catalog of pre-configured design presets reverse-engineered from Monsieur TSHIRT.
+	 * Return catalog of pre-configured design presets.
 	 *
 	 * @return array<string, array<string, mixed>>
 	 */
 	public static function get_presets() {
 		return array(
+			'classic_custom_text' => array(
+				'id'          => 'classic_custom_text',
+				'name'        => 'Texte Personnalisé Classique (Simple & Universel)',
+				'description' => '1 ligne de texte sur le recto avec sélection de police et de couleur (sans grille répéteur)',
+			),
 			'super_mushroom_24987' => array(
 				'id'          => 'super_mushroom_24987',
 				'name'        => 'Super Mario & Champignons (T-Shirt 2 Rangées d\'Avatars)',

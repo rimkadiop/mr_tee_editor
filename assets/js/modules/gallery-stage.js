@@ -12,7 +12,8 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { DedicatedGallery } from './dedicated-gallery.js?v=2.4.0.2';
+import { DedicatedGallery } from './dedicated-gallery.js?v=2.5.0';
+import { SvgRenderer } from './svg-renderer.js?v=2.5.0';
 
 export class GalleryStage {
 	constructor(config, options = {}) {
@@ -45,45 +46,14 @@ export class GalleryStage {
 	}
 
 	/**
-	 * Safely scope DOM IDs and internal fragment references (`id="X"`, `url(#X)`, `href="#X"`, `xlink:href="#X"`)
-	 * inside an SVG markup string without touching data URLs, external URLs, or `data-*-id` attributes.
+	 * Safely scope DOM IDs and internal fragment references by delegating to SvgRenderer.scopeMarkupIds.
 	 *
 	 * @param {string} svgMarkup Raw SVG markup string.
 	 * @param {string} prefix Prefix to prepend to element IDs and local fragment references.
 	 * @return {string}
 	 */
 	static scopeSvgMarkup(svgMarkup, prefix) {
-		if (!svgMarkup || !prefix) return svgMarkup || '';
-		const cleanPrefix = String(prefix).replace(/[^a-zA-Z0-9_-]/g, '');
-		if (!cleanPrefix) return svgMarkup;
-
-		const str = String(svgMarkup);
-		const preservedDataUrls = [];
-		const work = str.includes('data:')
-			? str.replace(/((?:xlink:href|href|src)\s*=\s*(?:"data:[^"]*"|'data:[^']*')|url\(\s*(?:"data:[^"]*"|'data:[^']*'|data:[^)\s]*)\s*\))/gi, (m) => {
-				const token = `___MRTEE_PRESERVED_DATA_${preservedDataUrls.length}___`;
-				preservedDataUrls.push(m);
-				return token;
-			})
-			: str;
-
-		const prefixId = (id) => (id && !id.startsWith(cleanPrefix) ? `${cleanPrefix}${id}` : id);
-
-		let scoped = work
-			.replace(/(^|[\s"'<])id=(["'])([^"']+)\2/g, (m, lead, quote, id) => {
-				return `${lead}id=${quote}${prefixId(id)}${quote}`;
-			})
-			.replace(/url\(\s*(['"]?)#([^)'"\s]+)\1\s*\)/g, (m, quote, id) => {
-				return `url(${quote}#${prefixId(id)}${quote})`;
-			})
-			.replace(/(^|[\s"'<])(xlink:href|href)=(["'])#([^"']+)\3/g, (m, lead, attr, quote, id) => {
-				return `${lead}${attr}=${quote}#${prefixId(id)}${quote}`;
-			});
-
-		if (preservedDataUrls.length > 0) {
-			scoped = scoped.replace(/___MRTEE_PRESERVED_DATA_(\d+)___/g, (_, idx) => preservedDataUrls[Number(idx)]);
-		}
-		return scoped;
+		return SvgRenderer.scopeMarkupIds(svgMarkup || '', prefix);
 	}
 
 	/**
@@ -151,18 +121,6 @@ export class GalleryStage {
 	focusSide(sideId) {
 		if (this.isDedicated && this.dedicatedGallery) {
 			this.dedicatedGallery.focusSide(sideId);
-		}
-	}
-
-	/**
-	 * Navigate directly to a specific preview view ID.
-	 *
-	 * @param {string} viewId Target view ID.
-	 * @param {Object} opts Optional navigation flags.
-	 */
-	goToView(viewId, opts = {}) {
-		if (this.isDedicated && this.dedicatedGallery) {
-			this.dedicatedGallery.goToView(viewId, opts);
 		}
 	}
 
@@ -1036,9 +994,21 @@ export class GalleryStage {
 
 			$(document).on(
 				'woocommerce_gallery_init_zoom woocommerce_variation_has_changed flexslider_after flatsome-flickity-ready',
-				() => {
+				(event) => {
 					bindFlickityEvents();
 					refreshOverlay();
+					if (event && event.type === 'woocommerce_variation_has_changed' && this.onSlideImageChanged) {
+						setTimeout(() => {
+							const img = this.getViewImageElement();
+							if (img && (!img.complete || img.naturalWidth <= 2)) {
+								img.addEventListener('load', () => {
+									this.onSlideImageChanged('', img);
+								}, { once: true });
+							} else {
+								this.onSlideImageChanged('', img);
+							}
+						}, 120);
+					}
 				}
 			);
 
@@ -1114,8 +1084,12 @@ export class GalleryStage {
 			}
 		}
 
-		// Sync built-in fullscreen lightbox if open on this view
-		if (this.dedicatedGallery.isLightboxOpen && targetViewId === this.getActiveViewId()) {
+		// Sync built-in fullscreen lightbox if open on this view (skip if goToIndex is already refreshing it)
+		if (
+			this.dedicatedGallery.isLightboxOpen &&
+			!this.dedicatedGallery._suppressLightboxSvgSync &&
+			targetViewId === this.getActiveViewId()
+		) {
 			const fsMarkup = this.getLightboxSvgMarkup('fs-', targetViewId);
 			this.dedicatedGallery.syncFullscreenSvg(fsMarkup, (existingSvg, nextMarkup) => {
 				this.patchSvgInPlace(existingSvg, nextMarkup);

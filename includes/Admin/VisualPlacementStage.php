@@ -4,8 +4,8 @@
  *
  * Implements the modular multi-rectangle per-field design area system.
  * Allows merchants to visually draw, position, and resize independent design
- * rectangles directly on the product mockup (e.g. 3 stacked rectangles for
- * 3 text lines, or custom rectangles placed anywhere for mugs, cards, plaques).
+ * rectangles directly on the product mockup (e.g. stacked rectangles for
+ * text lines, or custom rectangles placed anywhere for mugs, cards, plaques).
  *
  * Each rectangle dynamically dictates:
  * - Position (box_left, box_top)
@@ -43,6 +43,58 @@ class VisualPlacementStage {
 	);
 
 	/**
+	 * Resolve the normalized ordered list of allowed font IDs for a product configuration.
+	 *
+	 * @param array<string, mixed>               $config Product configuration.
+	 * @param array<string, array<string, mixed>> $fonts  Registered fonts map.
+	 * @return string[]
+	 */
+	public static function resolve_allowed_fonts( array $config, array $fonts ) {
+		$text_lines    = ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ? $config['text_lines'] : array();
+		$allowed_fonts = array();
+
+		if ( ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
+			$allowed_fonts = $config['allowed_fonts'];
+		} else {
+			foreach ( $text_lines as $tl ) {
+				if ( ( ! isset( $tl['field_type'] ) || 'image' !== $tl['field_type'] ) && ! empty( $tl['allowed_fonts'] ) && is_array( $tl['allowed_fonts'] ) ) {
+					$allowed_fonts = $tl['allowed_fonts'];
+					break;
+				}
+			}
+		}
+
+		if ( empty( $allowed_fonts ) ) {
+			foreach ( $text_lines as $tl ) {
+				if ( isset( $tl['field_type'] ) && 'image' === $tl['field_type'] ) {
+					continue;
+				}
+				if ( ! empty( $tl['font'] ) ) {
+					$allowed_fonts[] = $tl['font'];
+				}
+			}
+		}
+
+		$allowed_fonts = array_values(
+			array_unique(
+				array_filter(
+					$allowed_fonts,
+					function ( $fid ) use ( $fonts ) {
+						return isset( $fonts[ $fid ] );
+					}
+				)
+			)
+		);
+
+		if ( empty( $allowed_fonts ) ) {
+			$first_font_key = array_key_first( $fonts );
+			$allowed_fonts  = $first_font_key ? array( $first_font_key ) : array();
+		}
+
+		return $allowed_fonts;
+	}
+
+	/**
 	 * Render the multi-rectangle visual placement stage HTML.
 	 *
 	 * @param array<string, mixed> $config    Product configuration.
@@ -66,48 +118,14 @@ class VisualPlacementStage {
 		}
 
 		$fonts         = FontRegistry::get_fonts();
-		$allowed_fonts = array();
-		if ( ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
-			$allowed_fonts = $config['allowed_fonts'];
-		} else {
-			foreach ( $text_lines as $tl ) {
-				if ( ( ! isset( $tl['field_type'] ) || 'image' !== $tl['field_type'] ) && ! empty( $tl['allowed_fonts'] ) && is_array( $tl['allowed_fonts'] ) ) {
-					$allowed_fonts = $tl['allowed_fonts'];
-					break;
-				}
-			}
-		}
-		if ( empty( $allowed_fonts ) ) {
-			foreach ( $text_lines as $tl ) {
-				if ( isset( $tl['field_type'] ) && 'image' === $tl['field_type'] ) {
-					continue;
-				}
-				if ( ! empty( $tl['font'] ) ) {
-					$allowed_fonts[] = $tl['font'];
-				}
-			}
-		}
-		$allowed_fonts = array_values(
-			array_unique(
-				array_filter(
-					$allowed_fonts,
-					function ( $fid ) use ( $fonts ) {
-						return isset( $fonts[ $fid ] );
-					}
-				)
-			)
-		);
-		if ( empty( $allowed_fonts ) ) {
-			$first_font_key = array_key_first( $fonts );
-			$allowed_fonts  = $first_font_key ? array( $first_font_key ) : array();
-		}
+		$allowed_fonts = self::resolve_allowed_fonts( $config, $fonts );
 
-		$unit        = ! empty( $config['print_unit'] ) ? $config['print_unit'] : 'cm';
-		$real_w      = isset( $config['print_real_width'] ) ? floatval( $config['print_real_width'] ) : 30.0;
-		$real_h      = isset( $config['print_real_height'] ) ? floatval( $config['print_real_height'] ) : 40.0;
-		$dpi         = isset( $config['dpi'] ) ? intval( $config['dpi'] ) : 300;
-		$prod_type   = ! empty( $config['product_type'] ) ? $config['product_type'] : 'garment';
-		$lock_ratio  = isset( $config['lock_aspect_ratio'] ) ? ! empty( $config['lock_aspect_ratio'] ) : ( 'flat_object' === $prod_type );
+		$unit       = ! empty( $config['print_unit'] ) ? $config['print_unit'] : 'cm';
+		$real_w     = isset( $config['print_real_width'] ) ? floatval( $config['print_real_width'] ) : 30.0;
+		$real_h     = isset( $config['print_real_height'] ) ? floatval( $config['print_real_height'] ) : 40.0;
+		$dpi        = isset( $config['dpi'] ) ? intval( $config['dpi'] ) : 300;
+		$prod_type  = ! empty( $config['product_type'] ) ? $config['product_type'] : 'garment';
+		$lock_ratio = isset( $config['lock_aspect_ratio'] ) ? ! empty( $config['lock_aspect_ratio'] ) : ( 'flat_object' === $prod_type );
 
 		$print_sides = ( ! empty( $config['print_sides'] ) && is_array( $config['print_sides'] ) )
 			? array_values( $config['print_sides'] )
@@ -141,9 +159,8 @@ class VisualPlacementStage {
 		$first_view_side_id = ! empty( $first_view['side_id'] ) && isset( $sides_by_id[ $first_view['side_id'] ] ) ? $first_view['side_id'] : $default_side_id;
 		$first_view_img     = SceneGraphSchema::normalize_url_scheme( ! empty( $first_view['image_url'] ) ? $first_view['image_url'] : $thumb_url );
 		$first_view_blend   = ! empty( $first_view['blend_mode'] ) ? $first_view['blend_mode'] : 'normal';
-		$include_wc_gallery = isset( $config['include_wc_gallery_slides'] ) ? (bool) $config['include_wc_gallery_slides'] : true;
 
-		// Use the active view's printable side dimensions for the physical toolbar & badge
+		// Use the active view's printable side dimensions for the physical summary bar & drawer
 		if ( isset( $sides_by_id[ $first_view_side_id ] ) ) {
 			$active_side = $sides_by_id[ $first_view_side_id ];
 			$unit        = ! empty( $active_side['print_unit'] ) ? $active_side['print_unit'] : $unit;
@@ -153,18 +170,17 @@ class VisualPlacementStage {
 			$prod_type   = ! empty( $active_side['product_type'] ) ? $active_side['product_type'] : $prod_type;
 			$lock_ratio  = isset( $active_side['lock_aspect_ratio'] ) ? (bool) $active_side['lock_aspect_ratio'] : $lock_ratio;
 		}
+		$is_locked = ( ! empty( $lock_ratio ) || 'flat_object' === $prod_type );
 
-		$ratio       = ( $real_h > 0 ) ? round( $real_w / $real_h, 4 ) : 0.75;
-		$simplified  = SceneGraphSchema::calculate_simplified_ratio( $real_w, $real_h );
-		$print_w_px  = isset( $config['print_width_px'] ) ? intval( $config['print_width_px'] ) : 2400;
-		$cumulative  = ( ! empty( $config['side_export_metrics'][ $first_view_side_id ] ) && is_array( $config['side_export_metrics'][ $first_view_side_id ] ) )
+		$ratio      = ( $real_h > 0 ) ? round( $real_w / $real_h, 4 ) : 0.75;
+		$cumulative = ( ! empty( $config['side_export_metrics'][ $first_view_side_id ] ) && is_array( $config['side_export_metrics'][ $first_view_side_id ] ) )
 			? $config['side_export_metrics'][ $first_view_side_id ]
 			: SceneGraphSchema::compute_cumulative_design_area( $config );
-		$cum_w       = $cumulative['print_real_width'];
-		$cum_h       = $cumulative['print_real_height'];
-		$cum_w_px    = $cumulative['width_px'];
-		$cum_h_px    = $cumulative['height_px'];
-		$cum_simple  = $cumulative['simplified_ratio'];
+		$cum_w      = $cumulative['print_real_width'];
+		$cum_h      = $cumulative['print_real_height'];
+		$cum_w_px   = $cumulative['width_px'];
+		$cum_h_px   = $cumulative['height_px'];
+		$cum_simple = $cumulative['simplified_ratio'];
 
 		$role_labels = array(
 			'full'    => __( 'Complet', 'mr-tee-editor' ),
@@ -180,10 +196,39 @@ class VisualPlacementStage {
 				break;
 			}
 		}
+
+		$prod_type_short = ( 'flat_object' === $prod_type )
+			? __( '📇 Objet Plat', 'mr-tee-editor' )
+			: __( '👕 Vêtement', 'mr-tee-editor' );
 		?>
 		<div class="mr-tee-stage-wrapper">
-			<!-- Physical Dimensions & Automatic Aspect Ratio Toolbar -->
-			<div class="mr-tee-dimension-toolbar" id="mr-tee-dimension-toolbar">
+			<!-- Single-Row Collapsible Format & Dimensions Summary Bar -->
+			<div class="mr-tee-dim-summary-bar" id="mr-tee-dim-summary-bar">
+				<div class="mr-tee-dim-summary-info">
+					<span class="mr-tee-summary-chip" id="mr-tee-summary-type"><?php echo esc_html( $prod_type_short ); ?></span>
+					<span class="mr-tee-summary-sep" aria-hidden="true">·</span>
+					<strong id="mr-tee-summary-surface"><?php echo esc_html( $real_w . ' × ' . $real_h . ' ' . $unit ); ?></strong>
+					<span class="mr-tee-summary-sep" aria-hidden="true">·</span>
+					<span id="mr-tee-summary-dpi"><?php echo esc_html( $dpi . ' DPI' ); ?></span>
+					<span class="mr-tee-summary-sep" aria-hidden="true">·</span>
+					<span class="mr-tee-summary-export">
+						<?php esc_html_e( 'Zone export :', 'mr-tee-editor' ); ?>
+						<strong id="mr-tee-summary-cum"><?php echo esc_html( $cum_w . ' × ' . $cum_h . ' ' . $unit ); ?></strong>
+						<span class="mr-tee-summary-px">(<span id="mr-tee-summary-px"><?php echo esc_html( $cum_w_px . ' × ' . $cum_h_px . ' px' ); ?></span>)</span>
+					</span>
+				</div>
+				<div class="mr-tee-dim-summary-actions">
+					<button type="button" class="button button-small mr-tee-btn-dim-toggle" id="mr-tee-toggle-dim-drawer" aria-expanded="false" aria-controls="mr-tee-dimension-toolbar">
+						⚙ <?php esc_html_e( 'Format & Dimensions', 'mr-tee-editor' ); ?>
+					</button>
+					<button type="button" class="button button-small mr-tee-btn-jump-fonts" id="mr-tee-jump-to-fonts">
+						🔤 <span id="mr-tee-summary-fonts-count"><?php echo esc_html( count( $allowed_fonts ) ); ?></span> <?php esc_html_e( 'polices →', 'mr-tee-editor' ); ?>
+					</button>
+				</div>
+			</div>
+
+			<!-- Expandable Format & Physical Dimensions Drawer (Collapsed by default so canvas stays above the fold) -->
+			<div class="mr-tee-dimension-toolbar" id="mr-tee-dimension-toolbar" style="display:none;">
 				<div class="mr-tee-dim-inputs-grid">
 					<div class="mr-tee-dim-field">
 						<label for="mr_tee_product_type"><strong><?php esc_html_e( 'Type de Produit', 'mr-tee-editor' ); ?></strong></label>
@@ -203,46 +248,47 @@ class VisualPlacementStage {
 					</div>
 
 					<div class="mr-tee-dim-field">
-						<label for="mr_tee_real_width"><?php esc_html_e( 'Largeur Image/Produit (W)', 'mr-tee-editor' ); ?></label>
+						<label for="mr_tee_real_width"><?php esc_html_e( 'Largeur (W)', 'mr-tee-editor' ); ?></label>
 						<input type="number" step="any" min="0.1" id="mr_tee_real_width" name="mr_tee_config[print_real_width]" value="<?php echo esc_attr( $real_w ); ?>" class="small-text mr-tee-dim-input" />
 					</div>
 
 					<div class="mr-tee-dim-field">
-						<label for="mr_tee_real_height"><?php esc_html_e( 'Hauteur Image/Produit (H)', 'mr-tee-editor' ); ?></label>
+						<label for="mr_tee_real_height"><?php esc_html_e( 'Hauteur (H)', 'mr-tee-editor' ); ?></label>
 						<input type="number" step="any" min="0.1" id="mr_tee_real_height" name="mr_tee_config[print_real_height]" value="<?php echo esc_attr( $real_h ); ?>" class="small-text mr-tee-dim-input" />
 					</div>
 
 					<div class="mr-tee-dim-field">
 						<label for="mr_tee_dpi"><?php esc_html_e( 'DPI', 'mr-tee-editor' ); ?></label>
-						<input type="number" step="any" min="72" max="1200" id="mr_tee_dpi" name="mr_tee_config[dpi]" value="<?php echo esc_attr( $dpi ); ?>" class="small-text mr-tee-dim-input" />
+						<input type="number" step="1" min="72" max="1200" id="mr_tee_dpi" name="mr_tee_config[dpi]" value="<?php echo esc_attr( $dpi ); ?>" class="small-text mr-tee-dim-input" />
 					</div>
 
 					<div class="mr-tee-dim-field mr-tee-dim-field-lock">
 						<label>
-							<input type="checkbox" id="mr_tee_lock_aspect_ratio" name="mr_tee_config[lock_aspect_ratio]" value="1" <?php checked( $lock_ratio ); ?> />
-							<strong><?php esc_html_e( 'Verrouiller le ratio sur tous les écrans', 'mr-tee-editor' ); ?></strong>
+							<input type="hidden" name="mr_tee_config[lock_aspect_ratio]" value="0" />
+							<input type="checkbox" id="mr_tee_lock_aspect_ratio" name="mr_tee_config[lock_aspect_ratio]" value="1" <?php checked( $is_locked ); ?> />
+							<strong><?php esc_html_e( 'Verrouiller le ratio', 'mr-tee-editor' ); ?></strong>
 						</label>
-						<span class="description" style="display:block; font-size:11px; color:#64748b;"><?php esc_html_e( 'Affiche l\'image dans ce ratio exact sur mobile, tablette et PC', 'mr-tee-editor' ); ?></span>
+						<span class="description"><?php esc_html_e( 'Conserve ces proportions exactes sur tous les écrans', 'mr-tee-editor' ); ?></span>
 					</div>
 				</div>
 
-				<!-- Quick Dimensions Presets (Matching POD Standards) -->
+				<!-- Quick Dimensions Presets (POD Standards) -->
 				<div class="mr-tee-presets-fast-bar">
-					<span class="mr-tee-fast-label"><?php esc_html_e( 'Gabarits standard :', 'mr-tee-editor' ); ?></span>
-					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="8.5" data-h="5.5" data-lock="1" data-ratio="17:11" title="<?php esc_attr_e( 'Carte de Visite (8.5 × 5.5 cm | 17:11 | ~1.55:1 Landscape)', 'mr-tee-editor' ); ?>">📇 <?php esc_html_e( 'Carte (8.5 × 5.5 cm | 17:11)', 'mr-tee-editor' ); ?></button>
-					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="15" data-h="10" data-lock="1" data-ratio="3:2" title="<?php esc_attr_e( 'Carte Postale / Photo (15 × 10 cm | 3:2 | 1.50:1 Landscape)', 'mr-tee-editor' ); ?>">🖼️ <?php esc_html_e( 'Photo (15 × 10 cm | 3:2)', 'mr-tee-editor' ); ?></button>
-					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="20" data-h="9.5" data-lock="1" data-ratio="40:19" title="<?php esc_attr_e( 'Mug Wrap Complet (20 × 9.5 cm | 40:19 | ~2.11:1 Panoramique)', 'mr-tee-editor' ); ?>">☕ <?php esc_html_e( 'Mug Wrap (20 × 9.5 cm | 40:19)', 'mr-tee-editor' ); ?></button>
-					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="21" data-h="29.7" data-lock="1" data-ratio="1:1.414" title="<?php esc_attr_e( 'Flyer / Poster A4 (21 × 29.7 cm | 1:1.414 Portrait)', 'mr-tee-editor' ); ?>">📄 <?php esc_html_e( 'Flyer A4 (21 × 29.7 cm)', 'mr-tee-editor' ); ?></button>
-					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="10" data-h="10" data-lock="1" data-ratio="1:1" title="<?php esc_attr_e( 'Sous-verre / Patch Carré (10 × 10 cm | 1:1 Square)', 'mr-tee-editor' ); ?>">🟩 <?php esc_html_e( 'Carré (10 × 10 cm | 1:1)', 'mr-tee-editor' ); ?></button>
-					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="garment" data-unit="cm" data-w="30" data-h="40" data-lock="0" data-ratio="3:4" title="<?php esc_attr_e( 'Plateau T-Shirt DTG (30 × 40 cm | 3:4 | 0.75:1 Portrait)', 'mr-tee-editor' ); ?>">👕 <?php esc_html_e( 'T-Shirt (30 × 40 cm | 3:4)', 'mr-tee-editor' ); ?></button>
+					<span class="mr-tee-fast-label"><?php esc_html_e( 'Gabarits POD :', 'mr-tee-editor' ); ?></span>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="8.5" data-h="5.5" data-lock="1" data-ratio="17:11">📇 <?php esc_html_e( 'Carte (8.5 × 5.5 cm)', 'mr-tee-editor' ); ?></button>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="15" data-h="10" data-lock="1" data-ratio="3:2">🖼️ <?php esc_html_e( 'Photo (15 × 10 cm)', 'mr-tee-editor' ); ?></button>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="20" data-h="9.5" data-lock="1" data-ratio="40:19">☕ <?php esc_html_e( 'Mug Wrap (20 × 9.5 cm)', 'mr-tee-editor' ); ?></button>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="21" data-h="29.7" data-lock="1" data-ratio="1:1.414">📄 <?php esc_html_e( 'Flyer A4 (21 × 29.7 cm)', 'mr-tee-editor' ); ?></button>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="10" data-h="10" data-lock="1" data-ratio="1:1">🟩 <?php esc_html_e( 'Carré (10 × 10 cm)', 'mr-tee-editor' ); ?></button>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="garment" data-unit="cm" data-w="30" data-h="40" data-lock="0" data-ratio="3:4">👕 <?php esc_html_e( 'T-Shirt (30 × 40 cm)', 'mr-tee-editor' ); ?></button>
 				</div>
 
-				<!-- Live Ratio & 300 DPI Export Badge -->
+				<!-- Live Ratio & Dynamic DPI Export Badge -->
 				<div class="mr-tee-ratio-badge" id="mr-tee-ratio-badge">
 					<span class="mr-tee-badge-icon dashicons dashicons-image-crop"></span>
 					<span class="mr-tee-badge-cum-text">
-						<strong><?php esc_html_e( 'Zone d\'impression calculée :', 'mr-tee-editor' ); ?></strong>
-						<span id="mr-tee-badge-cum-val" style="color:#059669; font-weight:700;"><?php echo esc_html( $cum_w . ' × ' . $cum_h . ' ' . $unit ); ?></span>
+						<strong><?php esc_html_e( 'Zone d\'impression :', 'mr-tee-editor' ); ?></strong>
+						<span id="mr-tee-badge-cum-val" class="mr-tee-badge-cum-val"><?php echo esc_html( $cum_w . ' × ' . $cum_h . ' ' . $unit ); ?></span>
 					</span>
 					<span class="mr-tee-badge-divider">|</span>
 					<span class="mr-tee-badge-ratio-text">
@@ -251,107 +297,10 @@ class VisualPlacementStage {
 					</span>
 					<span class="mr-tee-badge-divider">|</span>
 					<span class="mr-tee-badge-px-text">
-						<strong><?php esc_html_e( 'Fichier 300 DPI :', 'mr-tee-editor' ); ?></strong>
+						<strong><?php esc_html_e( 'Fichier', 'mr-tee-editor' ); ?> <span id="mr-tee-badge-dpi-val"><?php echo esc_html( $dpi ); ?></span> DPI :</strong>
 						<span id="mr-tee-badge-px-val"><?php echo esc_html( $cum_w_px . ' × ' . $cum_h_px . ' px' ); ?></span>
 					</span>
-					<span class="mr-tee-badge-divider">|</span>
-					<span class="mr-tee-badge-status-pill"><?php esc_html_e( '100% Print-Ready', 'mr-tee-editor' ); ?></span>
-				</div>
-			</div>
-
-			<!-- Product Allowed Fonts & Ordering Selector (Speed & Mobile UX Optimization) -->
-			<div class="mr-tee-allowed-fonts-card" id="mr-tee-allowed-fonts-card">
-				<div class="mr-tee-allowed-fonts-header">
-					<div>
-						<h4 class="mr-tee-allowed-fonts-title">
-							<span>🔤</span> <?php esc_html_e( 'Polices Autorisées & Ordre d\'Affichage (Optimisation Vitesse Mobile)', 'mr-tee-editor' ); ?>
-						</h4>
-						<p class="mr-tee-allowed-fonts-desc">
-							<?php esc_html_e( 'Seules les polices listées ci-dessous seront chargées et affichées sur cette fiche produit. Toutes les autres polices sont totalement exclues pour garantir une vitesse de chargement instantanée. La police #1 est automatiquement la police par défaut.', 'mr-tee-editor' ); ?>
-						</p>
-					</div>
-					<div class="mr-tee-allowed-fonts-stats" style="font-size:12px; font-weight:700; color:#2563eb; background:#eff6ff; padding:4px 10px; border-radius:6px; border:1px solid #bfdbfe;">
-						<span id="mr-tee-allowed-fonts-count"><?php echo esc_html( count( $allowed_fonts ) ); ?></span> <?php esc_html_e( 'police(s) active(s)', 'mr-tee-editor' ); ?>
-					</div>
-				</div>
-
-				<!-- Ordered Allowed Fonts List -->
-				<div class="mr-tee-allowed-fonts-list" id="mr-tee-allowed-fonts-list">
-					<?php foreach ( $allowed_fonts as $order_idx => $af_id ) : ?>
-						<?php
-						$f_info      = isset( $fonts[ $af_id ] ) ? $fonts[ $af_id ] : array( 'name' => $af_id, 'font_type' => 'ttf' );
-						$is_svg      = ( ! empty( $f_info['font_type'] ) && 'opentype_svg' === $f_info['font_type'] ) || ! empty( $f_info['color_svg'] );
-						$is_default  = ( 0 === $order_idx );
-						$f_thumb_url = ! empty( $f_info['thumb_url'] ) ? SceneGraphSchema::normalize_url_scheme( $f_info['thumb_url'] ) : '';
-						?>
-						<div class="mr-tee-allowed-font-item <?php echo $is_default ? 'is-default-font' : ''; ?>" data-font-id="<?php echo esc_attr( $af_id ); ?>">
-							<div class="mr-tee-allowed-font-info">
-								<span class="mr-tee-font-order-badge <?php echo $is_default ? 'is-default' : 'is-option'; ?>">
-									<?php echo $is_default ? esc_html__( '#1 DÉFAUT', 'mr-tee-editor' ) : esc_html( '#' . ( $order_idx + 1 ) . ' OPTION' ); ?>
-								</span>
-								<span class="mr-tee-font-type-pill <?php echo $is_svg ? 'is-svg' : 'is-ttf'; ?>">
-									<?php echo $is_svg ? 'SVG 3D' : 'TTF'; ?>
-								</span>
-								<?php if ( ! empty( $f_thumb_url ) ) : ?>
-									<img src="<?php echo esc_url( $f_thumb_url ); ?>" alt="" loading="lazy" decoding="async" style="width:18px; height:18px; object-fit:contain;" />
-								<?php endif; ?>
-								<strong class="mr-tee-font-name-label"><?php echo esc_html( $f_info['name'] ); ?></strong>
-							</div>
-							<div class="mr-tee-allowed-font-actions">
-								<button type="button" class="mr-tee-btn-font-action mr-tee-btn-font-up" title="<?php esc_attr_e( 'Monter', 'mr-tee-editor' ); ?>" <?php echo $is_default ? 'disabled' : ''; ?>>▲</button>
-								<button type="button" class="mr-tee-btn-font-action mr-tee-btn-font-down" title="<?php esc_attr_e( 'Descendre', 'mr-tee-editor' ); ?>" <?php echo ( $order_idx === count( $allowed_fonts ) - 1 ) ? 'disabled' : ''; ?>>▼</button>
-								<button type="button" class="mr-tee-btn-font-action mr-tee-btn-font-delete" title="<?php esc_attr_e( 'Retirer cette police', 'mr-tee-editor' ); ?>" <?php echo ( count( $allowed_fonts ) <= 1 ) ? 'disabled' : ''; ?>>✕</button>
-							</div>
-						</div>
-					<?php endforeach; ?>
-				</div>
-
-				<!-- Hidden input storing serialized JSON of ordered allowed_fonts -->
-				<input type="hidden" name="mr_tee_config[allowed_fonts]" id="mr_tee_allowed_fonts_json" value="<?php echo esc_attr( wp_json_encode( array_values( $allowed_fonts ) ) ); ?>" />
-
-				<!-- Toolbar: Add Font Picker & Quick Presets -->
-				<div class="mr-tee-allowed-fonts-toolbar">
-					<div class="mr-tee-add-font-controls">
-						<select id="mr_tee_add_font_picker" style="max-width:280px; font-weight:600; padding:4px 8px; border-radius:5px;">
-							<option value=""><?php esc_html_e( '-- Choisir une police à ajouter --', 'mr-tee-editor' ); ?></option>
-							<optgroup label="<?php esc_attr_e( '✨ Polices OpenType-SVG', 'mr-tee-editor' ); ?>">
-								<?php foreach ( $fonts as $f_id => $f_data ) : ?>
-									<?php $is_svg_picker = ( ! empty( $f_data['font_type'] ) && 'opentype_svg' === $f_data['font_type'] ) || ! empty( $f_data['color_svg'] ); ?>
-									<?php if ( $is_svg_picker ) : ?>
-										<option value="<?php echo esc_attr( $f_id ); ?>" <?php echo in_array( $f_id, $allowed_fonts, true ) ? 'disabled' : ''; ?>>
-											<?php echo esc_html( $f_data['name'] ); ?><?php echo in_array( $f_id, $allowed_fonts, true ) ? ' (déjà active)' : ''; ?>
-										</option>
-									<?php endif; ?>
-								<?php endforeach; ?>
-							</optgroup>
-							<optgroup label="<?php esc_attr_e( '🔤 Polices Stylisées TTF', 'mr-tee-editor' ); ?>">
-								<?php foreach ( $fonts as $f_id => $f_data ) : ?>
-									<?php $is_svg_picker = ( ! empty( $f_data['font_type'] ) && 'opentype_svg' === $f_data['font_type'] ) || ! empty( $f_data['color_svg'] ); ?>
-									<?php if ( ! $is_svg_picker ) : ?>
-										<option value="<?php echo esc_attr( $f_id ); ?>" <?php echo in_array( $f_id, $allowed_fonts, true ) ? 'disabled' : ''; ?>>
-											<?php echo esc_html( $f_data['name'] ); ?><?php echo in_array( $f_id, $allowed_fonts, true ) ? ' (déjà active)' : ''; ?>
-										</option>
-									<?php endif; ?>
-								<?php endforeach; ?>
-							</optgroup>
-						</select>
-						<button type="button" class="button button-primary mr-tee-btn-add-allowed-font" id="mr_tee_btn_add_allowed_font">
-							+ <?php esc_html_e( 'Ajouter', 'mr-tee-editor' ); ?>
-						</button>
-					</div>
-
-					<div class="mr-tee-allowed-font-presets" style="display:flex; align-items:center; gap:6px;">
-						<span style="font-size:11px; font-weight:700; color:#64748b;"><?php esc_html_e( 'Raccourcis :', 'mr-tee-editor' ); ?></span>
-						<button type="button" class="button button-small" id="mr_tee_preset_only_first" title="<?php esc_attr_e( 'Conserver uniquement la police #1 (désactive le sélecteur client pour vitesse pure)', 'mr-tee-editor' ); ?>">
-							🎯 <?php esc_html_e( 'Police #1 Seule', 'mr-tee-editor' ); ?>
-						</button>
-						<button type="button" class="button button-small" id="mr_tee_preset_all_svg" title="<?php esc_attr_e( 'Sélectionner uniquement les 6 polices OpenType-SVG', 'mr-tee-editor' ); ?>">
-							✨ <?php esc_html_e( '6 Polices OpenType-SVG', 'mr-tee-editor' ); ?>
-						</button>
-						<button type="button" class="button button-small" id="mr_tee_preset_all_fonts" title="<?php esc_attr_e( 'Activer toutes les polices de la boutique', 'mr-tee-editor' ); ?>">
-							🔤 <?php esc_html_e( 'Toutes les polices', 'mr-tee-editor' ); ?>
-						</button>
-					</div>
+					<span class="mr-tee-badge-status-pill"><?php esc_html_e( 'Print-Ready', 'mr-tee-editor' ); ?></span>
 				</div>
 			</div>
 
@@ -366,15 +315,22 @@ class VisualPlacementStage {
 							$s_id     = $side['id'];
 							$s_active = ( $s_id === $first_view_side_id );
 							?>
-							<button
-								type="button"
+							<div
+								role="button"
+								tabindex="0"
 								class="mr-tee-side-pill <?php echo $s_active ? 'is-active' : ''; ?>"
 								data-side-id="<?php echo esc_attr( $s_id ); ?>"
 							>
 								<span class="mr-tee-side-pill-dot" aria-hidden="true"></span>
 								<span class="mr-tee-side-pill-label"><?php echo esc_html( $side['label'] ); ?></span>
 								<span class="mr-tee-side-pill-dims"><?php echo esc_html( $side['print_real_width'] . '×' . $side['print_real_height'] . ' ' . $side['print_unit'] ); ?></span>
-							</button>
+								<span class="mr-tee-side-pill-controls">
+									<button type="button" class="mr-tee-side-action-btn mr-tee-side-rename-btn" data-side-id="<?php echo esc_attr( $s_id ); ?>" title="<?php esc_attr_e( 'Renommer cette face', 'mr-tee-editor' ); ?>">✎</button>
+									<?php if ( count( $print_sides ) > 1 ) : ?>
+										<button type="button" class="mr-tee-side-action-btn mr-tee-side-delete-btn" data-side-id="<?php echo esc_attr( $s_id ); ?>" title="<?php esc_attr_e( 'Supprimer cette face', 'mr-tee-editor' ); ?>">✕</button>
+									<?php endif; ?>
+								</span>
+							</div>
 						<?php endforeach; ?>
 					</div>
 					<div class="mr-tee-sides-actions">
@@ -384,7 +340,7 @@ class VisualPlacementStage {
 							id="mr-tee-btn-add-back-side"
 							<?php echo $has_back_side ? 'style="display:none;"' : ''; ?>
 						>
-							<?php esc_html_e( '+ Ajouter Verso (Dos)', 'mr-tee-editor' ); ?>
+							<?php esc_html_e( '+ Verso (Dos)', 'mr-tee-editor' ); ?>
 						</button>
 						<button type="button" class="button button-small mr-tee-btn-add-side" id="mr-tee-btn-add-side">
 							<?php esc_html_e( '+ Nouvelle Face', 'mr-tee-editor' ); ?>
@@ -402,7 +358,8 @@ class VisualPlacementStage {
 							$v_side_label = isset( $sides_by_id[ $v_side_id ]['label'] ) ? $sides_by_id[ $v_side_id ]['label'] : $v_side_id;
 							$v_role       = ! empty( $view['view_role'] ) ? $view['view_role'] : 'full';
 							$v_role_label = isset( $role_labels[ $v_role ] ) ? $role_labels[ $v_role ] : $role_labels['full'];
-							$v_img        = SceneGraphSchema::normalize_url_scheme( ! empty( $view['image_url'] ) ? $view['image_url'] : $thumb_url );
+							$v_raw_img    = ! empty( $view['image_url'] ) ? $view['image_url'] : ( 0 === $v_idx ? $thumb_url : '' );
+							$v_img        = SceneGraphSchema::normalize_url_scheme( $v_raw_img );
 							?>
 							<button
 								type="button"
@@ -430,19 +387,8 @@ class VisualPlacementStage {
 					</div>
 					<div class="mr-tee-views-actions">
 						<button type="button" class="button button-secondary button-small mr-tee-btn-add-view" id="mr-tee-btn-add-view">
-							<?php esc_html_e( '+ Ajouter une Vue Aperçu', 'mr-tee-editor' ); ?>
+							<?php esc_html_e( '+ Ajouter une Vue', 'mr-tee-editor' ); ?>
 						</button>
-						<label class="mr-tee-wc-gallery-toggle" for="mr_tee_include_wc_gallery">
-							<input type="hidden" name="mr_tee_config[include_wc_gallery_slides]" value="0" />
-							<input
-								type="checkbox"
-								id="mr_tee_include_wc_gallery"
-								name="mr_tee_config[include_wc_gallery_slides]"
-								value="1"
-								<?php checked( $include_wc_gallery ); ?>
-							/>
-							<span><?php esc_html_e( 'Inclure la galerie WooCommerce', 'mr-tee-editor' ); ?></span>
-						</label>
 					</div>
 				</div>
 
@@ -463,9 +409,7 @@ class VisualPlacementStage {
 						<label for="mr_tee_view_side_id"><?php esc_html_e( 'Face', 'mr-tee-editor' ); ?></label>
 						<select id="mr_tee_view_side_id" class="mr-tee-view-select">
 							<?php foreach ( $print_sides as $s ) : ?>
-								<option value="<?php echo esc_attr( $s['id'] ); ?>" <?php selected( $first_view_side_id, $s['id'] ); ?>>
-									<?php echo esc_html( $s['label'] ); ?>
-								</option>
+								<option value="<?php echo esc_attr( $s['id'] ); ?>" <?php selected( $first_view_side_id, $s['id'] ); ?>><?php echo esc_html( $s['label'] ); ?></option>
 							<?php endforeach; ?>
 						</select>
 					</div>
@@ -482,8 +426,8 @@ class VisualPlacementStage {
 					<div class="mr-tee-view-setting-group">
 						<label for="mr_tee_view_blend_mode"><?php esc_html_e( 'Fusion', 'mr-tee-editor' ); ?></label>
 						<select id="mr_tee_view_blend_mode" class="mr-tee-view-select">
-							<option value="normal" <?php selected( $first_view_blend, 'normal' ); ?>><?php esc_html_e( 'Normal (Standard)', 'mr-tee-editor' ); ?></option>
-							<option value="multiply" <?php selected( $first_view_blend, 'multiply' ); ?>><?php esc_html_e( 'Fusion Tissu Clair (Multiply)', 'mr-tee-editor' ); ?></option>
+							<option value="normal" <?php selected( $first_view_blend, 'normal' ); ?>><?php esc_html_e( 'Normal', 'mr-tee-editor' ); ?></option>
+							<option value="multiply" <?php selected( $first_view_blend, 'multiply' ); ?>><?php esc_html_e( 'Tissu Clair (Multiply)', 'mr-tee-editor' ); ?></option>
 							<option value="soft_ink" <?php selected( $first_view_blend, 'soft_ink' ); ?>><?php esc_html_e( 'Encre Douce (92%)', 'mr-tee-editor' ); ?></option>
 						</select>
 					</div>
@@ -496,7 +440,7 @@ class VisualPlacementStage {
 								value="1"
 								<?php checked( ! empty( $first_view['is_cart_preview'] ) ); ?>
 							/>
-							<span><?php esc_html_e( 'Afficher dans le Panier / Lightbox', 'mr-tee-editor' ); ?></span>
+							<span><?php esc_html_e( 'Aperçu Panier', 'mr-tee-editor' ); ?></span>
 						</label>
 					</div>
 
@@ -504,7 +448,7 @@ class VisualPlacementStage {
 						<button type="button" id="mr_tee_view_image_btn" class="button button-small">
 							📁 <?php esc_html_e( 'Image WP', 'mr-tee-editor' ); ?>
 						</button>
-						<label class="button button-small mr-tee-view-upload-label" style="cursor:pointer; display:inline-flex; align-items:center; gap:4px;">
+						<label class="button button-small mr-tee-view-upload-label">
 							<span>⬆️ <?php esc_html_e( 'Importer', 'mr-tee-editor' ); ?></span>
 							<input type="file" id="mr_tee_view_image_upload" accept="image/*" style="display:none;" />
 						</label>
@@ -512,24 +456,23 @@ class VisualPlacementStage {
 							type="button"
 							id="mr_tee_view_move_left"
 							class="button button-small"
-							title="<?php esc_attr_e( 'Déplacer vers la gauche', 'mr-tee-editor' ); ?>"
+							title="<?php esc_attr_e( 'Déplacer la vue vers la gauche', 'mr-tee-editor' ); ?>"
 							<?php echo count( $preview_views ) <= 1 ? 'disabled' : ''; ?>
 						>◀</button>
 						<button
 							type="button"
 							id="mr_tee_view_move_right"
 							class="button button-small"
-							title="<?php esc_attr_e( 'Déplacer vers la droite', 'mr-tee-editor' ); ?>"
+							title="<?php esc_attr_e( 'Déplacer la vue vers la droite', 'mr-tee-editor' ); ?>"
 							<?php echo count( $preview_views ) <= 1 ? 'disabled' : ''; ?>
 						>▶</button>
 						<button
 							type="button"
 							id="mr_tee_view_delete_btn"
 							class="button button-small button-link-delete"
+							title="<?php esc_attr_e( 'Supprimer cette vue', 'mr-tee-editor' ); ?>"
 							<?php echo count( $preview_views ) <= 1 ? 'disabled' : ''; ?>
-						>
-							✕ <?php esc_html_e( 'Supprimer Vue', 'mr-tee-editor' ); ?>
-						</button>
+						>✕</button>
 						<span id="mr-tee-view-upload-status" class="mr-tee-view-upload-status"></span>
 					</div>
 				</div>
@@ -539,7 +482,7 @@ class VisualPlacementStage {
 				<input type="hidden" id="mr_tee_preview_views_json" name="mr_tee_config[preview_views]" value="<?php echo esc_attr( wp_json_encode( array_values( $preview_views ) ) ); ?>" />
 			</div>
 
-			<!-- Header Field Pills Bar -->
+			<!-- Single Field Pills Bar (Selection + Reorder + Add Text/Image) -->
 			<div class="mr-tee-stage-pills-bar" id="mr-tee-stage-pills-bar">
 				<div class="mr-tee-pills-scroll" id="mr-tee-pills-list">
 					<?php foreach ( $text_lines as $idx => $line ) : ?>
@@ -571,28 +514,63 @@ class VisualPlacementStage {
 						</button>
 					<?php endforeach; ?>
 				</div>
+
 				<div class="mr-tee-add-buttons-group">
-					<button type="button" class="button button-secondary mr-tee-btn-add-field-pill" id="mr-tee-btn-add-field-pill">
-						<span class="dashicons dashicons-plus-alt2"></span> <?php esc_html_e( '+ Ajouter un Texte', 'mr-tee-editor' ); ?>
+					<div class="mr-tee-field-reorder-group" title="<?php esc_attr_e( 'Réordonner le champ actif dans le formulaire client', 'mr-tee-editor' ); ?>">
+						<button type="button" class="button button-small" id="mr-tee-btn-field-move-left" title="<?php esc_attr_e( 'Déplacer le champ actif avant', 'mr-tee-editor' ); ?>" <?php echo count( $text_lines ) <= 1 ? 'disabled' : ''; ?>>◀</button>
+						<button type="button" class="button button-small" id="mr-tee-btn-field-move-right" title="<?php esc_attr_e( 'Déplacer le champ actif après', 'mr-tee-editor' ); ?>" <?php echo count( $text_lines ) <= 1 ? 'disabled' : ''; ?>>▶</button>
+					</div>
+					<button type="button" class="button button-secondary button-small mr-tee-btn-add-field-pill" id="mr-tee-btn-add-field-pill">
+						+ <?php esc_html_e( 'Texte', 'mr-tee-editor' ); ?>
 					</button>
-					<button type="button" class="button button-secondary mr-tee-btn-add-image-field-pill" id="mr-tee-btn-add-image-field-pill">
-						<span>🖼️</span> <?php esc_html_e( '+ Ajouter une Image', 'mr-tee-editor' ); ?>
+					<button type="button" class="button button-secondary button-small mr-tee-btn-add-image-field-pill" id="mr-tee-btn-add-image-field-pill">
+						🖼️ + <?php esc_html_e( 'Image', 'mr-tee-editor' ); ?>
 					</button>
 				</div>
 			</div>
 
 			<div class="mr-tee-stage-container">
-				<!-- Stage Canvas Column -->
+				<!-- Left Column: Canvas Micro-Toolbar + Mockup Stage -->
 				<div class="mr-tee-stage-col-preview">
+					<!-- Canvas Micro-Toolbar -->
+					<div class="mr-tee-canvas-toolbar" id="mr-tee-canvas-toolbar">
+						<button type="button" class="mr-tee-canvas-tool-btn" data-action="center-h" title="<?php esc_attr_e( 'Centrer horizontalement', 'mr-tee-editor' ); ?>">↔ <?php esc_html_e( 'Centrer H', 'mr-tee-editor' ); ?></button>
+						<button type="button" class="mr-tee-canvas-tool-btn" data-action="center-v" title="<?php esc_attr_e( 'Centrer verticalement', 'mr-tee-editor' ); ?>">↕ <?php esc_html_e( 'Centrer V', 'mr-tee-editor' ); ?></button>
+						<button type="button" class="mr-tee-canvas-tool-btn" data-action="center-both" title="<?php esc_attr_e( 'Centrer au milieu du visuel', 'mr-tee-editor' ); ?>">✛ <?php esc_html_e( 'Centrer', 'mr-tee-editor' ); ?></button>
+						<span class="mr-tee-canvas-tool-sep" aria-hidden="true"></span>
+						<button type="button" class="mr-tee-canvas-tool-btn" data-action="reset-rot" title="<?php esc_attr_e( 'Réinitialiser la rotation à 0°', 'mr-tee-editor' ); ?>">↺ 0°</button>
+						<button type="button" class="mr-tee-canvas-tool-btn" data-action="duplicate" title="<?php esc_attr_e( 'Dupliquer le champ actif', 'mr-tee-editor' ); ?>"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><?php esc_html_e( 'Dupliquer', 'mr-tee-editor' ); ?></button>
+					</div>
+
 					<div
-						class="mr-tee-stage-canvas-wrap <?php echo ( ! empty( $lock_ratio ) || 'flat_object' === $prod_type ) ? 'is-aspect-locked' : ''; ?>"
+						class="mr-tee-stage-canvas-wrap <?php echo $is_locked ? 'is-aspect-locked' : ''; ?> <?php echo '' === $first_view_img ? 'is-no-image' : ''; ?>"
 						id="mr-tee-stage-canvas-wrap"
 						data-active-view-id="<?php echo esc_attr( $first_view_id ); ?>"
 						data-active-side-id="<?php echo esc_attr( $first_view_side_id ); ?>"
 						data-blend-mode="<?php echo esc_attr( $first_view_blend ); ?>"
-						style="<?php echo ( ! empty( $lock_ratio ) || 'flat_object' === $prod_type ) ? 'aspect-ratio: ' . esc_attr( $ratio ) . ';' : ''; ?>"
+						style="<?php echo $is_locked ? 'aspect-ratio: ' . esc_attr( $ratio ) . '; --stage-ratio: ' . esc_attr( $ratio ) . ';' : ''; ?>"
 					>
-						<img src="<?php echo esc_url( $first_view_img ); ?>" alt="Garment Preview" decoding="async" class="mr-tee-stage-garment-img" id="mr-tee-stage-garment-img" />
+						<img
+							src="<?php echo esc_url( $first_view_img ); ?>"
+							alt="Garment Preview"
+							decoding="async"
+							class="mr-tee-stage-garment-img"
+							id="mr-tee-stage-garment-img"
+							<?php echo '' === $first_view_img ? 'style="display:none;"' : ''; ?>
+						/>
+
+						<!-- Empty-State Overlay when active view has no mockup image yet -->
+						<div class="mr-tee-stage-empty-overlay" id="mr-tee-stage-empty-overlay" <?php echo '' === $first_view_img ? '' : 'style="display:none;"'; ?>>
+							<div class="mr-tee-stage-empty-card">
+								<span class="mr-tee-stage-empty-icon" aria-hidden="true">📷</span>
+								<strong><?php esc_html_e( 'Choisissez l\'image mockup de cette vue', 'mr-tee-editor' ); ?></strong>
+								<p><?php esc_html_e( 'Importez ou sélectionnez la photo de cette vue pour placer vos zones de personnalisation.', 'mr-tee-editor' ); ?></p>
+								<div class="mr-tee-stage-empty-actions">
+									<button type="button" class="button button-primary mr-tee-empty-pick-wp">📁 <?php esc_html_e( 'Image WP', 'mr-tee-editor' ); ?></button>
+									<button type="button" class="button button-secondary mr-tee-empty-upload-file">⬆️ <?php esc_html_e( 'Importer', 'mr-tee-editor' ); ?></button>
+								</div>
+							</div>
+						</div>
 
 						<!-- Multi-Rectangle Design Area Boxes -->
 						<div id="mr-tee-boxes-container">
@@ -611,10 +589,11 @@ class VisualPlacementStage {
 								$bw                = ( $view_placement && isset( $view_placement['box_width'] ) ) ? floatval( $view_placement['box_width'] ) : ( isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : 40.0 );
 								$bh                = ( $view_placement && isset( $view_placement['box_height'] ) ) ? floatval( $view_placement['box_height'] ) : ( isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : ( $is_image ? 30.0 : 8.5 ) );
 								$br                = ( $view_placement && isset( $view_placement['box_rotate'] ) ) ? floatval( $view_placement['box_rotate'] ) : ( isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0 );
+								$badge_classes     = ( $bt < 8.0 ? ' is-badge-bottom' : '' ) . ( ( $bt + $bh ) > 92.0 ? ' is-badge-inside' : '' );
 								?>
 								<div
 									id="mr-tee-field-box-<?php echo esc_attr( $idx ); ?>"
-									class="mr-tee-field-box <?php echo $initial_active_idx === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-field' : ''; ?>"
+									class="mr-tee-field-box <?php echo $initial_active_idx === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-field' : ''; ?><?php echo esc_attr( $badge_classes ); ?>"
 									data-field-index="<?php echo esc_attr( $idx ); ?>"
 									data-field-type="<?php echo esc_attr( $field_type ); ?>"
 									data-side-id="<?php echo esc_attr( $line_side_id ); ?>"
@@ -629,27 +608,31 @@ class VisualPlacementStage {
 
 									<!-- Interactive Rotation Handle & Stem -->
 									<div class="mr-tee-handle-rot-stem" style="background: <?php echo esc_attr( $color ); ?>;"></div>
-									<div class="mr-tee-handle-rot" data-handle="rot" style="border-color: <?php echo esc_attr( $color ); ?>;" title="<?php esc_attr_e( 'Faire pivoter la zone (ou entrer les degrés ci-contre)', 'mr-tee-editor' ); ?>"></div>
+									<div class="mr-tee-handle-rot" data-handle="rot" style="border-color: <?php echo esc_attr( $color ); ?>;" title="<?php esc_attr_e( 'Faire pivoter la zone', 'mr-tee-editor' ); ?>"></div>
 
-									<!-- Interactive Corner Resize Handles -->
+									<!-- Interactive Corner & Edge Resize Handles (NW/NE/SW/SE + N/S/E/W) -->
 									<div class="mr-tee-handle mr-tee-handle-nw" data-handle="nw" style="border-color: <?php echo esc_attr( $color ); ?>;"></div>
 									<div class="mr-tee-handle mr-tee-handle-ne" data-handle="ne" style="border-color: <?php echo esc_attr( $color ); ?>;"></div>
 									<div class="mr-tee-handle mr-tee-handle-sw" data-handle="sw" style="border-color: <?php echo esc_attr( $color ); ?>;"></div>
 									<div class="mr-tee-handle mr-tee-handle-se" data-handle="se" style="border-color: <?php echo esc_attr( $color ); ?>;"></div>
+									<div class="mr-tee-handle mr-tee-handle-edge mr-tee-handle-n" data-handle="n" style="border-color: <?php echo esc_attr( $color ); ?>;"></div>
+									<div class="mr-tee-handle mr-tee-handle-edge mr-tee-handle-s" data-handle="s" style="border-color: <?php echo esc_attr( $color ); ?>;"></div>
+									<div class="mr-tee-handle mr-tee-handle-edge mr-tee-handle-e" data-handle="e" style="border-color: <?php echo esc_attr( $color ); ?>;"></div>
+									<div class="mr-tee-handle mr-tee-handle-edge mr-tee-handle-w" data-handle="w" style="border-color: <?php echo esc_attr( $color ); ?>;"></div>
 								</div>
 							<?php endforeach; ?>
 						</div>
 					</div>
 
 					<p class="description mr-tee-stage-instructions">
-						<?php esc_html_e( 'Cliquez sur un rectangle pour l\'activer. Déplacez-le par glisser-déposer sur le fond et tirez sur les poignées pour modifier sa largeur/hauteur. Le texte ou l\'image reste strictement à l\'intérieur du rectangle défini sans jamais déborder.', 'mr-tee-editor' ); ?>
+						<?php esc_html_e( 'Glissez une zone pour la déplacer, tirez les poignées pour redimensionner, ou utilisez les flèches du clavier (Maj + flèches = 2%).', 'mr-tee-editor' ); ?>
 					</p>
 				</div>
 
-				<!-- Stage Controls Column -->
+				<!-- Right Column: Compact Active Field Inspector -->
 				<div class="mr-tee-stage-col-controls">
 					<div class="mr-tee-controls-header">
-						<h4><?php esc_html_e( 'Configuration du Rectangle Actif', 'mr-tee-editor' ); ?></h4>
+						<h4><?php esc_html_e( 'Configuration du Champ Actif', 'mr-tee-editor' ); ?></h4>
 					</div>
 
 					<div id="mr-tee-field-panels-container">
@@ -682,12 +665,24 @@ class VisualPlacementStage {
 							$def_img_id        = ! empty( $line['default_image_id'] ) ? absint( $line['default_image_id'] ) : 0;
 							$image_fit         = ( isset( $line['image_fit'] ) && 'cover' === $line['image_fit'] ) ? 'cover' : 'contain';
 							$allow_upload      = ! isset( $line['allow_image_upload'] ) || ! empty( $line['allow_image_upload'] );
-							?>
-							<?php
+
 							$field_uid           = ! empty( $line['id'] ) ? $line['id'] : 'line_' . ( $idx + 1 );
 							$field_ref_id        = ! empty( $line['ref_id'] ) ? $line['ref_id'] : ( 'id-ref-' . ( $is_image ? 'image' : 'text' ) . '-line-' . ( $idx + 1 ) );
 							$field_color_ref     = ! empty( $line['color_ref_id'] ) ? $line['color_ref_id'] : 'id-ref-color-line-' . ( $idx + 1 );
 							$placements_json_val = empty( $line_placements ) ? '{}' : wp_json_encode( $line_placements );
+
+							$selected_line_font = ( ! empty( $line['font'] ) && in_array( $line['font'], $allowed_fonts, true ) )
+								? $line['font']
+								: ( ! empty( $allowed_fonts[0] ) ? $allowed_fonts[0] : '' );
+							$sel_font_def       = ( '' !== $selected_line_font && isset( $fonts[ $selected_line_font ] ) ) ? $fonts[ $selected_line_font ] : array();
+							$is_sel_svg_font    = ( ! empty( $sel_font_def['font_type'] ) && 'opentype_svg' === $sel_font_def['font_type'] ) || ! empty( $sel_font_def['color_svg'] );
+							$color_mode         = isset( $line['color_mode'] ) && in_array( $line['color_mode'], array( 'multi', 'solid' ), true ) ? $line['color_mode'] : 'multi';
+							$font_def_palette0  = ( ! empty( $sel_font_def['palette'] ) && is_array( $sel_font_def['palette'] ) ) ? $sel_font_def['palette'][0] : '#111827';
+							$line_color_hex     = ! empty( $line['color_hex'] ) ? $line['color_hex'] : $font_def_palette0;
+							if ( ! preg_match( '/^#[0-9a-fA-F]{6}$/', $line_color_hex ) ) {
+								$line_color_hex = '#111827';
+							}
+							$allow_color_pick = ! isset( $line['allow_color_pick'] ) || ! empty( $line['allow_color_pick'] );
 							?>
 							<div
 								class="mr-tee-field-panel <?php echo $initial_active_idx === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-panel' : ''; ?>"
@@ -714,7 +709,7 @@ class VisualPlacementStage {
 
 								<table class="form-table mr-tee-coords-table">
 									<tr>
-										<th><label><?php esc_html_e( 'Nom du Champ', 'mr-tee-editor' ); ?></label></th>
+										<th><label><?php esc_html_e( 'Nom', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<input
 												type="text"
@@ -726,7 +721,7 @@ class VisualPlacementStage {
 										</td>
 									</tr>
 									<tr>
-										<th><label><?php esc_html_e( 'Type de Champ', 'mr-tee-editor' ); ?></label></th>
+										<th><label><?php esc_html_e( 'Type', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<select
 												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][field_type]"
@@ -734,12 +729,12 @@ class VisualPlacementStage {
 												data-field-index="<?php echo esc_attr( $idx ); ?>"
 											>
 												<option value="text" <?php selected( $field_type, 'text' ); ?>><?php esc_html_e( '📝 Champ Texte', 'mr-tee-editor' ); ?></option>
-												<option value="image" <?php selected( $field_type, 'image' ); ?>><?php esc_html_e( '🖼️ Champ Image (Strictement dans le rectangle)', 'mr-tee-editor' ); ?></option>
+												<option value="image" <?php selected( $field_type, 'image' ); ?>><?php esc_html_e( '🖼️ Champ Image', 'mr-tee-editor' ); ?></option>
 											</select>
 										</td>
 									</tr>
 									<tr>
-										<th><label><?php esc_html_e( 'Face / Zone d\'impression', 'mr-tee-editor' ); ?></label></th>
+										<th><label><?php esc_html_e( 'Face', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<select
 												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][side_id]"
@@ -747,9 +742,7 @@ class VisualPlacementStage {
 												data-field-index="<?php echo esc_attr( $idx ); ?>"
 											>
 												<?php foreach ( $print_sides as $s ) : ?>
-													<option value="<?php echo esc_attr( $s['id'] ); ?>" <?php selected( $line_side_id, $s['id'] ); ?>>
-														<?php echo esc_html( $s['label'] ); ?>
-													</option>
+													<option value="<?php echo esc_attr( $s['id'] ); ?>" <?php selected( $line_side_id, $s['id'] ); ?>><?php echo esc_html( $s['label'] ); ?></option>
 												<?php endforeach; ?>
 											</select>
 										</td>
@@ -757,7 +750,7 @@ class VisualPlacementStage {
 
 									<!-- Image Field Specific Controls -->
 									<tr class="mr-tee-row-image-only" <?php echo $is_image ? '' : 'style="display:none;"'; ?>>
-										<th><label><?php esc_html_e( 'Image par Défaut', 'mr-tee-editor' ); ?></label></th>
+										<th><label><?php esc_html_e( 'Image', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<div class="mr-tee-default-img-picker" data-field-index="<?php echo esc_attr( $idx ); ?>">
 												<div class="mr-tee-default-img-preview-wrap">
@@ -781,14 +774,13 @@ class VisualPlacementStage {
 													placeholder="https://..."
 													class="regular-text mr-tee-field-default-image-input"
 													data-field-index="<?php echo esc_attr( $idx ); ?>"
-													style="margin-bottom:6px; width:100%;"
 												/>
 												<div class="mr-tee-default-img-actions">
 													<button type="button" class="button button-secondary button-small mr-tee-btn-select-default-image" data-field-index="<?php echo esc_attr( $idx ); ?>">
-														📁 <?php esc_html_e( 'Bibliothèque WP', 'mr-tee-editor' ); ?>
+														📁 <?php esc_html_e( 'Médiathèque', 'mr-tee-editor' ); ?>
 													</button>
-													<label class="button button-small" style="cursor:pointer; display:inline-flex; align-items:center; gap:4px;">
-														<span>⬆️ <?php esc_html_e( 'Importer fichier', 'mr-tee-editor' ); ?></span>
+													<label class="button button-small mr-tee-upload-btn-label">
+														<span>⬆️ <?php esc_html_e( 'Importer', 'mr-tee-editor' ); ?></span>
 														<input type="file" accept="image/*" class="mr-tee-quick-image-file" style="display:none;" data-field-index="<?php echo esc_attr( $idx ); ?>" />
 													</label>
 													<button
@@ -796,31 +788,29 @@ class VisualPlacementStage {
 														class="button button-small mr-tee-btn-clear-default-image"
 														data-field-index="<?php echo esc_attr( $idx ); ?>"
 														<?php echo $def_img_url ? '' : 'style="display:none;"'; ?>
-													>
-														✕ <?php esc_html_e( 'Retirer', 'mr-tee-editor' ); ?>
-													</button>
+													>✕</button>
 												</div>
-												<span class="mr-tee-img-upload-status" style="display:block; font-size:11px; margin-top:4px; color:#64748b;"></span>
+												<span class="mr-tee-img-upload-status"></span>
 											</div>
 										</td>
 									</tr>
 									<tr class="mr-tee-row-image-only" <?php echo $is_image ? '' : 'style="display:none;"'; ?>>
-										<th><label><?php esc_html_e( 'Ajustement dans le rectangle', 'mr-tee-editor' ); ?></label></th>
+										<th><label><?php esc_html_e( 'Ajustement', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<select
 												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][image_fit]"
 												class="mr-tee-field-image-fit"
 												data-field-index="<?php echo esc_attr( $idx ); ?>"
 											>
-												<option value="contain" <?php selected( $image_fit, 'contain' ); ?>><?php esc_html_e( 'Ajuster entier (Contain — sans rogner)', 'mr-tee-editor' ); ?></option>
-												<option value="cover" <?php selected( $image_fit, 'cover' ); ?>><?php esc_html_e( 'Remplir le rectangle (Cover — centré & recadré)', 'mr-tee-editor' ); ?></option>
+												<option value="contain" <?php selected( $image_fit, 'contain' ); ?>><?php esc_html_e( 'Entier (Contain — sans rogner)', 'mr-tee-editor' ); ?></option>
+												<option value="cover" <?php selected( $image_fit, 'cover' ); ?>><?php esc_html_e( 'Remplir (Cover — recadré)', 'mr-tee-editor' ); ?></option>
 											</select>
 										</td>
 									</tr>
 
 									<!-- Text Field Specific Controls -->
 									<tr class="mr-tee-row-text-only" <?php echo $is_image ? 'style="display:none;"' : ''; ?>>
-										<th><label><?php esc_html_e( 'Texte par Défaut', 'mr-tee-editor' ); ?></label></th>
+										<th><label><?php esc_html_e( 'Texte', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<?php if ( ! empty( $line['multiline'] ) ) : ?>
 												<textarea
@@ -828,7 +818,6 @@ class VisualPlacementStage {
 													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][default_text]"
 													class="regular-text mr-tee-field-text-input"
 													data-field-index="<?php echo esc_attr( $idx ); ?>"
-													style="min-height: 54px;"
 												><?php echo esc_textarea( isset( $line['default_text'] ) ? $line['default_text'] : '' ); ?></textarea>
 											<?php else : ?>
 												<input
@@ -842,12 +831,9 @@ class VisualPlacementStage {
 										</td>
 									</tr>
 									<tr class="mr-tee-row-text-only" <?php echo $is_image ? 'style="display:none;"' : ''; ?>>
-										<th><label><?php esc_html_e( 'Police par Défaut', 'mr-tee-editor' ); ?></label></th>
+										<th><label><?php esc_html_e( 'Police', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<?php
-											$selected_line_font = ( ! empty( $line['font'] ) && in_array( $line['font'], $allowed_fonts, true ) )
-												? $line['font']
-												: ( ! empty( $allowed_fonts[0] ) ? $allowed_fonts[0] : '' );
 											$svg_allowed_ids = array();
 											$std_allowed_ids = array();
 											foreach ( $allowed_fonts as $af_id ) {
@@ -869,55 +855,76 @@ class VisualPlacementStage {
 												data-field-index="<?php echo esc_attr( $idx ); ?>"
 											>
 												<?php if ( ! empty( $svg_allowed_ids ) ) : ?>
-													<optgroup label="<?php esc_attr_e( '✨ Polices OpenType-SVG (Couleurs & Dégradés)', 'mr-tee-editor' ); ?>">
+													<optgroup label="<?php esc_attr_e( '✨ Polices OpenType-SVG', 'mr-tee-editor' ); ?>">
 														<?php foreach ( $svg_allowed_ids as $f_id ) : ?>
 															<?php $f_data = $fonts[ $f_id ]; ?>
-															<option value="<?php echo esc_attr( $f_id ); ?>" <?php selected( $selected_line_font, $f_id ); ?>>
-																<?php echo esc_html( $f_data['name'] ); ?>
-															</option>
+															<option value="<?php echo esc_attr( $f_id ); ?>" <?php selected( $selected_line_font, $f_id ); ?>><?php echo esc_html( $f_data['name'] ); ?></option>
 														<?php endforeach; ?>
 													</optgroup>
 												<?php endif; ?>
 												<?php if ( ! empty( $std_allowed_ids ) ) : ?>
-													<optgroup label="<?php esc_attr_e( '🔤 Polices Stylisées Standalone (TTF / Multi-Couleurs)', 'mr-tee-editor' ); ?>">
+													<optgroup label="<?php esc_attr_e( '🔤 Polices TTF', 'mr-tee-editor' ); ?>">
 														<?php foreach ( $std_allowed_ids as $f_id ) : ?>
 															<?php $f_data = $fonts[ $f_id ]; ?>
-															<option value="<?php echo esc_attr( $f_id ); ?>" <?php selected( $selected_line_font, $f_id ); ?>>
-																<?php echo esc_html( $f_data['name'] ); ?>
-															</option>
+															<option value="<?php echo esc_attr( $f_id ); ?>" <?php selected( $selected_line_font, $f_id ); ?>><?php echo esc_html( $f_data['name'] ); ?></option>
 														<?php endforeach; ?>
 													</optgroup>
 												<?php endif; ?>
 											</select>
-											<div class="mr-tee-font-upload-quick" style="margin-top:6px;">
-												<label class="button button-small" style="cursor:pointer; display:inline-flex; align-items:center; gap:4px;">
-													<span class="dashicons dashicons-upload" style="font-size:16px; width:16px; height:16px; line-height:16px;"></span>
-													<span><?php esc_html_e( 'Ajouter une Police OpenType-SVG (.ttf / .zip)', 'mr-tee-editor' ); ?></span>
-													<input type="file" class="mr-tee-quick-font-file" accept=".ttf,.otf,.zip" style="display:none;" data-field-index="<?php echo esc_attr( $idx ); ?>" />
-												</label>
-												<span class="mr-tee-font-upload-status" style="font-size:11px; margin-left:6px; color:#64748b;"></span>
-											</div>
 										</td>
 									</tr>
-									<tr class="mr-tee-row-text-only" <?php echo $is_image ? 'style="display:none;"' : ''; ?>>
+									<tr class="mr-tee-row-text-only mr-tee-row-svg-color-notice" <?php echo ( ! $is_image && $is_sel_svg_font ) ? '' : 'style="display:none;"'; ?>>
+										<th><label><?php esc_html_e( 'Couleur', 'mr-tee-editor' ); ?></label></th>
+										<td>
+											<span class="mr-tee-svg-color-notice">✨ <?php esc_html_e( 'Couleurs intégrées à la police SVG', 'mr-tee-editor' ); ?></span>
+										</td>
+									</tr>
+									<tr class="mr-tee-row-text-only mr-tee-row-color-mode" <?php echo ( ! $is_image && ! $is_sel_svg_font ) ? '' : 'style="display:none;"'; ?>>
 										<th><label><?php esc_html_e( 'Mode Couleur', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<select name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][color_mode]" class="mr-tee-field-color-mode" data-field-index="<?php echo esc_attr( $idx ); ?>">
-												<option value="multi" <?php selected( isset( $line['color_mode'] ) ? $line['color_mode'] : 'multi', 'multi' ); ?>><?php esc_html_e( 'Multicolore (COLOR_SET cyclique)', 'mr-tee-editor' ); ?></option>
-												<option value="solid" <?php selected( isset( $line['color_mode'] ) ? $line['color_mode'] : 'multi', 'solid' ); ?>><?php esc_html_e( 'Couleur Unie', 'mr-tee-editor' ); ?></option>
+												<option value="multi" <?php selected( $color_mode, 'multi' ); ?>><?php esc_html_e( 'Multicolore (Palette)', 'mr-tee-editor' ); ?></option>
+												<option value="solid" <?php selected( $color_mode, 'solid' ); ?>><?php esc_html_e( 'Couleur Unie', 'mr-tee-editor' ); ?></option>
 											</select>
 										</td>
 									</tr>
+									<tr class="mr-tee-row-text-only mr-tee-row-solid-color" <?php echo ( ! $is_image && ! $is_sel_svg_font && 'solid' === $color_mode ) ? '' : 'style="display:none;"'; ?>>
+										<th><label><?php esc_html_e( 'Couleur du texte', 'mr-tee-editor' ); ?></label></th>
+										<td>
+											<div class="mr-tee-color-picker-row">
+												<input
+													type="color"
+													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][color_hex]"
+													value="<?php echo esc_attr( $line_color_hex ); ?>"
+													class="mr-tee-field-color-hex"
+													data-field-index="<?php echo esc_attr( $idx ); ?>"
+												/>
+												<span class="mr-tee-color-hex-readout"><?php echo esc_html( strtoupper( $line_color_hex ) ); ?></span>
+											</div>
+											<label class="mr-tee-inline-check">
+												<input type="hidden" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][allow_color_pick]" value="0" />
+												<input
+													type="checkbox"
+													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][allow_color_pick]"
+													value="1"
+													class="mr-tee-field-allow-color-pick"
+													data-field-index="<?php echo esc_attr( $idx ); ?>"
+													<?php checked( $allow_color_pick ); ?>
+												/>
+												<?php esc_html_e( 'Choix de couleur client', 'mr-tee-editor' ); ?>
+											</label>
+										</td>
+									</tr>
 									<tr class="mr-tee-row-text-only" <?php echo $is_image ? 'style="display:none;"' : ''; ?>>
-										<th><label><?php esc_html_e( 'Max Caractères', 'mr-tee-editor' ); ?></label></th>
+										<th><label><?php esc_html_e( 'Max Caract.', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<input
 												type="number"
-												step="any"
+												step="1"
 												min="1"
 												max="500"
 												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][max_chars]"
-												value="<?php echo esc_attr( isset( $line['max_chars'] ) && intval( $line['max_chars'] ) > 0 ? $line['max_chars'] : 25 ); ?>"
+												value="<?php echo esc_attr( isset( $line['max_chars'] ) && intval( $line['max_chars'] ) > 0 ? intval( $line['max_chars'] ) : 25 ); ?>"
 												class="small-text mr-tee-field-max-chars"
 												data-field-index="<?php echo esc_attr( $idx ); ?>"
 											/>
@@ -925,7 +932,7 @@ class VisualPlacementStage {
 									</tr>
 									<tr>
 										<th><label><?php esc_html_e( 'Options', 'mr-tee-editor' ); ?></label></th>
-										<td>
+										<td class="mr-tee-options-cell">
 											<span class="mr-tee-opt-text-only" <?php echo $is_image ? 'style="display:none;"' : ''; ?>>
 												<label>
 													<input type="hidden" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][allow_font_pick]" value="0" />
@@ -939,8 +946,8 @@ class VisualPlacementStage {
 													/>
 													<?php esc_html_e( 'Choix de police client', 'mr-tee-editor' ); ?>
 												</label>
-												<br />
 												<label>
+													<input type="hidden" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][multiline]" value="0" />
 													<input
 														type="checkbox"
 														name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][multiline]"
@@ -951,7 +958,6 @@ class VisualPlacementStage {
 													/>
 													<?php esc_html_e( 'Autoriser retours à la ligne', 'mr-tee-editor' ); ?>
 												</label>
-												<br />
 											</span>
 											<span class="mr-tee-opt-image-only" <?php echo $is_image ? '' : 'style="display:none;"'; ?>>
 												<label>
@@ -964,9 +970,8 @@ class VisualPlacementStage {
 														data-field-index="<?php echo esc_attr( $idx ); ?>"
 														<?php checked( $allow_upload ); ?>
 													/>
-													<?php esc_html_e( 'Autoriser le client à changer/importer une image', 'mr-tee-editor' ); ?>
+													<?php esc_html_e( 'Import image par le client', 'mr-tee-editor' ); ?>
 												</label>
-												<br />
 											</span>
 											<label>
 												<input type="hidden" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][warning_unedited]" value="0" />
@@ -982,9 +987,13 @@ class VisualPlacementStage {
 											</label>
 										</td>
 									</tr>
-									<tr>
-										<th><label><?php esc_html_e( 'Position X (Left %)', 'mr-tee-editor' ); ?></label></th>
-										<td>
+								</table>
+
+								<!-- Compact 2x2 Geometry Grid -->
+								<div class="mr-tee-geom-section">
+									<div class="mr-tee-geom-grid">
+										<label class="mr-tee-geom-cell">
+											<span><?php esc_html_e( 'X %', 'mr-tee-editor' ); ?></span>
 											<input
 												type="number"
 												step="any"
@@ -993,14 +1002,12 @@ class VisualPlacementStage {
 												id="mr_tee_field_left_<?php echo esc_attr( $idx ); ?>"
 												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][box_left]"
 												value="<?php echo esc_attr( $bl ); ?>"
-												class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-left"
+												class="mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-left"
 												data-field-index="<?php echo esc_attr( $idx ); ?>"
-											/> %
-										</td>
-									</tr>
-									<tr>
-										<th><label><?php esc_html_e( 'Position Y (Top %)', 'mr-tee-editor' ); ?></label></th>
-										<td>
+											/>
+										</label>
+										<label class="mr-tee-geom-cell">
+											<span><?php esc_html_e( 'Y %', 'mr-tee-editor' ); ?></span>
 											<input
 												type="number"
 												step="any"
@@ -1009,102 +1016,82 @@ class VisualPlacementStage {
 												id="mr_tee_field_top_<?php echo esc_attr( $idx ); ?>"
 												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][box_top]"
 												value="<?php echo esc_attr( $bt ); ?>"
-												class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-top"
+												class="mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-top"
 												data-field-index="<?php echo esc_attr( $idx ); ?>"
-											/> %
-										</td>
-									</tr>
-									<tr>
-										<th><label><?php esc_html_e( 'Largeur (Width %)', 'mr-tee-editor' ); ?></label></th>
-										<td>
+											/>
+										</label>
+										<label class="mr-tee-geom-cell">
+											<span><?php esc_html_e( 'Largeur %', 'mr-tee-editor' ); ?></span>
 											<input
 												type="number"
 												step="any"
-												min="1"
+												min="2"
 												max="100"
 												id="mr_tee_field_width_<?php echo esc_attr( $idx ); ?>"
 												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][box_width]"
 												value="<?php echo esc_attr( $bw ); ?>"
-												class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-width"
+												class="mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-width"
 												data-field-index="<?php echo esc_attr( $idx ); ?>"
-											/> %
-										</td>
-									</tr>
-									<tr>
-										<th><label><?php esc_html_e( 'Hauteur (Height %)', 'mr-tee-editor' ); ?></label></th>
-										<td>
+											/>
+										</label>
+										<label class="mr-tee-geom-cell">
+											<span><?php esc_html_e( 'Hauteur %', 'mr-tee-editor' ); ?></span>
 											<input
 												type="number"
 												step="any"
-												min="1"
+												min="2"
 												max="100"
 												id="mr_tee_field_height_<?php echo esc_attr( $idx ); ?>"
 												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][box_height]"
 												value="<?php echo esc_attr( $bh ); ?>"
-												class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-height"
+												class="mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-height"
 												data-field-index="<?php echo esc_attr( $idx ); ?>"
-											/> %
-										</td>
-									</tr>
-									<tr>
-										<th><label><?php esc_html_e( 'Orientation / Rotation (°)', 'mr-tee-editor' ); ?></label></th>
-										<td>
-											<div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-												<input
-													type="number"
-													step="any"
-													min="-360"
-													max="360"
-													id="mr_tee_field_rotate_<?php echo esc_attr( $idx ); ?>"
-													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][box_rotate]"
-													value="<?php echo esc_attr( $br ); ?>"
-													class="small-text mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-rotate"
-													data-field-index="<?php echo esc_attr( $idx ); ?>"
-												/> °
-												<span class="description" style="font-size:11px;"><?php esc_html_e( '(-180° à 180°)', 'mr-tee-editor' ); ?></span>
-											</div>
-											<div class="mr-tee-rotate-presets" style="display:flex; flex-wrap:wrap; gap:4px;">
-												<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="<?php echo esc_attr( $idx ); ?>" data-deg="0">0° (Horizontal)</button>
-												<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="<?php echo esc_attr( $idx ); ?>" data-deg="90">90° (Vertical ⬇)</button>
-												<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="<?php echo esc_attr( $idx ); ?>" data-deg="-90">-90° (Vertical ⬆)</button>
-												<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="<?php echo esc_attr( $idx ); ?>" data-deg="40">40° (Oblique ↗)</button>
-												<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="<?php echo esc_attr( $idx ); ?>" data-deg="-15">-15° (Rétro ↘)</button>
-											</div>
-										</td>
-									</tr>
-								</table>
+											/>
+										</label>
+									</div>
+
+									<!-- Compact Single-Row Rotation -->
+									<div class="mr-tee-rotate-inline">
+										<label for="mr_tee_field_rotate_<?php echo esc_attr( $idx ); ?>" class="mr-tee-rotate-label"><?php esc_html_e( 'Rotation °', 'mr-tee-editor' ); ?></label>
+										<input
+											type="number"
+											step="1"
+											min="-180"
+											max="180"
+											id="mr_tee_field_rotate_<?php echo esc_attr( $idx ); ?>"
+											name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][box_rotate]"
+											value="<?php echo esc_attr( $br ); ?>"
+											class="mr-tee-coord-input mr-tee-field-coord mr-tee-field-coord-rotate"
+											data-field-index="<?php echo esc_attr( $idx ); ?>"
+										/>
+										<div class="mr-tee-rotate-presets">
+											<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="<?php echo esc_attr( $idx ); ?>" data-deg="0">0°</button>
+											<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="<?php echo esc_attr( $idx ); ?>" data-deg="-90">-90°</button>
+											<button type="button" class="button button-small mr-tee-btn-rotate-preset" data-field-index="<?php echo esc_attr( $idx ); ?>" data-deg="90">90°</button>
+										</div>
+									</div>
+								</div>
 
 								<div class="mr-tee-field-actions">
+									<button
+										type="button"
+										class="button button-small mr-tee-btn-duplicate-field"
+										data-field-index="<?php echo esc_attr( $idx ); ?>"
+									>
+										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><?php esc_html_e( 'Dupliquer', 'mr-tee-editor' ); ?>
+									</button>
 									<button
 										type="button"
 										class="button button-link-delete mr-tee-btn-delete-field"
 										data-field-index="<?php echo esc_attr( $idx ); ?>"
 										<?php echo count( $text_lines ) <= 1 ? 'style="display:none;"' : ''; ?>
 									>
-										<?php esc_html_e( 'Supprimer ce champ', 'mr-tee-editor' ); ?>
+										<?php esc_html_e( 'Supprimer', 'mr-tee-editor' ); ?>
 									</button>
 								</div>
 							</div>
 						<?php endforeach; ?>
 					</div>
-
-					<div class="mr-tee-add-field-action-wrap">
-						<button type="button" class="button button-secondary mr-tee-btn-add-field" id="mr-tee-btn-add-field">
-							<span class="dashicons dashicons-plus-alt2"></span> <?php esc_html_e( '+ Ajouter un Texte', 'mr-tee-editor' ); ?>
-						</button>
-						<button type="button" class="button button-secondary mr-tee-btn-add-image-field" id="mr-tee-btn-add-image-field">
-							<span>🖼️</span> <?php esc_html_e( '+ Ajouter une Image', 'mr-tee-editor' ); ?>
-						</button>
-					</div>
-
-					<!-- Legacy Fallback Coordinates for older extensions (Hidden / Synchronized) -->
-					<input type="hidden" id="mr_tee_box_left" name="mr_tee_config[box_left]" value="<?php echo esc_attr( isset( $config['box_left'] ) ? $config['box_left'] : 26.0 ); ?>" />
-					<input type="hidden" id="mr_tee_box_top" name="mr_tee_config[box_top]" value="<?php echo esc_attr( isset( $config['box_top'] ) ? $config['box_top'] : 23.0 ); ?>" />
-					<input type="hidden" id="mr_tee_box_width" name="mr_tee_config[box_width]" value="<?php echo esc_attr( isset( $config['box_width'] ) ? $config['box_width'] : 48.0 ); ?>" />
-					<input type="hidden" id="mr_tee_box_height" name="mr_tee_config[box_height]" value="<?php echo esc_attr( isset( $config['box_height'] ) ? $config['box_height'] : 54.0 ); ?>" />
-					<input type="hidden" id="mr_tee_perso_scale" name="mr_tee_config[perso_scale]" value="<?php echo esc_attr( isset( $config['perso_scale'] ) ? $config['perso_scale'] : 1.0 ); ?>" />
-					<input type="hidden" id="mr_tee_perso_tx" name="mr_tee_config[perso_translate_x]" value="<?php echo esc_attr( isset( $config['perso_translate_x'] ) ? $config['perso_translate_x'] : 0.0 ); ?>" />
-					<input type="hidden" id="mr_tee_perso_ty" name="mr_tee_config[perso_translate_y]" value="<?php echo esc_attr( isset( $config['perso_translate_y'] ) ? $config['perso_translate_y'] : 0.0 ); ?>" />
 				</div>
 			</div>
 		</div>

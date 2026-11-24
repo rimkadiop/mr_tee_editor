@@ -10,6 +10,8 @@
 
 namespace MrTeeEditor\Commerce;
 
+use MrTeeEditor\Export\PrintAssetGenerator;
+
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
@@ -21,13 +23,21 @@ class OrderAdminPanel {
 	 */
 	public static function init() {
 		add_action( 'woocommerce_after_order_itemmeta', array( __CLASS__, 'render_order_item_actions' ), 10, 3 );
-		add_action( 'add_meta_boxes', array( __CLASS__, 'register_order_metabox' ) );
+		add_action( 'add_meta_boxes', array( __CLASS__, 'register_order_metabox' ), 10, 2 );
+
+		// WooCommerce Orders List status column (HPOS + legacy CPT).
+		add_filter( 'manage_woocommerce_page_wc-orders_columns', array( __CLASS__, 'add_orders_list_column' ), 20 );
+		add_action( 'manage_woocommerce_page_wc-orders_custom_column', array( __CLASS__, 'render_orders_list_column' ), 20, 2 );
+		add_filter( 'manage_edit-shop_order_columns', array( __CLASS__, 'add_orders_list_column' ), 20 );
+		add_action( 'manage_shop_order_posts_custom_column', array( __CLASS__, 'render_orders_list_column' ), 20, 2 );
 	}
 
 	/**
-	 * Register order export metabox.
+	 * Resolve active WooCommerce order edit screen ID (HPOS vs legacy CPT).
+	 *
+	 * @return string
 	 */
-	public static function register_order_metabox() {
+	private static function get_order_screen_id() {
 		$screen = 'shop_order';
 		if (
 			class_exists( '\Automattic\WooCommerce\Internal\DataStores\Orders\CustomOrdersTableController' ) &&
@@ -38,6 +48,62 @@ class OrderAdminPanel {
 			if ( $controller && $controller->custom_orders_table_usage_is_enabled() ) {
 				$screen = wc_get_page_screen_id( 'shop-order' );
 			}
+		}
+		return $screen;
+	}
+
+	/**
+	 * Check whether an order contains at least one Mr. Tee Editor customized line item.
+	 *
+	 * @param \WC_Order $order WooCommerce order object.
+	 * @return bool
+	 */
+	private static function order_has_mr_tee_items( $order ) {
+		if ( ! $order || ! is_a( $order, '\WC_Order' ) ) {
+			return false;
+		}
+		foreach ( $order->get_items() as $item ) {
+			if ( is_object( $item ) && method_exists( $item, 'get_meta' ) ) {
+				$data = $item->get_meta( '_mr_tee_editor_data', true );
+				if ( ! empty( $data ) && is_array( $data ) ) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Register order export metabox ONLY on orders containing at least one Mr. Tee item.
+	 *
+	 * @param string                  $post_type     Current post type or HPOS screen ID.
+	 * @param \WP_Post|\WC_Order|null $post_or_order Current post or WC_Order object.
+	 */
+	public static function register_order_metabox( $post_type = '', $post_or_order = null ) {
+		$screen = self::get_order_screen_id();
+		if ( '' !== $post_type && $post_type !== $screen ) {
+			return;
+		}
+
+		$order = null;
+		if ( $post_or_order instanceof \WC_Order ) {
+			$order = $post_or_order;
+		} elseif ( is_object( $post_or_order ) && ! empty( $post_or_order->ID ) && function_exists( 'wc_get_order' ) ) {
+			$order = wc_get_order( absint( $post_or_order->ID ) );
+		} elseif ( function_exists( 'wc_get_order' ) ) {
+			$candidate_id = 0;
+			if ( ! empty( $_GET['id'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+				$candidate_id = absint( $_GET['id'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			} elseif ( ! empty( $_GET['post'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+				$candidate_id = absint( $_GET['post'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			}
+			if ( $candidate_id > 0 ) {
+				$order = wc_get_order( $candidate_id );
+			}
+		}
+
+		if ( ! $order || ! self::order_has_mr_tee_items( $order ) ) {
+			return;
 		}
 
 		add_meta_box(
@@ -51,7 +117,108 @@ class OrderAdminPanel {
 	}
 
 	/**
-	 * Normalize same-site asset URLs to match the active HTTP/HTTPS request scheme.
+	 * Add Mr. Tee 300 DPI status column to WooCommerce Orders list (HPOS & legacy CPT).
+	 *
+	 * @param array<string, string> $columns Existing columns.
+	 * @return array<string, string>
+	 */
+	public static function add_orders_list_column( $columns ) {
+		if ( ! is_array( $columns ) ) {
+			return $columns;
+		}
+		$new_columns = array();
+		$inserted    = false;
+		foreach ( $columns as $key => $label ) {
+			$new_columns[ $key ] = $label;
+			if ( 'order_status' === $key ) {
+				$new_columns['mr_tee_design'] = __( 'Mr. Tee 300 DPI', 'mr-tee-editor' );
+				$inserted                     = true;
+			}
+		}
+		if ( ! $inserted ) {
+			$new_columns['mr_tee_design'] = __( 'Mr. Tee 300 DPI', 'mr-tee-editor' );
+		}
+		return $new_columns;
+	}
+
+	/**
+	 * Render thumbnail + 300 DPI readiness badge in WooCommerce Orders list column (HPOS & legacy CPT).
+	 *
+	 * @param string        $column           Column slug.
+	 * @param \WC_Order|int $order_or_post_id Order object (HPOS) or Post ID (legacy CPT).
+	 */
+	public static function render_orders_list_column( $column, $order_or_post_id ) {
+		if ( 'mr_tee_design' !== $column ) {
+			return;
+		}
+		$order = ( $order_or_post_id instanceof \WC_Order )
+			? $order_or_post_id
+			: ( function_exists( 'wc_get_order' ) ? wc_get_order( absint( $order_or_post_id ) ) : false );
+
+		if ( ! $order || ! is_a( $order, '\WC_Order' ) ) {
+			echo '<span style="color:#9ca3af;">&mdash;</span>';
+			return;
+		}
+
+		$total_items   = 0;
+		$ready_items   = 0;
+		$thumb_url     = '';
+
+		foreach ( $order->get_items() as $item ) {
+			if ( ! is_object( $item ) || ! method_exists( $item, 'get_meta' ) ) {
+				continue;
+			}
+			$data = $item->get_meta( '_mr_tee_editor_data', true );
+			if ( empty( $data ) || ! is_array( $data ) ) {
+				continue;
+			}
+			$total_items++;
+			$state = self::resolve_item_print_state( $data );
+			if ( $state['has_print'] ) {
+				$ready_items++;
+			}
+			if ( '' === $thumb_url ) {
+				$previews = self::extract_previews( $data );
+				if ( ! empty( $previews[0]['url'] ) ) {
+					$thumb_url = $previews[0]['url'];
+				}
+			}
+		}
+
+		if ( 0 === $total_items ) {
+			echo '<span style="color:#9ca3af;">&mdash;</span>';
+			return;
+		}
+
+		$all_ready  = ( $ready_items === $total_items );
+		$badge_bg   = $all_ready ? '#d1fae5' : '#dbeafe';
+		$badge_fg   = $all_ready ? '#065f46' : '#1d4ed8';
+		$badge_bd   = $all_ready ? '#a7f3d0' : '#bfdbfe';
+		$badge_text = $all_ready
+			? __( '300 DPI ✓', 'mr-tee-editor' )
+			: __( 'À générer', 'mr-tee-editor' );
+		if ( $total_items > 1 ) {
+			$badge_text .= sprintf( ' (%d/%d)', $ready_items, $total_items );
+		}
+		?>
+		<div class="mr-tee-order-col-status" style="display:inline-flex;align-items:center;gap:6px;">
+			<?php if ( '' !== $thumb_url ) : ?>
+				<img
+					src="<?php echo esc_url( $thumb_url ); ?>"
+					alt=""
+					style="width:34px;height:34px;object-fit:contain;border-radius:4px;border:1px solid #d1d5db;background:#ffffff;display:block;flex-shrink:0;"
+				/>
+			<?php endif; ?>
+			<span style="display:inline-block;padding:2px 7px;border-radius:999px;font-size:11px;font-weight:600;line-height:1.4;white-space:nowrap;background:<?php echo esc_attr( $badge_bg ); ?>;color:<?php echo esc_attr( $badge_fg ); ?>;border:1px solid <?php echo esc_attr( $badge_bd ); ?>;">
+				<?php echo esc_html( $badge_text ); ?>
+			</span>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Normalize same-host asset URLs to match the active HTTP/HTTPS request scheme,
+	 * preserving external HTTPS CDN URLs untouched.
 	 *
 	 * @param string $url Raw URL.
 	 * @return string
@@ -60,14 +227,227 @@ class OrderAdminPanel {
 		if ( empty( $url ) || ! is_string( $url ) ) {
 			return '';
 		}
-		if ( 0 !== strpos( $url, 'http' ) ) {
+		$url = trim( $url );
+		if ( 0 !== strpos( $url, 'http://' ) && 0 !== strpos( $url, 'https://' ) ) {
 			return $url;
 		}
-		return set_url_scheme( $url, is_ssl() ? 'https' : 'http' );
+		$site_host = strtolower( (string) wp_parse_url( home_url(), PHP_URL_HOST ) );
+		$url_host  = strtolower( (string) wp_parse_url( $url, PHP_URL_HOST ) );
+		if ( '' !== $site_host && $url_host === $site_host ) {
+			return set_url_scheme( $url, is_ssl() ? 'https' : 'http' );
+		}
+		return $url;
 	}
 
 	/**
-	 * Extract customer-uploaded image fields from order item payload.
+	 * Strictly validate that a URL belongs to this WordPress site (`home_url()` host).
+	 *
+	 * @param string $raw_url Raw URL or root-relative path.
+	 * @return string Sanitized same-site URL, or empty string if off-site/invalid.
+	 */
+	private static function sanitize_same_site_url( $raw_url ) {
+		if ( ! is_string( $raw_url ) ) {
+			return '';
+		}
+		$url = trim( $raw_url );
+		if ( '' === $url ) {
+			return '';
+		}
+		if ( 0 === strpos( $url, '/' ) && 0 !== strpos( $url, '//' ) ) {
+			if ( false !== strpos( $url, '..' ) || preg_match( '/[\r\n\0]/', $url ) ) {
+				return '';
+			}
+			$url = rtrim( home_url(), '/' ) . $url;
+		}
+		if ( ! preg_match( '#^https?://#i', $url ) ) {
+			return '';
+		}
+		$site_host = strtolower( (string) wp_parse_url( home_url(), PHP_URL_HOST ) );
+		$url_host  = strtolower( (string) wp_parse_url( $url, PHP_URL_HOST ) );
+		if ( '' === $site_host || $url_host !== $site_host ) {
+			return '';
+		}
+		return self::normalize_url( esc_url_raw( $url ) );
+	}
+
+	/**
+	 * Verify that an export file physically exists on disk and is non-empty.
+	 *
+	 * @param string $file_path Absolute disk path.
+	 * @return bool
+	 */
+	private static function verify_file_exists( $file_path ) {
+		return is_string( $file_path ) && '' !== $file_path && file_exists( $file_path ) && filesize( $file_path ) > 0;
+	}
+
+	/**
+	 * Resolve a verified on-disk file path for a PNG/SVG export, falling back to `designs/{design_key}/`
+	 * when only a URL is available on legacy order items.
+	 *
+	 * @param string $explicit_file Recorded disk path (if any).
+	 * @param string $url           Recorded file URL.
+	 * @param string $design_key    Item design key.
+	 * @param string $kind          'png' | 'svg'
+	 * @return string Verified disk path, or empty string if missing.
+	 */
+	private static function resolve_verified_export_file( $explicit_file, $url, $design_key, $kind ) {
+		if ( self::verify_file_exists( $explicit_file ) ) {
+			return (string) $explicit_file;
+		}
+		$clean_key = preg_replace( '/[^a-zA-Z0-9_-]/', '', (string) $design_key );
+		if ( '' === $clean_key || ! preg_match( '/^mrtee_[a-zA-Z0-9_-]{8,64}$/', $clean_key ) ) {
+			return '';
+		}
+		$url_path = is_string( $url ) ? wp_parse_url( $url, PHP_URL_PATH ) : '';
+		$base     = is_string( $url_path ) ? basename( $url_path ) : '';
+		$pattern  = ( 'svg' === $kind )
+			? '/^design(?:_[a-zA-Z0-9_-]{1,32})?\.svg$/i'
+			: '/^print_300dpi(?:_[a-zA-Z0-9_-]{1,32})?\.png$/i';
+		if ( '' === $base || ! preg_match( $pattern, $base ) ) {
+			return '';
+		}
+		$paths     = PrintAssetGenerator::get_upload_dir( 'designs/' . $clean_key );
+		$candidate = trailingslashit( $paths['dir'] ) . $base;
+		return self::verify_file_exists( $candidate ) ? $candidate : '';
+	}
+
+	/**
+	 * Append a `?v=<filemtime>` cache-buster to a normalized same-site download URL.
+	 *
+	 * @param string $raw_url   Raw URL.
+	 * @param string $file_path Verified on-disk file path.
+	 * @return string
+	 */
+	private static function with_file_cache_buster( $raw_url, $file_path ) {
+		$url = self::normalize_url( $raw_url );
+		if ( '' === $url ) {
+			return '';
+		}
+		if ( self::verify_file_exists( $file_path ) ) {
+			$mtime = @filemtime( $file_path );
+			if ( $mtime ) {
+				$url = add_query_arg( 'v', (string) $mtime, $url );
+			}
+		}
+		return $url;
+	}
+
+	/**
+	 * Determine which print side IDs in an order item payload actually contain printable artwork
+	 * so `$has_print` verifies every active side has been generated on disk.
+	 *
+	 * @param array<string, mixed> $data Order item `_mr_tee_editor_data`.
+	 * @return array<int, string>
+	 */
+	private static function resolve_expected_side_ids( array $data ) {
+		$payload     = ( ! empty( $data['payload'] ) && is_array( $data['payload'] ) ) ? $data['payload'] : array();
+		$print_sides = ( ! empty( $payload['print_sides'] ) && is_array( $payload['print_sides'] ) )
+			? array_values( $payload['print_sides'] )
+			: array();
+
+		if ( count( $print_sides ) <= 1 ) {
+			$first_id = ! empty( $print_sides[0]['id'] ) ? (string) $print_sides[0]['id'] : 'front';
+			return array( $first_id );
+		}
+
+		$primary_id   = ! empty( $print_sides[0]['id'] ) ? (string) $print_sides[0]['id'] : 'front';
+		$active_sides = array( $primary_id => true );
+
+		// Mark any secondary side referenced by a non-empty text or image field.
+		if ( ! empty( $payload['text_lines'] ) && is_array( $payload['text_lines'] ) ) {
+			foreach ( $payload['text_lines'] as $line ) {
+				if ( ! is_array( $line ) ) {
+					continue;
+				}
+				$sid      = ! empty( $line['sideId'] ) ? (string) $line['sideId'] : ( ! empty( $line['side_id'] ) ? (string) $line['side_id'] : $primary_id );
+				$is_image = isset( $line['fieldType'] ) && 'image' === $line['fieldType'];
+				if ( $is_image ) {
+					if ( ! empty( $line['imageUrl'] ) ) {
+						$active_sides[ $sid ] = true;
+					}
+				} else {
+					$val = isset( $line['value'] ) ? (string) $line['value'] : '';
+					if ( '' !== trim( $val ) ) {
+						$active_sides[ $sid ] = true;
+					}
+				}
+			}
+		}
+
+		// Also inspect scene-graph layers (e.g., PATH cliparts or reference-only nodes on secondary sides).
+		if ( ! empty( $payload['perso_visual']['layers'] ) && is_array( $payload['perso_visual']['layers'] ) ) {
+			$ref_map  = array();
+			$refs_raw = ( ! empty( $payload['perso_visual']['references'] ) && is_array( $payload['perso_visual']['references'] ) )
+				? $payload['perso_visual']['references']
+				: array();
+			$index_refs = static function ( $nodes ) use ( &$index_refs, &$ref_map ) {
+				foreach ( $nodes as $r ) {
+					if ( ! is_array( $r ) ) {
+						continue;
+					}
+					if ( ! empty( $r['id'] ) ) {
+						$ref_map[ (string) $r['id'] ] = $r;
+					}
+					if ( ! empty( $r['items'] ) && is_array( $r['items'] ) ) {
+						$index_refs( $r['items'] );
+					}
+				}
+			};
+			$index_refs( $refs_raw );
+
+			$walk_layers = static function ( $nodes, $inherited_side = null ) use ( &$walk_layers, &$active_sides, $ref_map, $primary_id ) {
+				foreach ( $nodes as $node ) {
+					if ( ! is_array( $node ) || ! empty( $node['hide'] ) ) {
+						continue;
+					}
+					$n_side = ! empty( $node['side_id'] )
+						? (string) $node['side_id']
+						: ( ! empty( $node['sideId'] ) ? (string) $node['sideId'] : $inherited_side );
+					$type   = isset( $node['type'] ) ? (string) $node['type'] : '';
+					if ( 'GROUP' === $type || 'MASK' === $type ) {
+						if ( ! empty( $node['items'] ) && is_array( $node['items'] ) ) {
+							$walk_layers( $node['items'], $n_side );
+						}
+						continue;
+					}
+					$eff_side = $n_side ? $n_side : $primary_id;
+					$ref      = ( ! empty( $node['reference'] ) && isset( $ref_map[ (string) $node['reference'] ] ) )
+						? $ref_map[ (string) $node['reference'] ]
+						: null;
+					if ( 'TEXT' === $type ) {
+						$val = ( $ref && isset( $ref['value'] ) ) ? (string) $ref['value'] : ( isset( $node['value'] ) ? (string) $node['value'] : ( isset( $node['text'] ) ? (string) $node['text'] : '' ) );
+						if ( '' !== trim( $val ) ) {
+							$active_sides[ $eff_side ] = true;
+						}
+					} elseif ( 'IMAGE' === $type ) {
+						$url = ( $ref && ! empty( $ref['url'] ) ) ? (string) $ref['url'] : ( ! empty( $node['url'] ) ? (string) $node['url'] : '' );
+						if ( '' !== trim( $url ) ) {
+							$active_sides[ $eff_side ] = true;
+						}
+					} elseif ( 'PATH' === $type && ! empty( $node['path'] ) ) {
+						$active_sides[ $eff_side ] = true;
+					}
+				}
+			};
+			$walk_layers( $payload['perso_visual']['layers'], null );
+		}
+
+		$ordered = array();
+		foreach ( $print_sides as $side ) {
+			if ( ! is_array( $side ) || empty( $side['id'] ) ) {
+				continue;
+			}
+			$sid = (string) $side['id'];
+			if ( isset( $active_sides[ $sid ] ) ) {
+				$ordered[] = $sid;
+			}
+		}
+
+		return ! empty( $ordered ) ? $ordered : array( $primary_id );
+	}
+
+	/**
+	 * Extract customer-uploaded image fields from order item payload (strictly same-site URLs only).
 	 *
 	 * @param array<string, mixed> $data Order item _mr_tee_editor_data.
 	 * @return array<int, array<string, string>>
@@ -77,10 +457,10 @@ class OrderAdminPanel {
 		if ( ! empty( $data['payload']['text_lines'] ) && is_array( $data['payload']['text_lines'] ) ) {
 			foreach ( $data['payload']['text_lines'] as $idx => $line ) {
 				if ( isset( $line['fieldType'] ) && 'image' === $line['fieldType'] && ! empty( $line['imageUrl'] ) ) {
-					$url = self::normalize_url( $line['imageUrl'] );
-					if ( ! empty( $url ) && 0 === strpos( $url, 'http' ) ) {
+					$url = self::sanitize_same_site_url( (string) $line['imageUrl'] );
+					if ( '' !== $url ) {
 						$images[] = array(
-							'label' => ! empty( $line['label'] ) ? $line['label'] : sprintf( __( 'Image #%d', 'mr-tee-editor' ), $idx + 1 ),
+							'label' => ! empty( $line['label'] ) ? sanitize_text_field( (string) $line['label'] ) : sprintf( __( 'Image #%d', 'mr-tee-editor' ), $idx + 1 ),
 							'url'   => $url,
 						);
 					}
@@ -128,20 +508,28 @@ class OrderAdminPanel {
 	}
 
 	/**
-	 * Extract normalized multi-side print export entries from order item data.
+	 * Extract verified multi-side print export entries from order item data with `?v=<filemtime>` cache-busters.
 	 *
 	 * @param array<string, mixed> $data Order item _mr_tee_editor_data.
-	 * @return array<int, array{side_id: string, label: string, print_url: string, svg_url: string, print_dimensions: string}>
+	 * @return array<int, array{side_id: string, label: string, print_url: string, svg_url: string, print_exists: bool, svg_exists: bool, print_dimensions: string}>
 	 */
 	private static function extract_side_exports( array $data ) {
-		$sides = array();
+		$sides      = array();
+		$design_key = ! empty( $data['key'] ) ? (string) $data['key'] : '';
 		if ( ! empty( $data['side_exports'] ) && is_array( $data['side_exports'] ) ) {
 			foreach ( $data['side_exports'] as $key => $entry ) {
 				if ( ! is_array( $entry ) ) {
 					continue;
 				}
-				$p_url = ! empty( $entry['print_url'] ) ? self::normalize_url( $entry['print_url'] ) : '';
-				$s_url = ! empty( $entry['svg_url'] ) ? self::normalize_url( $entry['svg_url'] ) : '';
+				$raw_p_url  = ! empty( $entry['print_url'] ) ? (string) $entry['print_url'] : '';
+				$raw_s_url  = ! empty( $entry['svg_url'] ) ? (string) $entry['svg_url'] : '';
+				$p_file     = self::resolve_verified_export_file( isset( $entry['print_file'] ) ? (string) $entry['print_file'] : '', $raw_p_url, $design_key, 'png' );
+				$s_file     = self::resolve_verified_export_file( isset( $entry['svg_file'] ) ? (string) $entry['svg_file'] : '', $raw_s_url, $design_key, 'svg' );
+				$p_exists   = ( '' !== $p_file );
+				$s_exists   = ( '' !== $s_file );
+				$p_url      = ( $p_exists && '' !== $raw_p_url ) ? self::with_file_cache_buster( $raw_p_url, $p_file ) : '';
+				$s_url      = ( $s_exists && '' !== $raw_s_url ) ? self::with_file_cache_buster( $raw_s_url, $s_file ) : '';
+
 				if ( '' === $p_url && '' === $s_url ) {
 					continue;
 				}
@@ -152,11 +540,75 @@ class OrderAdminPanel {
 					'label'            => $label,
 					'print_url'        => $p_url,
 					'svg_url'          => $s_url,
+					'print_exists'     => $p_exists,
+					'svg_exists'       => $s_exists,
 					'print_dimensions' => ! empty( $entry['print_dimensions'] ) ? (string) $entry['print_dimensions'] : '',
 				);
 			}
 		}
 		return $sides;
+	}
+
+	/**
+	 * Verify on-disk existence & completeness of all required print sides for an order item,
+	 * returning cache-busted download URLs and accurate `$has_print` status.
+	 *
+	 * @param array<string, mixed> $data Order item `_mr_tee_editor_data`.
+	 * @return array{has_print: bool, print_url: string, svg_url: string, side_exports: array<int, array<string, mixed>>, is_multi_sides: bool}
+	 */
+	private static function resolve_item_print_state( array $data ) {
+		$design_key = ! empty( $data['key'] ) ? (string) $data['key'] : '';
+		$raw_p_url  = ! empty( $data['print_url'] ) ? (string) $data['print_url'] : '';
+		$raw_s_url  = ! empty( $data['svg_url'] ) ? (string) $data['svg_url'] : '';
+
+		$p_file   = self::resolve_verified_export_file( isset( $data['print_file'] ) ? (string) $data['print_file'] : '', $raw_p_url, $design_key, 'png' );
+		$s_file   = self::resolve_verified_export_file( isset( $data['svg_file'] ) ? (string) $data['svg_file'] : '', $raw_s_url, $design_key, 'svg' );
+		$p_exists = ( '' !== $p_file );
+		$s_exists = ( '' !== $s_file );
+
+		$print_url = ( $p_exists && '' !== $raw_p_url ) ? self::with_file_cache_buster( $raw_p_url, $p_file ) : '';
+		$svg_url   = ( $s_exists && '' !== $raw_s_url ) ? self::with_file_cache_buster( $raw_s_url, $s_file ) : '';
+
+		$side_exports   = self::extract_side_exports( $data );
+		$is_multi_sides = count( $side_exports ) > 1;
+		$expected_sides = self::resolve_expected_side_ids( $data );
+
+		$sides_by_id = array();
+		foreach ( $side_exports as $s_exp ) {
+			$sides_by_id[ $s_exp['side_id'] ] = $s_exp;
+		}
+
+		if ( count( $expected_sides ) > 1 ) {
+			$has_print = true;
+			foreach ( $expected_sides as $exp_sid ) {
+				if (
+					! isset( $sides_by_id[ $exp_sid ] ) ||
+					empty( $sides_by_id[ $exp_sid ]['print_exists'] ) ||
+					empty( $sides_by_id[ $exp_sid ]['svg_exists'] )
+				) {
+					$has_print = false;
+					break;
+				}
+			}
+		} elseif ( ! empty( $side_exports ) ) {
+			$has_print = true;
+			foreach ( $side_exports as $s_exp ) {
+				if ( empty( $s_exp['print_exists'] ) || empty( $s_exp['svg_exists'] ) ) {
+					$has_print = false;
+					break;
+				}
+			}
+		} else {
+			$has_print = ( $p_exists && $s_exists && '' !== $print_url && '' !== $svg_url );
+		}
+
+		return array(
+			'has_print'      => $has_print,
+			'print_url'      => $print_url,
+			'svg_url'        => $svg_url,
+			'side_exports'   => $side_exports,
+			'is_multi_sides' => $is_multi_sides,
+		);
 	}
 
 	/**
@@ -180,15 +632,16 @@ class OrderAdminPanel {
 
 		$order_id          = method_exists( $item, 'get_order_id' ) ? (int) $item->get_order_id() : 0;
 		$design_key        = ! empty( $data['key'] ) ? $data['key'] : '';
-		$print_url         = ! empty( $data['print_url'] ) ? self::normalize_url( $data['print_url'] ) : '';
-		$svg_url           = ! empty( $data['svg_url'] ) ? self::normalize_url( $data['svg_url'] ) : '';
+		$print_state       = self::resolve_item_print_state( $data );
+		$print_url         = $print_state['print_url'];
+		$svg_url           = $print_state['svg_url'];
+		$side_exports      = $print_state['side_exports'];
+		$is_multi_sides    = $print_state['is_multi_sides'];
+		$has_print         = $print_state['has_print'];
 		$preview_url       = ! empty( $data['preview_url'] ) ? self::normalize_url( $data['preview_url'] ) : '';
 		$previews          = self::extract_previews( $data );
-		$side_exports      = self::extract_side_exports( $data );
 		$is_multi_previews = count( $previews ) > 1;
-		$is_multi_sides    = count( $side_exports ) > 1;
 		$cust_images       = self::extract_customer_images( $data );
-		$has_print         = $is_multi_sides || ( ! empty( $print_url ) && ! empty( $svg_url ) );
 
 		?>
 		<div
@@ -367,15 +820,16 @@ class OrderAdminPanel {
 			}
 			$found             = true;
 			$design_key        = ! empty( $data['key'] ) ? $data['key'] : '';
-			$print_url         = ! empty( $data['print_url'] ) ? self::normalize_url( $data['print_url'] ) : '';
-			$svg_url           = ! empty( $data['svg_url'] ) ? self::normalize_url( $data['svg_url'] ) : '';
+			$print_state       = self::resolve_item_print_state( $data );
+			$print_url         = $print_state['print_url'];
+			$svg_url           = $print_state['svg_url'];
+			$side_exports      = $print_state['side_exports'];
+			$is_multi_sides    = $print_state['is_multi_sides'];
+			$has_print         = $print_state['has_print'];
 			$preview_url       = ! empty( $data['preview_url'] ) ? self::normalize_url( $data['preview_url'] ) : '';
 			$previews          = self::extract_previews( $data );
-			$side_exports      = self::extract_side_exports( $data );
 			$is_multi_previews = count( $previews ) > 1;
-			$is_multi_sides    = count( $side_exports ) > 1;
 			$cust_images       = self::extract_customer_images( $data );
-			$has_print         = $is_multi_sides || ( ! empty( $print_url ) && ! empty( $svg_url ) );
 			?>
 			<div
 				class="mr-tee-metabox-item"

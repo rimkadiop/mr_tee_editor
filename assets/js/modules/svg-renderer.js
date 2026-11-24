@@ -197,7 +197,10 @@ export class SvgRenderer {
 			if (!node || node.hide) continue;
 
 			if (node.type === 'GROUP') {
-				const groupClass = node.name ? `class="mrtee-group mrtee-group-${node.name.toLowerCase().replace(/\s+/g, '-')}"` : '';
+				const groupSlug = node.name
+					? String(node.name).toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '')
+					: '';
+				const groupClass = groupSlug ? `class="mrtee-group mrtee-group-${groupSlug}"` : (node.name ? 'class="mrtee-group"' : '');
 				const childrenHtml = this.renderLayersMarkup(node.items || [], layerOptions);
 				html += `<g ${groupClass}>${childrenHtml}</g>\n`;
 			} else if (node.type === 'TEXT') {
@@ -269,7 +272,8 @@ export class SvgRenderer {
 		if (!str) return 0;
 
 		const spacing = Number.isFinite(letterSpacingEm) ? letterSpacingEm : 0;
-		const spacingUnits = Math.max(0, str.length - 1) * spacing;
+		const charLen = Array.from(str).length;
+		const spacingUnits = Math.max(0, charLen - 1) * spacing;
 
 		if (typeof document !== 'undefined' && typeof document.createElement === 'function') {
 			const primaryFamily = String(fontFamily || '').split(',')[0].trim().replace(/^['"]+|['"]+$/g, '');
@@ -312,7 +316,7 @@ export class SvgRenderer {
 		}
 
 		const metrics = this.getFontMetrics(rawFont || fontFamily);
-		return (str.length * metrics.charRatio) + spacingUnits;
+		return (charLen * metrics.charRatio) + spacingUnits;
 	}
 
 	/**
@@ -323,7 +327,8 @@ export class SvgRenderer {
 	 * @return {string}
 	 */
 	static renderTextNode(node, options = {}) {
-		const val = String(node.value || node.text || '');
+		const rawVal = String(node.value || node.text || '').replace(/\r\n?/g, '\n');
+		const val = (typeof rawVal.normalize === 'function') ? rawVal.normalize('NFC') : rawVal;
 		if (!val.trim()) return '';
 
 		const vp = this.resolveNodeViewPlacement(node, options.viewId);
@@ -466,6 +471,7 @@ export class SvgRenderer {
 		const isEmbroidery = node.fontStyle === 'embroidery' || (colorSet.id && colorSet.id.includes('embroidery')) || strokeColor === 'transparent';
 		const filterAttr = node._inMask ? '' : (isEmbroidery ? `filter="url(#${idPrefix}mrtee-embroidery-relief)"` : `filter="url(#${idPrefix}mrtee-3d-shadow)"`);
 
+		const solidFill = this.escapeXml(palette[0]);
 		let tspans = '';
 		let charIndex = 0;
 
@@ -477,33 +483,47 @@ export class SvgRenderer {
 				const lineText = lines[lineIdx];
 				const dy = lineIdx === 0 ? startYOffset : (effectiveFontSize * lineHeight);
 
-				let lineTspans = '';
-				for (let i = 0; i < lineText.length; i++) {
-					const char = lineText[i];
-					if (char === ' ') {
-						lineTspans += `<tspan xml:space="preserve"> </tspan>`;
-					} else {
-						const fill = palette[charIndex % palette.length];
-						lineTspans += `<tspan fill="${fill}">${this.escapeXml(char)}</tspan>`;
-						charIndex++;
-					}
+				if (lineText === '') {
+					tspans += `<tspan x="${x}" dy="${dy.toFixed(2)}" fill="${solidFill}">&#160;</tspan>`;
+					continue;
 				}
 
-				tspans += `<tspan x="${x}" dy="${dy.toFixed(2)}">${lineTspans}</tspan>`;
+				if (!isMulti) {
+					tspans += `<tspan x="${x}" dy="${dy.toFixed(2)}" fill="${solidFill}" xml:space="preserve">${this.escapeXml(lineText)}</tspan>`;
+				} else {
+					let lineTspans = '';
+					const chars = Array.from(lineText);
+					for (let i = 0; i < chars.length; i++) {
+						const char = chars[i];
+						if (char === ' ') {
+							lineTspans += `<tspan xml:space="preserve"> </tspan>`;
+						} else {
+							const fill = this.escapeXml(palette[charIndex % palette.length]);
+							lineTspans += `<tspan fill="${fill}">${this.escapeXml(char)}</tspan>`;
+							charIndex++;
+						}
+					}
+
+					tspans += `<tspan x="${x}" dy="${dy.toFixed(2)}">${lineTspans}</tspan>`;
+				}
 			}
+		} else if (!isMulti) {
+			tspans = `<tspan fill="${solidFill}" xml:space="preserve">${this.escapeXml(displayText)}</tspan>`;
 		} else {
-			for (let i = 0; i < displayText.length; i++) {
-				const char = displayText[i];
+			const chars = Array.from(displayText);
+			for (let i = 0; i < chars.length; i++) {
+				const char = chars[i];
 				if (char === ' ') {
 					tspans += `<tspan xml:space="preserve"> </tspan>`;
 				} else {
-					const fill = palette[charIndex % palette.length];
+					const fill = this.escapeXml(palette[charIndex % palette.length]);
 					tspans += `<tspan fill="${fill}">${this.escapeXml(char)}</tspan>`;
 					charIndex++;
 				}
 			}
 		}
 
+		const safeFontFamily = String(fontFamily).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 		const rotateAngle = parseFloat(effRotate) || 0;
 		const transformAttr = (rotateAngle !== 0) ? `transform="rotate(${rotateAngle.toFixed(2)}, ${x.toFixed(2)}, ${y.toFixed(2)})"` : '';
 
@@ -511,12 +531,12 @@ export class SvgRenderer {
 		<text
 			x="${x}"
 			y="${y}"
-			font-family="${fontFamily}"
+			font-family="${safeFontFamily}"
 			font-size="${effectiveFontSize.toFixed(2)}"
 			text-anchor="${node.textAnchor || 'middle'}"
 			dominant-baseline="central"
 			letter-spacing="${letterSpacing}"
-			stroke="${strokeColor}"
+			stroke="${this.escapeXml(strokeColor)}"
 			stroke-width="${strokeWidth}"
 			style="${paintOrder}"
 			${transformAttr}
@@ -1290,8 +1310,9 @@ export class SvgRenderer {
 		const glyphs = fontData.glyphs || {};
 		const re = /(?:xlink:href|href)="([^"]+)"/g;
 
-		for (let i = 0; i < text.length; i++) {
-			const ch = text[i];
+		const chars = Array.from(String(text));
+		for (let i = 0; i < chars.length; i++) {
+			const ch = chars[i];
 			if (ch === ' ' || ch === '\n' || ch === '\r' || ch === '\t') continue;
 			const g = this.resolveSvgGlyph(glyphs, ch, fontData.defaultAdv || 500);
 			if (!g || !g.svg) continue;
@@ -1512,62 +1533,80 @@ export class SvgRenderer {
 			return rawObj;
 		};
 
-		// 1. Fast mobile-first: try lightweight manifest (~20 KB vs 25 MB!)
-		const manifestUrl = toSameOriginUrl(def.manifest_url || `${pluginUrl}assets/fonts/cache/${cleanKey}/manifest.json`);
-		if (manifestUrl) {
-			try {
-				const resp = await fetch(manifestUrl);
-				if (resp.ok) {
-					const rawManifest = await resp.json();
-					const data = this.hydrateManifest(rawManifest, cleanKey);
-					window.mrTeeSvgFonts[cleanKey] = data;
-					window.mrTeeSvgFonts[fontId] = data;
-					return applyWarmup(data);
-				}
-			} catch (mErr) {
-				// Continue to fallback
-			}
+		this._svgFontPromises = this._svgFontPromises || new Map();
+		if (this._svgFontPromises.has(cleanKey)) {
+			const inFlightData = await this._svgFontPromises.get(cleanKey);
+			return applyWarmup(inFlightData);
 		}
 
-		// 2. Legacy static JSON cache fallback
-		const dataUrl = toSameOriginUrl(def.data_url || `${pluginUrl}assets/fonts/cache/${cleanKey}.json`);
-		try {
-			const resp = await fetch(dataUrl);
-			if (resp.ok) {
-				const rawData = sanitizeFontPayload(await resp.json());
-				const data = this.prepareFontData(rawData, cleanKey);
-				window.mrTeeSvgFonts[cleanKey] = data;
-				window.mrTeeSvgFonts[fontId] = data;
-				return applyWarmup(data);
-			}
-		} catch (err) {
-			console.warn('[MrTee SvgRenderer] Failed to load static SVG font cache, trying AJAX fallback:', err);
-		}
-
-		// 3. AJAX Fallback
-		const ajaxUrl = toSameOriginUrl(
-			(window.mrTeeProductData && window.mrTeeProductData.ajaxUrl)
-			|| (window.mrTeeAdminData && window.mrTeeAdminData.ajaxUrl)
-			|| (window.mrTeeOrderExportData && window.mrTeeOrderExportData.ajaxUrl)
-		);
-		if (ajaxUrl) {
-			try {
-				const resp = await fetch(`${ajaxUrl}?action=mr_tee_get_svg_font_data&font_id=${encodeURIComponent(cleanKey)}`);
-				if (resp.ok) {
-					const json = await resp.json();
-					if (json.success && json.data) {
-						const data = this.prepareFontData(sanitizeFontPayload(json.data), cleanKey);
+		const loadPromise = (async () => {
+			// 1. Fast mobile-first: try lightweight manifest (~20 KB vs 25 MB!)
+			const manifestUrl = toSameOriginUrl(def.manifest_url || `${pluginUrl}assets/fonts/cache/${cleanKey}/manifest.json`);
+			if (manifestUrl) {
+				try {
+					const resp = await fetch(manifestUrl);
+					if (resp.ok) {
+						const rawManifest = await resp.json();
+						const data = this.hydrateManifest(rawManifest, cleanKey);
 						window.mrTeeSvgFonts[cleanKey] = data;
 						window.mrTeeSvgFonts[fontId] = data;
-						return applyWarmup(data);
+						return data;
 					}
+				} catch (mErr) {
+					// Continue to fallback
 				}
-			} catch (ajaxErr) {
-				console.error('[MrTee SvgRenderer] AJAX SVG font retrieval failed:', ajaxErr);
+			}
+
+			// 2. Legacy static JSON cache fallback
+			const dataUrl = toSameOriginUrl(def.data_url || `${pluginUrl}assets/fonts/cache/${cleanKey}.json`);
+			try {
+				const resp = await fetch(dataUrl);
+				if (resp.ok) {
+					const rawData = sanitizeFontPayload(await resp.json());
+					const data = this.prepareFontData(rawData, cleanKey);
+					window.mrTeeSvgFonts[cleanKey] = data;
+					window.mrTeeSvgFonts[fontId] = data;
+					return data;
+				}
+			} catch (err) {
+				console.warn('[MrTee SvgRenderer] Failed to load static SVG font cache, trying AJAX fallback:', err);
+			}
+
+			// 3. AJAX Fallback
+			const ajaxUrl = toSameOriginUrl(
+				(window.mrTeeProductData && window.mrTeeProductData.ajaxUrl)
+				|| (window.mrTeeAdminData && window.mrTeeAdminData.ajaxUrl)
+				|| (window.mrTeeOrderExportData && window.mrTeeOrderExportData.ajaxUrl)
+			);
+			if (ajaxUrl) {
+				try {
+					const resp = await fetch(`${ajaxUrl}?action=mr_tee_get_svg_font_data&font_id=${encodeURIComponent(cleanKey)}`);
+					if (resp.ok) {
+						const json = await resp.json();
+						if (json.success && json.data) {
+							const data = this.prepareFontData(sanitizeFontPayload(json.data), cleanKey);
+							window.mrTeeSvgFonts[cleanKey] = data;
+							window.mrTeeSvgFonts[fontId] = data;
+							return data;
+						}
+					}
+				} catch (ajaxErr) {
+					console.error('[MrTee SvgRenderer] AJAX SVG font retrieval failed:', ajaxErr);
+				}
+			}
+
+			return null;
+		})();
+
+		this._svgFontPromises.set(cleanKey, loadPromise);
+		try {
+			const loadedData = await loadPromise;
+			return applyWarmup(loadedData);
+		} finally {
+			if (this._svgFontPromises.get(cleanKey) === loadPromise) {
+				this._svgFontPromises.delete(cleanKey);
 			}
 		}
-
-		return null;
 	}
 
 	/**
@@ -1625,8 +1664,10 @@ export class SvgRenderer {
 
 		this.prepareFontData(fontData, fId);
 
+		const rawVal = String(val || '').replace(/\r\n?/g, '\n');
+		const normVal = (typeof rawVal.normalize === 'function') ? rawVal.normalize('NFC') : rawVal;
 		const casing = node.casing || (node.uppercase === true ? 'UPPER' : 'ORIGINAL');
-		const displayText = (casing === 'UPPER') ? val.toUpperCase() : val;
+		const displayText = (casing === 'UPPER') ? normVal.toUpperCase() : normVal;
 		const lines = displayText.split('\n');
 		const numLines = Math.max(1, lines.length);
 		const lineHeight = parseFloat(node.lineHeight) || 0.95;
@@ -1655,9 +1696,10 @@ export class SvgRenderer {
 			let penX = 0;
 			let minVisualX = Infinity;
 			let maxVisualX = -Infinity;
+			const chars = Array.from(lineText);
 
-			for (let i = 0; i < lineText.length; i++) {
-				const ch = lineText[i];
+			for (let i = 0; i < chars.length; i++) {
+				const ch = chars[i];
 				const eff = this.getEffectiveOpenTypeGlyph(fontData, ch, unitsPerEm);
 				const g = eff.g;
 				if (!eff.isSpace) {
@@ -1668,7 +1710,7 @@ export class SvgRenderer {
 					if (leftEdge < minVisualX) minVisualX = leftEdge;
 					if (rightEdge > maxVisualX) maxVisualX = rightEdge;
 				}
-				penX += eff.adv + (i < lineText.length - 1 ? letterSpacingUnits : 0);
+				penX += eff.adv + (i < chars.length - 1 ? letterSpacingUnits : 0);
 			}
 
 			if (minVisualX === Infinity || maxVisualX === -Infinity) {
@@ -1677,7 +1719,7 @@ export class SvgRenderer {
 			}
 			const visualWidthUnits = Math.max(penX, maxVisualX - minVisualX);
 			if (visualWidthUnits > maxLineDesignWidth) maxLineDesignWidth = visualWidthUnits;
-			return { text: lineText, widthUnits: penX, minVisualX, maxVisualX, visualWidthUnits };
+			return { text: lineText, chars, widthUnits: penX, minVisualX, maxVisualX, visualWidthUnits };
 		});
 
 		const estimatedRawWidth = (maxLineDesignWidth / unitsPerEm) * baseFontSize;
@@ -1719,14 +1761,14 @@ export class SvgRenderer {
 				cursorX = (boxL + boxW * 0.975) - (lm.maxVisualX * scale);
 			}
 
-			for (let i = 0; i < lm.text.length; i++) {
-				const ch = lm.text[i];
+			for (let i = 0; i < lm.chars.length; i++) {
+				const ch = lm.chars[i];
 				const eff = this.getEffectiveOpenTypeGlyph(fontData, ch, unitsPerEm);
 				const g = eff.g;
 				if (eff.hasSvg) {
 					const rawGlyphSvg = options.isExport ? (g.exportSvg || g.svg) : (g.liveSvg || g.svg);
 					const glyphSvg = idPrefix ? this.scopeMarkupIds(rawGlyphSvg, idPrefix) : rawGlyphSvg;
-					const glyphKeyAttr = g.glyphKey ? ` data-glyph-key="${g.glyphKey}"` : '';
+					const glyphKeyAttr = g.glyphKey ? ` data-glyph-key="${this.escapeXml(g.glyphKey)}"` : '';
 					glyphsMarkup += `<g class="mrtee-ot-glyph"${glyphKeyAttr} transform="translate(${cursorX.toFixed(3)}, ${baselineY.toFixed(3)}) scale(${scale.toFixed(5)})">${glyphSvg}</g>\n`;
 				} else if (!eff.isSpace) {
 					const escapedCh = this.escapeXml(ch);
@@ -1744,7 +1786,7 @@ export class SvgRenderer {
 			: (parseFloat(node.box_rotate !== undefined ? node.box_rotate : (node.rotate !== undefined ? node.rotate : 0)) || 0);
 		const transformAttr = (rotateAngle !== 0) ? ` transform="rotate(${rotateAngle.toFixed(2)}, ${x.toFixed(2)}, ${y.toFixed(2)})"` : '';
 		const rawNodeId = node.id || node.name || node.reference;
-		const nodeIdAttr = rawNodeId ? ` data-node-id="${String(rawNodeId).replace(/"/g, '&quot;')}"` : '';
+		const nodeIdAttr = rawNodeId ? ` data-node-id="${this.escapeXml(rawNodeId)}"` : '';
 
 		return `<g class="mrtee-opentype-svg-text"${nodeIdAttr}${transformAttr}>\n${glyphsMarkup}</g>`;
 	}

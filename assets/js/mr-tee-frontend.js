@@ -1,30 +1,24 @@
 /**
- * Mr. Tee Editor - Frontend Modular Orchestrator (v2.4.0)
+ * Mr. Tee Editor - Frontend Modular Orchestrator (v2.5.0)
  *
  * Bootstraps the client-side personalization application by interconnecting
- * StateStore, SceneGraphEngine, SvgRenderer, GalleryStage, FormController, and PrintExporter
+ * StateStore, SceneGraphEngine, SvgRenderer, GalleryStage, FormController, and lazy-loaded PrintExporter
  * with dirty-tracked lazy multi-view SVG rendering at 60 FPS.
  *
  * @package MrTeeEditor\Assets
  */
 
-import { StateStore } from './modules/state-store.js?v=2.4.0.2';
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.4.0.2';
-import { SvgRenderer } from './modules/svg-renderer.js?v=2.4.0.2';
-import { GalleryStage } from './modules/gallery-stage.js?v=2.4.0.2';
-import { FormController } from './modules/form-controller.js?v=2.4.0.2';
-import { PrintExporter } from './modules/print-exporter.js?v=2.4.0.2';
+import { StateStore } from './modules/state-store.js?v=2.5.0';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.5.0';
+import { SvgRenderer } from './modules/svg-renderer.js?v=2.5.0';
+import { GalleryStage } from './modules/gallery-stage.js?v=2.5.0';
+import { FormController } from './modules/form-controller.js?v=2.5.0';
 
-window.mrTeePrintExporter = PrintExporter;
 window.mrTeeSvgRenderer = SvgRenderer;
 window.mrTeeSceneGraphEngine = SceneGraphEngine;
 
 class MrTeeFrontendApp {
 	constructor() {
-		window.mrTeePrintExporter = PrintExporter;
-		window.mrTeeSvgRenderer = SvgRenderer;
-		window.mrTeeSceneGraphEngine = SceneGraphEngine;
-
 		this.data = window.mrTeeProductData || {};
 		this.config = this.data.config || {};
 
@@ -33,13 +27,26 @@ class MrTeeFrontendApp {
 		this.formController = null;
 		this.currentLayers = [];
 		this.currentZoom = { scale: 1, translateX: 0, translateY: 0 };
-		this.currentRenderOptions = null;
 
 		this.dirtyViews = new Set();
 		this.renderedViews = new Set();
 		this._siblingSyncTimer = null;
+		this._printExporterClass = null;
 
 		this.init();
+	}
+
+	/**
+	 * Dynamically import PrintExporter strictly on demand (Add-to-Cart) to keep initial page load lean.
+	 *
+	 * @return {Promise<Function>}
+	 */
+	async loadPrintExporter() {
+		if (this._printExporterClass) return this._printExporterClass;
+		const mod = await import('./modules/print-exporter.js?v=2.5.0');
+		this._printExporterClass = mod.PrintExporter;
+		window.mrTeePrintExporter = mod.PrintExporter;
+		return this._printExporterClass;
 	}
 
 	init() {
@@ -66,8 +73,12 @@ class MrTeeFrontendApp {
 		// 2. Initialize Gallery Stage (Dedicated multi-view gallery with legacy fallback)
 		this.stage = new GalleryStage(this.config, {
 			renderSvgWithPrefix: (idPrefix, viewId) => this.renderViewSvg(viewId || this.stage.getActiveViewId(), { idPrefix }),
-			onViewChange: (viewId) => {
+			onViewChange: (viewId, slideIdx, slideMeta) => {
 				this.renderActiveViewIfNeeded(viewId, false);
+				if (this.formController && typeof this.formController.setActiveSide === 'function') {
+					const meta = slideMeta || this.getViewMeta(viewId);
+					this.formController.setActiveSide(meta && meta.sideId ? meta.sideId : '');
+				}
 			},
 			onSwipeStart: (neighborViewIds) => {
 				if (Array.isArray(neighborViewIds)) {
@@ -102,6 +113,13 @@ class MrTeeFrontendApp {
 			}
 		);
 
+		if (this.stage && this.stage.isDedicated && typeof this.formController.setActiveSide === 'function') {
+			const initSlide = this.stage.getActiveSlide();
+			if (initSlide && initSlide.sideId) {
+				this.formController.setActiveSide(initSlide.sideId);
+			}
+		}
+
 		// 4. Subscribe to Store State Changes (RAF throttled for buttery-smooth 60 FPS typing)
 		this._rafRenderId = null;
 		this.store.subscribe(() => {
@@ -119,7 +137,7 @@ class MrTeeFrontendApp {
 
 		// Re-sync SVG aspect ratio once legacy gallery image finishes loading if running in legacy mode
 		if (!this.stage.isDedicated) {
-			const galleryImg = PrintExporter.findProductGalleryImageElement();
+			const galleryImg = this.stage.getViewImageElement();
 			if (galleryImg && (!galleryImg.complete || galleryImg.naturalWidth <= 2)) {
 				galleryImg.addEventListener('load', () => {
 					this.renderSceneGraph();
@@ -259,7 +277,7 @@ class MrTeeFrontendApp {
 		}
 
 		const img = (this.stage ? this.stage.getViewImageElement(viewId) : null)
-			|| PrintExporter.findProductGalleryImageElement();
+			|| document.querySelector('#mr-tee-gallery-root .mr-tee-slide.is-active img.mr-tee-slide-img, .woocommerce-product-gallery img.wp-post-image');
 		if (img) {
 			if (img.complete && img.naturalWidth > 2 && img.naturalHeight > 2) {
 				return img.naturalWidth / img.naturalHeight;
@@ -295,16 +313,16 @@ class MrTeeFrontendApp {
 		// 2. Apply 2-row dynamic centering (Ligne 1: 1..3, Ligne 2: 4..6)
 		mergedLayers = SceneGraphEngine.applyRowCentering(mergedLayers, state.activeCount);
 
-		// 3. Compute accurate bounding box of all visible layers
-		const bbox = SceneGraphEngine.getAllLayersBBox(mergedLayers);
-
-		// 4. Compute auto-zoom and vertical auto-centering
+		// 3. Compute auto-zoom and vertical auto-centering (skip bbox work when per-line boxes are active)
 		const hasPerLineBoxes = Array.isArray(this.config.text_lines) && this.config.text_lines.some(
 			l => (l.box_left !== undefined && l.box_width !== undefined) || (l.placements && Object.keys(l.placements).length > 0)
 		);
 		const zoom = hasPerLineBoxes
 			? { scale: 1.0, translateX: 0.0, translateY: 0.0 }
-			: SceneGraphEngine.getAreaTransformValuesZoom(bbox, state.area && state.area.transform);
+			: SceneGraphEngine.getAreaTransformValuesZoom(
+				SceneGraphEngine.getAllLayersBBox(mergedLayers),
+				state.area && state.area.transform
+			);
 
 		this.currentLayers = mergedLayers;
 		this.currentZoom = zoom;
@@ -336,6 +354,14 @@ class MrTeeFrontendApp {
 		const realW = (sideDef && parseFloat(sideDef.print_real_width)) || parseFloat(this.config.print_real_width) || 0;
 		const realH = (sideDef && parseFloat(sideDef.print_real_height)) || parseFloat(this.config.print_real_height) || 0;
 
+		let autoIdPrefix = '';
+		if (viewId && !(extraOpts && extraOpts.idPrefix)) {
+			const safeViewId = String(viewId).replace(/[^a-zA-Z0-9_-]/g, '');
+			if (safeViewId) {
+				autoIdPrefix = `v-${safeViewId}-`;
+			}
+		}
+
 		const renderOptions = {
 			aspectRatio: ratio,
 			realWidth: realW,
@@ -345,12 +371,9 @@ class MrTeeFrontendApp {
 			hasPerLineBoxes: Boolean(this._hasPerLineBoxes),
 			viewId: viewId || undefined,
 			sideId: (meta && meta.sideId) ? meta.sideId : undefined,
+			...(autoIdPrefix ? { idPrefix: autoIdPrefix } : {}),
 			...(extraOpts || {}),
 		};
-
-		if (!extraOpts || !extraOpts.idPrefix) {
-			this.currentRenderOptions = renderOptions;
-		}
 
 		return SvgRenderer.renderToString(this.currentLayers, this.currentZoom, renderOptions);
 	}
@@ -552,6 +575,7 @@ class MrTeeFrontendApp {
 			}
 			this.renderSceneGraph();
 
+			const PrintExporter = await this.loadPrintExporter();
 			await PrintExporter.prepareExport(
 				this.currentLayers,
 				this.currentZoom,

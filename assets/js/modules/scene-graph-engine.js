@@ -266,7 +266,7 @@ export class SceneGraphEngine {
 				const centerX = boxL + (boxW / 2);
 				const centerY = boxT + (boxH / 2);
 
-				const textVal = String(node.value || node.text || '');
+				const textVal = String(node.value || node.text || '').replace(/\r\n?/g, '\n');
 				const lines = textVal.split('\n');
 				const numLines = Math.max(1, lines.length);
 				const lineHeight = parseFloat(node.lineHeight) || 0.95;
@@ -284,7 +284,8 @@ export class SceneGraphEngine {
 
 				let maxLineLen = 0;
 				for (const l of lines) {
-					if (l.length > maxLineLen) maxLineLen = l.length;
+					const charLen = Array.from(l).length;
+					if (charLen > maxLineLen) maxLineLen = charLen;
 				}
 
 				const metrics = getFontMetrics(node.fontFamily);

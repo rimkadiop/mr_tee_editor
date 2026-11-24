@@ -16,14 +16,20 @@ export class StateStore {
 		this.listeners = new Set();
 
 		const perso = this.config.perso_visual || {};
+		const rep = this.config.repeater || {};
+		const minCount = rep.min_items !== undefined ? Math.max(0, parseInt(rep.min_items, 10) || 0) : 0;
+		const parsedDef = (rep.default_count !== undefined && rep.default_count !== '')
+			? parseInt(rep.default_count, 10)
+			: 2;
+		const initialCount = Number.isNaN(parsedDef) ? Math.max(minCount, 2) : Math.max(minCount, parsedDef);
+
 		this.state = {
 			productId: this.config.productId || 0,
 			layers: Array.isArray(perso.layers) ? JSON.parse(JSON.stringify(perso.layers)) : [],
 			references: Array.isArray(perso.references) ? JSON.parse(JSON.stringify(perso.references)) : [],
-			persoVisualCfg: perso.perso_visual_cfg || { sections: [] },
 			area: perso.area || { width: 2400, height: 3000, higherAnchor: 'top', widerAnchor: 'middle' },
 			garmentColor: this.config.garment_colors && this.config.garment_colors[0] ? this.config.garment_colors[0] : null,
-			activeCount: (this.config.repeater && this.config.repeater.default_count) || 2,
+			activeCount: initialCount,
 			isDirty: false,
 			hasUneditedWarnings: false,
 			warnings: [],
@@ -183,7 +189,13 @@ export class StateStore {
 			ref.letterSpacing = (fontDef.letter_spacing !== undefined) ? parseFloat(fontDef.letter_spacing) : 0.05;
 			ref.strokeWidth = (fontDef.stroke_width !== undefined) ? parseFloat(fontDef.stroke_width) : 0;
 			ref.strokeColor = fontDef.stroke || 'transparent';
-			ref.casing = fontDef.uppercase ? 'UPPER' : 'ORIGINAL';
+			const matchedLine = Array.isArray(this.config.text_lines)
+				? this.config.text_lines.find(l => l && l.ref_id === refId)
+				: null;
+			const explicitCasing = (matchedLine && typeof matchedLine.casing === 'string' && matchedLine.casing)
+				? matchedLine.casing
+				: '';
+			ref.casing = fontDef.uppercase ? 'UPPER' : (explicitCasing || 'ORIGINAL');
 			ref.multiColor = Boolean(fontDef.multi_color);
 
 			if (ref.colorRefId) {
@@ -246,6 +258,7 @@ export class StateStore {
 				layer.fill.color = { hex: colorHex };
 			}
 		}
+		this.state.isDirty = true;
 		this.notify('color_change');
 	}
 
@@ -322,8 +335,10 @@ export class StateStore {
 			const props = ref.customProperties || [];
 			const warningProp = props.find(p => p.key === 'warning');
 			const editedProp = props.find(p => p.key === 'edited');
+			const isTextRef = !ref.type || ref.type === 'TEXT';
+			const isBlankText = isTextRef && String(ref.value !== undefined ? ref.value : '').trim() === '';
 
-			if (warningProp && warningProp.value && (!editedProp || !editedProp.value)) {
+			if (warningProp && warningProp.value && (!editedProp || !editedProp.value || isBlankText)) {
 				warnings.push({
 					id: ref.id,
 					type: ref.type || 'TEXT',
@@ -370,6 +385,21 @@ export class StateStore {
 			const fieldType = line.field_type === 'image' ? 'image' : 'text';
 			const sideId = line.side_id || line.sideId || 'front';
 			const placements = (line.placements && typeof line.placements === 'object') ? line.placements : {};
+			const boxRotate = parseFloat(line.box_rotate !== undefined ? line.box_rotate : (line.rotate !== undefined ? line.rotate : 0.0)) || 0.0;
+			const boxGeometry = { box_rotate: boxRotate };
+			if (line.box_left !== undefined && line.box_left !== null && !Number.isNaN(parseFloat(line.box_left))) {
+				boxGeometry.box_left = parseFloat(line.box_left);
+			}
+			if (line.box_top !== undefined && line.box_top !== null && !Number.isNaN(parseFloat(line.box_top))) {
+				boxGeometry.box_top = parseFloat(line.box_top);
+			}
+			if (line.box_width !== undefined && line.box_width !== null && !Number.isNaN(parseFloat(line.box_width))) {
+				boxGeometry.box_width = parseFloat(line.box_width);
+			}
+			if (line.box_height !== undefined && line.box_height !== null && !Number.isNaN(parseFloat(line.box_height))) {
+				boxGeometry.box_height = parseFloat(line.box_height);
+			}
+
 			if (fieldType === 'image') {
 				const props = (ref && Array.isArray(ref.customProperties)) ? ref.customProperties : [];
 				const fileProp = props.find(p => p.key === 'fileName');
@@ -382,6 +412,7 @@ export class StateStore {
 					: (imageUrl ? 'Image par défaut' : '');
 				return {
 					id: line.id,
+					ref_id: line.ref_id || '',
 					label: line.label,
 					fieldType: 'image',
 					sideId,
@@ -391,18 +422,26 @@ export class StateStore {
 					fileName: fileName,
 					edited: isEdited,
 					imageFit: line.image_fit === 'cover' ? 'cover' : 'contain',
-					rotate: parseFloat(line.box_rotate !== undefined ? line.box_rotate : (line.rotate !== undefined ? line.rotate : 0.0)) || 0.0,
+					colorHex: '',
+					...boxGeometry,
+					rotate: boxRotate,
 				};
 			}
+			const colorRefId = (ref && ref.colorRefId) || line.color_ref_id || '';
+			const colorRef = colorRefId ? this.getReference(colorRefId) : null;
+			const colorHex = (colorRef && colorRef.colorHex) ? colorRef.colorHex : (line.color_hex || '');
 			return {
 				id: line.id,
+				ref_id: line.ref_id || '',
 				label: line.label,
 				fieldType: 'text',
 				sideId,
 				placements,
 				value: ref ? ref.value : line.default_text,
 				fontId: ref ? ref.fontId : line.font,
-				rotate: parseFloat(line.box_rotate !== undefined ? line.box_rotate : (line.rotate !== undefined ? line.rotate : 0.0)) || 0.0,
+				colorHex,
+				...boxGeometry,
+				rotate: boxRotate,
 			};
 		});
 

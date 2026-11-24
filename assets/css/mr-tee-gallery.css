@@ -1,4 +1,4 @@
-/* Mr. Tee Editor Gallery v2.4.0 */
+/* Mr. Tee Editor Gallery v2.5.0 */
 #mr-tee-gallery-root,#mr-tee-gallery-root *,#mr-tee-gallery-lightbox,#mr-tee-gallery-lightbox *{box-sizing:border-box}
 #mr-tee-gallery-root,#mr-tee-gallery-lightbox{--b:#154694;font-family:system-ui,-apple-system,Roboto,sans-serif}
 #mr-tee-gallery-root{position:relative;max-width:100%;min-width:0;opacity:1!important;visibility:visible!important;color-scheme:light}
@@ -6,6 +6,7 @@
 .mr-tee-locked-aspect-ratio #mr-tee-gallery-root{aspect-ratio:auto!important;height:auto!important}
 :is(#mr-tee-gallery-root,#mr-tee-gallery-lightbox) button{font-family:inherit;text-transform:none;letter-spacing:normal;min-height:0;margin:0;box-shadow:none;cursor:pointer}
 #mr-tee-gallery-root button:focus-visible{outline:2px solid var(--b);outline-offset:2px}
+#mr-tee-gallery-lightbox button:focus-visible{outline:2px solid #fff;outline-offset:2px}
 :is(#mr-tee-gallery-root,#mr-tee-gallery-lightbox) img{display:block!important;margin:0!important;padding:0!important;border:0!important;border-radius:0!important;box-shadow:none!important;aspect-ratio:auto!important}
 .mr-tee-view-pills,.mr-tee-gallery-thumbs{display:flex;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
 :is(.mr-tee-view-pills,.mr-tee-gallery-thumbs)::-webkit-scrollbar{display:none}
@@ -13,8 +14,10 @@
 .mr-tee-view-pill{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;padding:6px 12px;border-radius:99px;border:1.5px solid #cbd5e1;background:#fff;color:#334155;font-size:12.5px;font-weight:600;line-height:1.2;white-space:nowrap;transition:.16s}
 .mr-tee-view-pill:hover{border-color:#94a3b8;background:#f8fafc;color:#0f172a}
 .mr-tee-view-pill.is-active{border-color:var(--b);background:var(--b);color:#fff;box-shadow:0 2px 6px #1546943d}
-.mr-tee-view-pill-icon{font-size:13px;line-height:1}
+.mr-tee-view-pill-icon{display:inline-flex;align-items:center;line-height:1}
 .mr-tee-gallery-viewport{position:relative;width:100%;overflow:hidden;border-radius:12px;background:#f8fafc;touch-action:pan-y;user-select:none;-webkit-user-select:none;direction:ltr}
+[data-slide-count]:not([data-slide-count="1"]) .mr-tee-gallery-viewport{cursor:grab}
+[data-slide-count]:not([data-slide-count="1"]) .mr-tee-gallery-viewport:has(.is-dragging){cursor:grabbing}
 .mr-tee-gallery-track{display:flex;width:100%;transition:transform .28s cubic-bezier(.22,1,.36,1);will-change:transform}
 .mr-tee-gallery-track.is-dragging{transition:none!important}
 .mr-tee-slide{flex:0 0 100%;min-width:100%;display:flex;align-items:center;justify-content:center}
@@ -22,7 +25,7 @@
 #mr-tee-gallery-root .mr-tee-slide-stage--locked{aspect-ratio:var(--mr-tee-slide-ratio,var(--mr-tee-aspect-ratio,1/1))!important;overflow:hidden}
 #mr-tee-gallery-root .mr-tee-slide-img{width:100%!important;height:auto!important;max-width:100%!important;object-fit:unset!important;pointer-events:none;-webkit-user-drag:none}
 #mr-tee-gallery-root .mr-tee-slide-stage--locked .mr-tee-slide-img{aspect-ratio:var(--mr-tee-slide-ratio,var(--mr-tee-aspect-ratio,1/1))!important;height:100%!important;object-fit:contain!important}
-:is(.mr-tee-slide-stage,.mr-tee-lb-stage)>.mr-tee-live-stage-overlay{inset:0!important;width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;aspect-ratio:auto!important}
+#mr-tee-gallery-root .mr-tee-slide-stage>.mr-tee-live-stage-overlay,#mr-tee-gallery-lightbox .mr-tee-lb-stage>.mr-tee-live-stage-overlay{inset:0!important;width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;aspect-ratio:auto!important}
 .mr-tee-live-stage-overlay[data-blend="multiply"]{mix-blend-mode:multiply;opacity:.96}
 .mr-tee-live-stage-overlay[data-blend="soft_ink"]{opacity:.91}
 .mr-tee-gallery-arrow,.mr-tee-gallery-fullscreen-btn,.mr-tee-lb-arrow,.mr-tee-lb-btn{display:inline-flex;align-items:center;justify-content:center;padding:0}
@@ -52,12 +55,15 @@
 .is-zoomed .mr-tee-lb-body{align-items:flex-start;justify-content:flex-start}
 .mr-tee-lb-stage{position:relative;display:inline-block;margin:auto;width:fit-content;max-width:92vw;line-height:0;border-radius:10px;overflow:hidden;background:#fff;cursor:zoom-in;flex-shrink:0}
 .is-zoomed .mr-tee-lb-stage{max-width:none;cursor:zoom-out}
+#mr-tee-gallery-lightbox .mr-tee-lb-stage.mr-tee-lb-stage--locked{width:min(88vw,760px,calc(78vh * var(--mr-tee-slide-ratio,var(--mr-tee-aspect-ratio,1))));aspect-ratio:var(--mr-tee-slide-ratio,var(--mr-tee-aspect-ratio,1/1))!important}
+#mr-tee-gallery-lightbox.is-zoomed .mr-tee-lb-stage.mr-tee-lb-stage--locked{width:var(--mr-tee-lb-zoom-w,min(154vw,1330px))!important;max-width:none!important}
 .mr-tee-lb-img{width:auto!important;height:auto!important;max-width:min(88vw,760px)!important;max-height:78vh!important;object-fit:unset!important;pointer-events:none}
 .is-zoomed .mr-tee-lb-img{width:var(--mr-tee-lb-zoom-w,min(154vw,1330px))!important;max-width:none!important;max-height:none!important}
+#mr-tee-gallery-lightbox .mr-tee-lb-stage.mr-tee-lb-stage--locked .mr-tee-lb-img{width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;object-fit:contain!important}
 .mr-tee-lb-arrow{position:fixed;z-index:4;width:42px;height:42px;border-radius:50%;border:1px solid #ffffff47;background:#0f172ab3;color:#fff}
 .mr-tee-lb-arrow--prev{left:14px}
 .mr-tee-lb-arrow--next{right:14px}
 .mr-tee-side-badge{display:inline-block;padding:1px 6px;margin-left:6px;border-radius:99px;background:#dbeafe;color:#1e40af;font-size:9.5px;font-weight:700;vertical-align:1px}
 .mr-tee-side-badge[data-side-id="back"]{background:#ede9fe;color:#5b21b6}
-.mr-tee-mobile-preview-fab{position:fixed;right:14px;bottom:18px;z-index:99990;display:none;align-items:center;gap:6px;padding:9px 14px;border-radius:99px;border:1px solid #fff3;background:#154694;color:#fff;font-size:13px;font-weight:700;line-height:1;cursor:pointer;box-shadow:0 6px 18px #15469459}
+.mr-tee-mobile-preview-fab{position:fixed;right:14px;bottom:calc(18px + env(safe-area-inset-bottom,0px));z-index:99990;display:none;align-items:center;gap:6px;padding:9px 14px;border-radius:99px;border:1px solid #fff3;background:#154694;color:#fff;font-size:13px;font-weight:700;line-height:1;cursor:pointer;box-shadow:0 6px 18px #15469459}
 @media (max-width:991px){.mr-tee-mobile-preview-fab.is-visible{display:inline-flex}}

@@ -7,7 +7,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.4.0.2';
+import { SvgRenderer } from './svg-renderer.js?v=2.5.0';
 
 export class PrintExporter {
 	static CHUNK_SIZE_BYTES = 600 * 1024; // 600 KB binary chunks fit cleanly under 1 MB proxy/WAF limits while minimizing round-trips
@@ -25,9 +25,9 @@ export class PrintExporter {
 	}
 
 	static isSameOriginImage(imgEl) {
-		if (!imgEl || !imgEl.complete || !imgEl.naturalWidth) return false;
+		if (!imgEl || !imgEl.complete || imgEl.naturalWidth <= 2 || imgEl.naturalHeight <= 2) return false;
 		const src = imgEl.currentSrc || imgEl.getAttribute('src') || '';
-		if (!src || src.startsWith('data:image/svg+xml')) return false;
+		if (!src || src.startsWith('data:image/svg+xml') || src.startsWith('data:image/gif')) return false;
 		if (src.startsWith('data:')) return true;
 		try {
 			const parsed = new URL(src, window.location.origin);
@@ -137,8 +137,17 @@ export class PrintExporter {
 						if (img) return img;
 					}
 				}
+				return null;
 			}
-			return null;
+			// Legacy gallery fallback when #mr-tee-gallery-root is absent:
+			// preserve explicit distinct secondary view images, while letting primary view fall through
+			// to the active legacy gallery image so WooCommerce variation swaps are respected.
+			const pData = (typeof window !== 'undefined' && window.mrTeeProductData) ? window.mrTeeProductData : null;
+			const pViews = (pData && pData.config && Array.isArray(pData.config.preview_views)) ? pData.config.preview_views : [];
+			const viewIdx = pViews.findIndex(v => v && String(v.id) === String(viewId));
+			if (viewIdx > 0 && pViews[viewIdx] && pViews[viewIdx].image_url) {
+				return null;
+			}
 		}
 
 		const selectors = [
@@ -309,6 +318,7 @@ export class PrintExporter {
 		const chunkSize = this.CHUNK_SIZE_BYTES;
 		const totalChunks = Math.max(1, Math.ceil(blob.size / chunkSize));
 		const uploadId = this.generateUploadId();
+		const maxAttempts = 3;
 		let finalResult = null;
 
 		for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
@@ -318,7 +328,8 @@ export class PrintExporter {
 
 			let attempt = 0;
 			let okResp = null;
-			while (attempt < 2 && !okResp) {
+			let lastErr = null;
+			while (attempt < maxAttempts && !okResp) {
 				attempt++;
 				const formData = new FormData();
 				formData.append('action', 'mr_tee_upload_design_artifact');
@@ -333,19 +344,58 @@ export class PrintExporter {
 				if (isPrimary) formData.append('is_primary', '1');
 				formData.append('chunk_file', slice, fileName || `${artifact}.part`);
 
-				const resp = await fetch(ajaxUrl, { method: 'POST', body: formData });
-				if (!resp.ok) {
-					if (attempt >= 2) {
-						throw new Error(`Upload HTTP ${resp.status} (${artifact} chunk ${chunkIndex + 1}/${totalChunks})`);
+				const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+				const timer = ctrl ? setTimeout(() => ctrl.abort(), 30000) : null;
+				try {
+					const resp = await fetch(ajaxUrl, ctrl ? { method: 'POST', body: formData, signal: ctrl.signal } : { method: 'POST', body: formData });
+					if (timer) clearTimeout(timer);
+
+					const rawText = await resp.text();
+					let json = null;
+					try {
+						json = rawText ? JSON.parse(rawText) : null;
+					} catch (parseErr) {
+						json = null;
 					}
-					continue;
+
+					if (!resp.ok) {
+						if (json && json.success === false && json.data && json.data.message && resp.status >= 400 && resp.status < 500 && resp.status !== 408 && resp.status !== 429) {
+							throw new Error(json.data.message);
+						}
+						if (rawText.trim() === '-1' || resp.status === 403) {
+							throw new Error('Session expirée ou accès refusé. Rechargez la page et réessayez.');
+						}
+						lastErr = new Error(`Upload HTTP ${resp.status} (${artifact} chunk ${chunkIndex + 1}/${totalChunks})`);
+					} else if (!json) {
+						if (rawText.trim() === '-1') {
+							throw new Error('Session expirée (nonce invalide). Rechargez la page et réessayez.');
+						}
+						lastErr = new Error(`Réponse serveur invalide (${artifact} chunk ${chunkIndex + 1}/${totalChunks})`);
+					} else if (!json.success) {
+						const errMsg = (json.data && json.data.message) ? json.data.message : `Upload error (${artifact})`;
+						throw new Error(errMsg);
+					} else {
+						okResp = json.data;
+					}
+				} catch (err) {
+					if (timer) clearTimeout(timer);
+					const isAbort = err && (err.name === 'AbortError' || String(err.message || '').includes('aborted'));
+					const isNetwork = isAbort || (err instanceof TypeError);
+					if (!isNetwork) {
+						throw err;
+					}
+					lastErr = isAbort
+						? new Error(`Délai dépassé lors de l'envoi (${artifact} chunk ${chunkIndex + 1}/${totalChunks})`)
+						: err;
 				}
-				const json = await resp.json();
-				if (!json || !json.success) {
-					const errMsg = (json && json.data && json.data.message) ? json.data.message : `Upload error (${artifact})`;
-					throw new Error(errMsg);
+
+				if (!okResp && attempt < maxAttempts) {
+					await new Promise((r) => setTimeout(r, 350 * attempt));
 				}
-				okResp = json.data;
+			}
+
+			if (!okResp) {
+				throw lastErr || new Error(`Upload failed (${artifact} chunk ${chunkIndex + 1}/${totalChunks})`);
 			}
 			finalResult = okResp;
 		}
@@ -389,6 +439,7 @@ export class PrintExporter {
 	/**
 	 * Compute cropped physical & 300 DPI print dimensions for a specific print side
 	 * using that side's `print_sides` dimensions and its reference `full` view placements.
+	 * Prefers order-time snapshot metadata inside `editorData.payload` over live product `config`.
 	 *
 	 * @param {Object}      config     Product configuration.
 	 * @param {Object|null} editorData Optional saved order item _mr_tee_editor_data snapshot.
@@ -397,12 +448,12 @@ export class PrintExporter {
 	 */
 	static computeSideExportMetrics(config = {}, editorData = null, sideId = null) {
 		const payload = (editorData && editorData.payload) ? editorData.payload : {};
-		const printSides = (Array.isArray(config.print_sides) && config.print_sides.length > 0)
-			? config.print_sides
-			: (Array.isArray(payload.print_sides) ? payload.print_sides : []);
-		const previewViews = (Array.isArray(config.preview_views) && config.preview_views.length > 0)
-			? config.preview_views
-			: (Array.isArray(payload.preview_views) ? payload.preview_views : []);
+		const printSides = (Array.isArray(payload.print_sides) && payload.print_sides.length > 0)
+			? payload.print_sides
+			: (Array.isArray(config.print_sides) ? config.print_sides : []);
+		const previewViews = (Array.isArray(payload.preview_views) && payload.preview_views.length > 0)
+			? payload.preview_views
+			: (Array.isArray(config.preview_views) ? config.preview_views : []);
 
 		const primarySideId = (printSides.length > 0 && printSides[0] && printSides[0].id) ? String(printSides[0].id) : 'front';
 		const targetSideId = sideId ? String(sideId) : primarySideId;
@@ -419,29 +470,76 @@ export class PrintExporter {
 			: Boolean(config.lock_aspect_ratio);
 
 		const realW = (sideDef && parseFloat(sideDef.print_real_width))
-			|| parseFloat(config.print_real_width)
 			|| (editorData && parseFloat(editorData.ref_real_width))
+			|| parseFloat(config.print_real_width)
 			|| 30.0;
 		const realH = (sideDef && parseFloat(sideDef.print_real_height))
-			|| parseFloat(config.print_real_height)
 			|| (editorData && parseFloat(editorData.ref_real_height))
+			|| parseFloat(config.print_real_height)
 			|| 40.0;
 		const unit = (sideDef && sideDef.print_unit)
-			|| config.print_unit
 			|| (payload && payload.print_unit)
 			|| (editorData && editorData.print_unit)
+			|| config.print_unit
 			|| 'cm';
-		const dpi = parseInt((sideDef && sideDef.dpi) || config.dpi || (payload && payload.dpi) || 300, 10) || 300;
+		const dpi = parseInt((sideDef && sideDef.dpi) || (payload && payload.dpi) || config.dpi || 300, 10) || 300;
 		const toInches = unit === 'mm' ? (1 / 25.4) : (unit === 'in' ? 1.0 : (1 / 2.54));
 
-		const allLines = (Array.isArray(config.text_lines) && config.text_lines.length > 0)
-			? config.text_lines
-			: (Array.isArray(payload.text_lines) ? payload.text_lines : []);
+		const payloadLinesHaveGeometry = Array.isArray(payload.text_lines) && payload.text_lines.some(
+			l => l && (
+				(l.placements && typeof l.placements === 'object' && Object.keys(l.placements).length > 0)
+				|| (l.box_left !== undefined && l.box_width !== undefined)
+			)
+		);
+		const allLines = payloadLinesHaveGeometry
+			? payload.text_lines
+			: ((Array.isArray(config.text_lines) && config.text_lines.length > 0)
+				? config.text_lines
+				: (Array.isArray(payload.text_lines) ? payload.text_lines : []));
 		const sideLines = allLines.filter(l => l && String(l.side_id || l.sideId || 'front') === targetSideId);
+
+		// Index saved reference values so empty text/image fields don't bloat cropBoundingBox
+		const refMap = new Map();
+		const pvRefs = (payload.perso_visual && Array.isArray(payload.perso_visual.references))
+			? payload.perso_visual.references
+			: [];
+		for (const r of pvRefs) {
+			if (r && r.id) refMap.set(String(r.id), r);
+		}
+		const hasSnapshotValues = pvRefs.length > 0 || (Array.isArray(payload.text_lines) && payload.text_lines.length > 0);
+		const payloadLineById = new Map();
+		if (Array.isArray(payload.text_lines)) {
+			for (const pl of payload.text_lines) {
+				if (pl && pl.ref_id) payloadLineById.set(String(pl.ref_id), pl);
+				if (pl && pl.id) payloadLineById.set(`id:${pl.id}`, pl);
+			}
+		}
+
+		const isLineActiveWithContent = (line) => {
+			if (!hasSnapshotValues) return true;
+			const fType = line.field_type || line.fieldType || 'text';
+			const ref = line.ref_id ? refMap.get(String(line.ref_id)) : null;
+			const pLine = (line.ref_id && payloadLineById.get(String(line.ref_id))) || (line.id && payloadLineById.get(`id:${line.id}`)) || null;
+			if (fType === 'image') {
+				if (ref) return Boolean(ref.url && String(ref.url).trim());
+				if (pLine && pLine.imageUrl !== undefined) return Boolean(String(pLine.imageUrl || '').trim());
+				return Boolean(line.imageUrl || line.default_image);
+			}
+			if (ref && ref.value !== undefined) {
+				return String(ref.value).trim().length > 0;
+			}
+			if (pLine && pLine.value !== undefined) {
+				return String(pLine.value).trim().length > 0;
+			}
+			return true;
+		};
 
 		const resolveLineBox = (line) => {
 			if (refViewId && line.placements && line.placements[refViewId]) {
 				const p = line.placements[refViewId];
+				if (p && p.hidden === true) {
+					return null;
+				}
 				if (p && p.box_left !== undefined && p.box_width !== undefined) {
 					return {
 						left: parseFloat(p.box_left) || 0,
@@ -464,29 +562,34 @@ export class PrintExporter {
 			return null;
 		};
 
-		const boxes = sideLines.map(resolveLineBox).filter(Boolean);
-		const hasPerLineBoxes = boxes.length > 0;
+		const allSideBoxes = [];
+		const activeSideBoxes = [];
+		for (const line of sideLines) {
+			const box = resolveLineBox(line);
+			if (!box) continue;
+			allSideBoxes.push(box);
+			if (isLineActiveWithContent(line)) {
+				activeSideBoxes.push(box);
+			}
+		}
+		const boxes = activeSideBoxes.length > 0 ? activeSideBoxes : allSideBoxes;
+		const hasPerLineBoxes = allSideBoxes.length > 0;
 		const hasRepeaterOrClipart = isPrimarySide && Boolean(
 			(config.repeater && config.repeater.enabled)
-			|| (config.vector_clipart && config.vector_clipart.enabled)
+			|| (config.vector_clipart && (config.vector_clipart.enabled || config.vector_clipart.path))
 			|| (editorData && editorData.repeater_enabled)
 		);
 
-		const defaultFullPxW = (sideDef && parseInt(sideDef.print_width_px, 10))
-			|| (isPrimarySide ? (parseInt(config.print_width_px, 10) || (payload && parseInt(payload.crop_width_px, 10)) || (editorData && parseInt(editorData.print_width_px, 10))) : 0)
-			|| Math.max(10, Math.round(realW * toInches * dpi))
-			|| 2400;
-		const defaultFullPxH = (sideDef && parseInt(sideDef.print_height_px, 10))
-			|| (isPrimarySide ? (parseInt(config.print_height_px, 10) || (payload && parseInt(payload.crop_height_px, 10)) || (editorData && parseInt(editorData.print_height_px, 10))) : 0)
-			|| Math.max(10, Math.round(realH * toInches * dpi))
-			|| 3000;
+		// Compute full platen pixel dimensions strictly from physical platen dimensions & DPI
+		const defaultFullPxW = Math.max(10, Math.round(realW * toInches * dpi)) || 2400;
+		const defaultFullPxH = Math.max(10, Math.round(realH * toInches * dpi)) || 3000;
 
 		let cropBoundingBox = null;
-		let exportRealW = (isPrimarySide && payload && parseFloat(payload.crop_print_width)) || (isPrimarySide && editorData && parseFloat(editorData.print_real_width)) || realW;
-		let exportRealH = (isPrimarySide && payload && parseFloat(payload.crop_print_height)) || (isPrimarySide && editorData && parseFloat(editorData.print_real_height)) || realH;
+		let exportRealW = realW;
+		let exportRealH = realH;
 		let exportPxW = defaultFullPxW;
 		let exportPxH = defaultFullPxH;
-		let exportRatio = (exportRealW > 0 && exportRealH > 0) ? (exportRealW / exportRealH) : ((realW > 0 && realH > 0) ? (realW / realH) : 1.0);
+		let exportRatio = (realW > 0 && realH > 0) ? (realW / realH) : 1.0;
 
 		if (isFlatObject || hasRepeaterOrClipart || !hasPerLineBoxes) {
 			exportRealW = realW;
@@ -518,6 +621,12 @@ export class PrintExporter {
 					yMax = Math.max(yMax, top + height);
 				}
 			});
+
+			// Clamp bounding box strictly within [0, 100]% platen bounds
+			xMin = Math.max(0, Math.min(100, xMin));
+			yMin = Math.max(0, Math.min(100, yMin));
+			xMax = Math.max(0, Math.min(100, xMax));
+			yMax = Math.max(0, Math.min(100, yMax));
 
 			const spanW = Math.max(1, xMax - xMin);
 			const spanH = Math.max(1, yMax - yMin);
@@ -574,9 +683,9 @@ export class PrintExporter {
 	 */
 	static computeExportMetrics(config = {}, editorData = null) {
 		const payload = (editorData && editorData.payload) ? editorData.payload : {};
-		const printSides = (Array.isArray(config.print_sides) && config.print_sides.length > 0)
-			? config.print_sides
-			: (Array.isArray(payload.print_sides) ? payload.print_sides : []);
+		const printSides = (Array.isArray(payload.print_sides) && payload.print_sides.length > 0)
+			? payload.print_sides
+			: (Array.isArray(config.print_sides) ? config.print_sides : []);
 		const primarySideId = (printSides.length > 0 && printSides[0] && printSides[0].id) ? String(printSides[0].id) : 'front';
 		return this.computeSideExportMetrics(config, editorData, primarySideId);
 	}
@@ -649,7 +758,9 @@ export class PrintExporter {
 
 		await this.ensureActiveSvgFontsLoaded(layers, config);
 
-		const primaryMetrics = this.computeExportMetrics(config);
+		const payload = store.getExportPayload();
+		const snapshotEditorData = { payload };
+		const primaryMetrics = this.computeExportMetrics(config, snapshotEditorData);
 		const allPreviewViews = Array.isArray(config.preview_views) ? config.preview_views.filter(Boolean) : [];
 		const allPrintSides = Array.isArray(config.print_sides) ? config.print_sides.filter(Boolean) : [];
 
@@ -693,7 +804,7 @@ export class PrintExporter {
 		const renderedViews = await Promise.all(cartViews.map(async (view, i) => {
 			const sideId = view.side_id || 'front';
 			const viewId = view.id || null;
-			const sideMetrics = this.computeSideExportMetrics(config, null, sideId);
+			const sideMetrics = this.computeSideExportMetrics(config, snapshotEditorData, sideId);
 
 			let domGarmentImg = viewId ? this.findProductGalleryImageElement(viewId) : (i === 0 ? this.findProductGalleryImageElement() : null);
 			if (!domGarmentImg && i === 0 && !view.image_url) {
@@ -763,7 +874,7 @@ export class PrintExporter {
 		const sidesForMetrics = allPrintSides.length > 0 ? allPrintSides : [{ id: primaryMetrics.sideId || 'front' }];
 		for (const sideDef of sidesForMetrics) {
 			const sid = (sideDef && sideDef.id) ? String(sideDef.id) : 'front';
-			const sm = this.computeSideExportMetrics(config, null, sid);
+			const sm = this.computeSideExportMetrics(config, snapshotEditorData, sid);
 			sideExportMetrics[sid] = {
 				crop_print_width: sm.exportRealW,
 				crop_print_height: sm.exportRealH,
@@ -774,7 +885,6 @@ export class PrintExporter {
 			};
 		}
 
-		const payload = store.getExportPayload();
 		payload.crop_print_width = primaryMetrics.exportRealW;
 		payload.crop_print_height = primaryMetrics.exportRealH;
 		payload.crop_width_px = primaryMetrics.exportPxW;
@@ -869,13 +979,14 @@ export class PrintExporter {
 	 * inside an SVG to compact base64 data URIs so HTML5 canvas draws without tainting or stalling.
 	 *
 	 * @param {string} svgMarkup SVG XML markup.
-	 * @param {Object} options Optional thumbnail downscaling flags ({ useThumbCache, maxThumbDim }).
+	 * @param {Object} options Optional flags ({ useThumbCache, maxThumbDim, strict }).
 	 * @return {Promise<string>} Inlined SVG XML markup.
 	 */
 	static async inlineExternalImages(svgMarkup, options = {}) {
 		if (!svgMarkup) return '';
 		const useThumbCache = Boolean(options.useThumbCache);
 		const maxThumbDim = options.maxThumbDim || 420;
+		const strict = Boolean(options.strict);
 		const matches = [...svgMarkup.matchAll(/(xlink:href|href)="([^"]+)"/g)];
 		const urlsToFetch = [];
 		for (const m of matches) {
@@ -893,7 +1004,8 @@ export class PrintExporter {
 			return svgMarkup;
 		}
 
-		const urlMap = {};
+		const urlMap = Object.create(null);
+		const failedUrls = [];
 		await Promise.all(urlsToFetch.map(async (url) => {
 			const cleanUrl = url.replace(/&amp;/g, '&');
 			const b64 = useThumbCache
@@ -901,14 +1013,21 @@ export class PrintExporter {
 				: await this.fetchImageAsDataUrl(cleanUrl);
 			if (b64 && b64 !== url) {
 				urlMap[url] = b64;
+			} else if (!b64 && !url.startsWith('data:')) {
+				failedUrls.push(cleanUrl);
 			}
 		}));
 
-		let inlined = svgMarkup;
-		for (const [url, b64] of Object.entries(urlMap)) {
-			inlined = inlined.split(url).join(b64);
+		if (strict && failedUrls.length > 0) {
+			throw new Error(`Impossible d'intégrer ${failedUrls.length} image(s) externe(s) pour l'export 300 DPI.`);
 		}
-		return inlined;
+
+		return svgMarkup.replace(/(xlink:href|href)="([^"]+)"/g, (full, attr, rawUrl) => {
+			if (Object.prototype.hasOwnProperty.call(urlMap, rawUrl)) {
+				return `${attr}="${urlMap[rawUrl]}"`;
+			}
+			return full;
+		});
 	}
 
 	/**
@@ -978,10 +1097,12 @@ export class PrintExporter {
 	 * Blob-rendered rasterization canvases display exact custom TTF/OTF typography.
 	 *
 	 * @param {string} svgMarkup SVG XML markup.
+	 * @param {Object} options Optional flags ({ stripUnused }).
 	 * @return {Promise<string>}
 	 */
-	static async inlineExternalFonts(svgMarkup) {
+	static async inlineExternalFonts(svgMarkup, options = {}) {
 		if (!svgMarkup) return '';
+		const stripUnused = Boolean(options.stripUnused);
 
 		const markupWithoutStyles = svgMarkup.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '');
 		const usedFamilies = new Set();
@@ -1011,83 +1132,198 @@ export class PrintExporter {
 			}
 		}
 
-		if (usedFamilies.size === 0) {
+		if (usedFamilies.size === 0 && !stripUnused) {
 			return svgMarkup;
 		}
 
 		const fontUrls = [];
-		for (const sm of svgMarkup.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)) {
-			const cssBody = sm[1];
-			for (const ruleMatch of cssBody.matchAll(/@font-face\s*\{([^}]*)\}/gi)) {
-				const ruleBody = ruleMatch[1];
-				const famMatch = ruleBody.match(/font-family\s*:\s*(?:'([^']*)'|"([^"]*)"|([^;]+))/i);
-				if (!famMatch) continue;
-				const famName = decodeEntities(famMatch[1] || famMatch[2] || famMatch[3] || '')
-					.trim()
-					.replace(/^['"]+|['"]+$/g, '')
-					.trim()
-					.toLowerCase();
-				if (!famName || !usedFamilies.has(famName)) continue;
+		if (usedFamilies.size > 0) {
+			for (const sm of svgMarkup.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)) {
+				const cssBody = sm[1];
+				for (const ruleMatch of cssBody.matchAll(/@font-face\s*\{([^}]*)\}/gi)) {
+					const ruleBody = ruleMatch[1];
+					const famMatch = ruleBody.match(/font-family\s*:\s*(?:'([^']*)'|"([^"]*)"|([^;]+))/i);
+					if (!famMatch) continue;
+					const famName = decodeEntities(famMatch[1] || famMatch[2] || famMatch[3] || '')
+						.trim()
+						.replace(/^['"]+|['"]+$/g, '')
+						.trim()
+						.toLowerCase();
+					if (!famName || !usedFamilies.has(famName)) continue;
 
-				for (const urlMatch of ruleBody.matchAll(/url\(\s*(?:['"]([^'"]+)['"]|([^)\s'"]+))\s*\)/gi)) {
-					const rawUrl = (urlMatch[1] || urlMatch[2] || '').trim();
-					if (rawUrl && !rawUrl.startsWith('data:') && !fontUrls.includes(rawUrl)) {
-						fontUrls.push(rawUrl);
+					for (const urlMatch of ruleBody.matchAll(/url\(\s*(?:['"]([^'"]+)['"]|([^)\s'"]+))\s*\)/gi)) {
+						const rawUrl = (urlMatch[1] || urlMatch[2] || '').trim();
+						if (rawUrl && !rawUrl.startsWith('data:') && !fontUrls.includes(rawUrl)) {
+							fontUrls.push(rawUrl);
+						}
 					}
 				}
 			}
 		}
 
-		if (fontUrls.length === 0) {
-			return svgMarkup;
+		const fontMap = Object.create(null);
+		if (fontUrls.length > 0) {
+			await Promise.all(fontUrls.map(async (u) => {
+				const cleanUrl = decodeEntities(u);
+				const b64 = await this.fetchFontAsDataUrl(cleanUrl);
+				if (b64) {
+					fontMap[u] = b64;
+				}
+			}));
 		}
 
-		const fontMap = {};
-		await Promise.all(fontUrls.map(async (u) => {
-			const cleanUrl = decodeEntities(u);
-			const b64 = await this.fetchFontAsDataUrl(cleanUrl);
-			if (b64) {
-				fontMap[u] = b64;
-			}
-		}));
-
-		if (Object.keys(fontMap).length === 0) {
+		if (!stripUnused && Object.keys(fontMap).length === 0) {
 			return svgMarkup;
 		}
 
 		return svgMarkup.replace(/<style\b([^>]*)>([\s\S]*?)<\/style>/gi, (fullStyle, attrs, cssBody) => {
 			const rewrittenCss = cssBody.replace(/@font-face\s*\{([^}]*)\}/gi, (ruleFull, ruleBody) => {
 				const famMatch = ruleBody.match(/font-family\s*:\s*(?:'([^']*)'|"([^"]*)"|([^;]+))/i);
-				if (!famMatch) return ruleFull;
+				if (!famMatch) return stripUnused ? '' : ruleFull;
 				const famName = decodeEntities(famMatch[1] || famMatch[2] || famMatch[3] || '')
 					.trim()
 					.replace(/^['"]+|['"]+$/g, '')
 					.trim()
 					.toLowerCase();
 				if (!famName || !usedFamilies.has(famName)) {
-					return ruleFull;
+					return stripUnused ? '' : ruleFull;
 				}
 				return ruleFull.replace(/url\(\s*(?:(['"])([^'"]+)\1|([^)\s'"]+))\s*\)/gi, (um, q, quotedUrl, bareUrl) => {
 					const rawUrl = (quotedUrl || bareUrl || '').trim();
-					if (fontMap[rawUrl]) {
+					if (Object.prototype.hasOwnProperty.call(fontMap, rawUrl)) {
 						return `url('${fontMap[rawUrl]}')`;
 					}
 					return um;
 				});
 			});
+			if (stripUnused && !rewrittenCss.trim()) {
+				return '';
+			}
 			return `<style${attrs}>${rewrittenCss}</style>`;
 		});
 	}
 
 	/**
-	 * Rasterize SVG markup onto a high-resolution transparent HTML5 canvas.
+	 * Compute IEEE 802.3 CRC32 checksum over a Uint8Array (for PNG chunk encoding).
+	 *
+	 * @param {Uint8Array} bytes Byte slice.
+	 * @return {number} Unsigned 32-bit CRC.
+	 */
+	static _crc32(bytes) {
+		if (!this._crcTable) {
+			const table = new Uint32Array(256);
+			for (let n = 0; n < 256; n++) {
+				let c = n;
+				for (let k = 0; k < 8; k++) {
+					c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+				}
+				table[n] = c >>> 0;
+			}
+			this._crcTable = table;
+		}
+		let crc = 0xffffffff;
+		for (let i = 0; i < bytes.length; i++) {
+			crc = this._crcTable[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+		}
+		return (crc ^ 0xffffffff) >>> 0;
+	}
+
+	/**
+	 * Inject an exact DPI PNG `pHYs` chunk (pixels per meter) right after `IHDR`
+	 * so DTF/DTG RIP software, Photoshop, and Illustrator open exported PNGs at true 300 DPI.
+	 *
+	 * @param {Blob}   pngBlob Raw PNG Blob from HTML5 Canvas.
+	 * @param {number} dpi     Target DPI (default 300).
+	 * @return {Promise<Blob>} PNG Blob with embedded `pHYs` metadata.
+	 */
+	static async injectPngDpiPhysChunk(pngBlob, dpi = 300) {
+		if (!pngBlob || typeof pngBlob.arrayBuffer !== 'function') return pngBlob;
+		try {
+			const buf = await pngBlob.arrayBuffer();
+			const data = new Uint8Array(buf);
+			// Verify 8-byte PNG signature + IHDR chunk header
+			if (
+				data.length < 33 ||
+				data[0] !== 0x89 || data[1] !== 0x50 || data[2] !== 0x4e || data[3] !== 0x47 ||
+				data[12] !== 0x49 || data[13] !== 0x48 || data[14] !== 0x44 || data[15] !== 0x52
+			) {
+				return pngBlob;
+			}
+
+			const view = new DataView(buf);
+			const ihdrLen = view.getUint32(8, false);
+			const insertAt = 8 + 4 + 4 + ihdrLen + 4;
+			if (insertAt > data.length) {
+				return pngBlob;
+			}
+
+			// Build 21-byte pHYs chunk: 4B len(9) + 4B 'pHYs' + 4B X ppm + 4B Y ppm + 1B unit(1=meter) + 4B CRC
+			const ppm = Math.max(1, Math.round((Number(dpi) || 300) / 0.0254));
+			const phys = new Uint8Array(21);
+			const pv = new DataView(phys.buffer);
+			pv.setUint32(0, 9, false);
+			phys[4] = 0x70; // 'p'
+			phys[5] = 0x48; // 'H'
+			phys[6] = 0x59; // 'Y'
+			phys[7] = 0x73; // 's'
+			pv.setUint32(8, ppm, false);
+			pv.setUint32(12, ppm, false);
+			phys[16] = 1; // unit specifier: meter
+			pv.setUint32(17, this._crc32(phys.subarray(4, 17)), false);
+
+			// Copy remaining chunks while stripping any pre-existing pHYs chunk
+			const parts = [data.subarray(0, insertAt), phys];
+			let offset = insertAt;
+			let segStart = insertAt;
+			while (offset + 12 <= data.length) {
+				const cLen = view.getUint32(offset, false);
+				const nextOffset = offset + 12 + cLen;
+				if (nextOffset > data.length) break;
+				const isPhys = data[offset + 4] === 0x70 && data[offset + 5] === 0x48 && data[offset + 6] === 0x59 && data[offset + 7] === 0x73;
+				const isIdatOrIend = (data[offset + 4] === 0x49 && data[offset + 5] === 0x44 && data[offset + 6] === 0x41 && data[offset + 7] === 0x54)
+					|| (data[offset + 4] === 0x49 && data[offset + 5] === 0x45 && data[offset + 6] === 0x4e && data[offset + 7] === 0x44);
+				if (isPhys) {
+					if (offset > segStart) {
+						parts.push(data.subarray(segStart, offset));
+					}
+					segStart = nextOffset;
+				}
+				offset = nextOffset;
+				if (isIdatOrIend) break;
+			}
+			if (segStart < data.length) {
+				parts.push(data.subarray(segStart));
+			}
+
+			return new Blob(parts, { type: 'image/png' });
+		} catch (e) {
+			console.warn('[MrTee PrintExporter] Failed to inject PNG pHYs chunk:', e);
+			return pngBlob;
+		}
+	}
+
+	/**
+	 * Rasterize SVG markup onto a high-resolution transparent HTML5 canvas with optional
+	 * Blob streaming and embedded 300 DPI PNG `pHYs` chunk metadata.
 	 *
 	 * @param {string} svgMarkup SVG XML markup.
-	 * @param {number} width Canvas width in pixels (e.g. 2400).
-	 * @param {number} height Canvas height in pixels (e.g. 3000).
-	 * @return {Promise<string>} Base64 data URL.
+	 * @param {number} width     Canvas width in pixels (e.g. 2400).
+	 * @param {number} height    Canvas height in pixels (e.g. 3000).
+	 * @param {Object} options   Optional flags ({ dpi = 300, asBlob = false }).
+	 * @return {Promise<string|Blob>} PNG Blob (when `asBlob: true`) or Base64 data URL.
 	 */
-	static rasterizeSvgToPng(svgMarkup, width, height) {
+	static rasterizeSvgToPng(svgMarkup, width, height, options = {}) {
+		const safeW = Math.max(1, Math.round(Number(width) || 0));
+		const safeH = Math.max(1, Math.round(Number(height) || 0));
+		const dpi = parseInt(options.dpi, 10) || 300;
+		const asBlob = Boolean(options.asBlob);
+
+		if (safeW > 16384 || safeH > 16384 || (safeW * safeH) > 120000000) {
+			return Promise.reject(
+				new Error(`Dimensions d'export trop élevées pour le navigateur (${safeW}×${safeH} px). Réduisez la résolution DPI ou les dimensions d'impression.`)
+			);
+		}
+
 		return new Promise((resolve, reject) => {
 			const blob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
 			const url = URL.createObjectURL(blob);
@@ -1108,15 +1344,41 @@ export class PrintExporter {
 				clearTimeout(timer);
 				try {
 					const canvas = document.createElement('canvas');
-					canvas.width = width;
-					canvas.height = height;
+					canvas.width = safeW;
+					canvas.height = safeH;
 					const ctx = canvas.getContext('2d');
+					if (!ctx) {
+						URL.revokeObjectURL(url);
+						reject(new Error('Canvas 2D context unavailable for 300 DPI export'));
+						return;
+					}
 
-					ctx.clearRect(0, 0, width, height);
-					ctx.drawImage(img, 0, 0, width, height);
+					ctx.clearRect(0, 0, safeW, safeH);
+					ctx.drawImage(img, 0, 0, safeW, safeH);
 					URL.revokeObjectURL(url);
 
-					resolve(canvas.toDataURL('image/png'));
+					if (asBlob && typeof canvas.toBlob === 'function') {
+						canvas.toBlob((rawBlob) => {
+							if (!rawBlob || rawBlob.size === 0) {
+								reject(new Error('Canvas PNG export returned an empty blob'));
+								return;
+							}
+							this.injectPngDpiPhysChunk(rawBlob, dpi)
+								.then(resolve)
+								.catch(() => resolve(rawBlob));
+						}, 'image/png');
+					} else if (asBlob) {
+						const fallbackBlob = this.dataUrlToBlob(canvas.toDataURL('image/png'));
+						if (!fallbackBlob) {
+							reject(new Error('Canvas PNG export failed'));
+							return;
+						}
+						this.injectPngDpiPhysChunk(fallbackBlob, dpi)
+							.then(resolve)
+							.catch(() => resolve(fallbackBlob));
+					} else {
+						resolve(canvas.toDataURL('image/png'));
+					}
 				} catch (err) {
 					URL.revokeObjectURL(url);
 					reject(err);
@@ -1128,7 +1390,7 @@ export class PrintExporter {
 				settled = true;
 				clearTimeout(timer);
 				URL.revokeObjectURL(url);
-				reject(err);
+				reject(err || new Error('SVG rasterization image decode error'));
 			};
 
 			img.src = url;

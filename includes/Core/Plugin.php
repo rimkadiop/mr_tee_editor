@@ -46,7 +46,7 @@ final class Plugin {
 	private function __construct() {
 		$this->register_autoloader();
 		$this->init_services();
-		add_action( 'plugins_loaded', array( $this, 'load_textdomain' ) );
+		add_action( 'init', array( $this, 'load_textdomain' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
 		add_filter( 'script_loader_tag', array( $this, 'filter_admin_script_loader_tag' ), 10, 3 );
 	}
@@ -81,9 +81,6 @@ final class Plugin {
 	private function init_services() {
 		EngineSelectorMetabox::init();
 		ProductPageRenderer::init();
-		if ( class_exists( '\MrTeeEditor\Frontend\ProductGalleryRenderer' ) ) {
-			\MrTeeEditor\Frontend\ProductGalleryRenderer::init();
-		}
 		CartIntegration::init();
 		OrderAdminPanel::init();
 		\MrTeeEditor\Registry\FontRegistry::register_hooks();
@@ -95,6 +92,274 @@ final class Plugin {
 		add_action( 'wp_ajax_mr_tee_upload_default_image', array( $this, 'handle_admin_default_image_upload' ) );
 		add_action( 'wp_ajax_mr_tee_admin_get_order_item_context', array( $this, 'handle_admin_get_order_item_context' ) );
 		add_action( 'wp_ajax_mr_tee_admin_save_print_artifacts', array( $this, 'handle_admin_save_print_artifacts' ) );
+		add_action( 'wp_ajax_mr_tee_delete_custom_font', array( '\MrTeeEditor\Registry\FontRegistry', 'ajax_delete_custom_font' ) );
+	}
+
+	/**
+	 * Sanitize raw SVG markup against XSS, XXE, and script injection while preserving
+	 * valid print/artwork SVG elements, embedded `@font-face` rules, and raster/SVG data URIs.
+	 *
+	 * Strips:
+	 * - `<!DOCTYPE ...>` and `<!ENTITY ...>` declarations
+	 * - `<script>`, `<foreignObject>`, `<iframe>`, `<object>`, `<embed>` elements (paired & self-closing)
+	 * - All `on*=` event handler attributes (including slash-delimited like `<svg/onload=...>` and unquoted values)
+	 * - `javascript:`, `vbscript:`, `data:text/html`, `data:application/xhtml+xml`, and `data:*javascript` URIs
+	 *
+	 * @param string $raw_svg Raw SVG XML markup.
+	 * @return string Sanitized SVG markup.
+	 */
+	public static function sanitize_svg_markup( $raw_svg ) {
+		if ( ! is_string( $raw_svg ) || '' === $raw_svg ) {
+			return '';
+		}
+
+		// Strip NULL bytes that could split tokens or break parsers.
+		$svg = str_replace( "\0", '', $raw_svg );
+
+		// Strip DOCTYPE (including internal DTD subsets), ENTITY declarations, and xml-stylesheet PIs.
+		$svg = (string) preg_replace( '/<!DOCTYPE\b[^>\[]*(?:\[[^\]]*\])?\s*>/is', '', $svg );
+		$svg = (string) preg_replace( '/<!ENTITY\b[^>]*>/is', '', $svg );
+		$svg = (string) preg_replace( '/<\?xml-stylesheet\b[^>]*\?>/is', '', $svg );
+
+		// Repeatedly strip dangerous active elements until stable (defeats nested tag tricks).
+		$dangerous_tags = 'script|foreignObject|iframe|object|embed';
+		$max_passes     = 5;
+		for ( $pass = 0; $pass < $max_passes; $pass++ ) {
+			$prev = $svg;
+			$svg  = (string) preg_replace( '#<(?:[a-z0-9_-]+:)?(' . $dangerous_tags . ')(?:[\s/](?:"[^"]*"|\'[^\']*\'|[^>"\']+)*)?\s*>.*?</(?:[a-z0-9_-]+:)?\1\s*>#is', '', $svg );
+			$svg  = (string) preg_replace( '#</?(?:[a-z0-9_-]+:)?(' . $dangerous_tags . ')(?:[\s/](?:"[^"]*"|\'[^\']*\'|[^>"\']+)*)?\s*/?>#is', '', $svg );
+			if ( $svg === $prev ) {
+				break;
+			}
+		}
+
+		// Sanitize CSS <style> contents against javascript:/vbscript:/data:text/html url() and legacy expression().
+		$svg = (string) preg_replace_callback(
+			'#(<style\b[^>]*>)(.*?)(</style\s*>)#is',
+			static function ( $m ) {
+				$css = $m[2];
+				$css = (string) preg_replace( '/url\s*\(\s*[\'"]?\s*(?:javascript|vbscript)\s*:[^)]*\)/i', 'none', $css );
+				$css = (string) preg_replace( '/url\s*\(\s*[\'"]?\s*data\s*:\s*(?:text\/html|application\/xhtml|text\/javascript|application\/javascript)[^)]*\)/i', 'none', $css );
+				$css = (string) preg_replace( '/expression\s*\([^)]*\)/i', 'none', $css );
+				$css = (string) preg_replace( '/@import\b[^;]+;?/i', '', $css );
+				return $m[1] . $css . $m[3];
+			},
+			$svg
+		);
+
+		// Linear O(n) opening-tag attribute scanner (immune to PCRE backtrack limits on multi-MB base64 SVGs).
+		$len    = strlen( $svg );
+		$out    = '';
+		$cursor = 0;
+
+		while ( $cursor < $len ) {
+			$lt = strpos( $svg, '<', $cursor );
+			if ( false === $lt ) {
+				$out .= substr( $svg, $cursor );
+				break;
+			}
+
+			$out .= substr( $svg, $cursor, $lt - $cursor );
+
+			if ( $lt + 1 >= $len ) {
+				$out .= '<';
+				break;
+			}
+
+			$next_ch = $svg[ $lt + 1 ];
+
+			// Closing tags, comments, CDATA, and XML processing instructions: copy verbatim.
+			if ( '/' === $next_ch || '!' === $next_ch || '?' === $next_ch ) {
+				if ( '!' === $next_ch && 0 === substr_compare( $svg, '<!--', $lt, 4 ) ) {
+					$end = strpos( $svg, '-->', $lt + 4 );
+					$end = ( false === $end ) ? $len : ( $end + 3 );
+				} elseif ( '!' === $next_ch && 0 === substr_compare( $svg, '<![CDATA[', $lt, 9 ) ) {
+					$end = strpos( $svg, ']]>', $lt + 9 );
+					$end = ( false === $end ) ? $len : ( $end + 3 );
+				} elseif ( '?' === $next_ch ) {
+					$end = strpos( $svg, '?>', $lt + 2 );
+					$end = ( false === $end ) ? $len : ( $end + 2 );
+				} else {
+					$end = strpos( $svg, '>', $lt + 2 );
+					$end = ( false === $end ) ? $len : ( $end + 1 );
+				}
+				$out   .= substr( $svg, $lt, $end - $lt );
+				$cursor = $end;
+				continue;
+			}
+
+			// Not an element start tag (e.g. stray '<' in text).
+			if ( ! ctype_alpha( $next_ch ) ) {
+				$out   .= '<';
+				$cursor = $lt + 1;
+				continue;
+			}
+
+			// Locate the matching '>' of this opening tag while jumping over quoted attribute values.
+			$pos    = $lt + 1;
+			$gt_pos = false;
+			while ( $pos < $len ) {
+				$ch = $svg[ $pos ];
+				if ( '>' === $ch ) {
+					$gt_pos = $pos;
+					break;
+				}
+				if ( '"' === $ch || "'" === $ch ) {
+					$close_q = strpos( $svg, $ch, $pos + 1 );
+					if ( false === $close_q ) {
+						$pos = $len;
+						break;
+					}
+					$pos = $close_q + 1;
+					continue;
+				}
+				$pos++;
+			}
+
+			if ( false === $gt_pos ) {
+				$out .= substr( $svg, $lt );
+				break;
+			}
+
+			$tag_raw = substr( $svg, $lt, $gt_pos - $lt + 1 );
+			$cursor  = $gt_pos + 1;
+
+			// Fast path: tag without attributes (no '=' present) cannot hold event handlers or URIs.
+			if ( false === strpos( $tag_raw, '=' ) ) {
+				$out .= $tag_raw;
+				continue;
+			}
+
+			$out .= self::sanitize_svg_opening_tag( $tag_raw );
+		}
+
+		return $out;
+	}
+
+	/**
+	 * Parse and sanitize attributes of a single SVG opening tag `<tagName ...>`.
+	 *
+	 * @param string $tag_raw Raw opening tag starting with `<` and ending with `>`.
+	 * @return string Sanitized opening tag.
+	 */
+	private static function sanitize_svg_opening_tag( $tag_raw ) {
+		$inner = substr( $tag_raw, 1, -1 );
+		$ilen  = strlen( $inner );
+
+		// Read tag name (stops at whitespace or '/').
+		$p = 0;
+		while ( $p < $ilen && ! ctype_space( $inner[ $p ] ) && '/' !== $inner[ $p ] ) {
+			$p++;
+		}
+		$tag_name = substr( $inner, 0, $p );
+		if ( '' === $tag_name ) {
+			return $tag_raw;
+		}
+
+		// Detect trailing self-closing '/' (ignoring trailing whitespace).
+		$trim_end     = rtrim( $inner );
+		$self_closing = ( strlen( $trim_end ) > $p && '/' === substr( $trim_end, -1 ) );
+		$attr_limit   = $self_closing ? ( strlen( $trim_end ) - 1 ) : strlen( $trim_end );
+
+		$kept_attrs = array();
+
+		while ( $p < $attr_limit ) {
+			// Skip whitespace and stray '/' delimiters (e.g. `<svg/onload=...>`).
+			while ( $p < $attr_limit && ( ctype_space( $inner[ $p ] ) || '/' === $inner[ $p ] ) ) {
+				$p++;
+			}
+			if ( $p >= $attr_limit ) {
+				break;
+			}
+
+			// Read attribute name.
+			$name_start = $p;
+			while ( $p < $attr_limit && ! ctype_space( $inner[ $p ] ) && '=' !== $inner[ $p ] && '/' !== $inner[ $p ] ) {
+				$p++;
+			}
+			$attr_name = substr( $inner, $name_start, $p - $name_start );
+			if ( '' === $attr_name ) {
+				$p++;
+				continue;
+			}
+
+			// Skip whitespace before optional '='.
+			while ( $p < $attr_limit && ctype_space( $inner[ $p ] ) ) {
+				$p++;
+			}
+
+			$has_value  = false;
+			$quote_char = '';
+			$raw_val    = '';
+
+			if ( $p < $attr_limit && '=' === $inner[ $p ] ) {
+				$has_value = true;
+				$p++; // Consume '='.
+				while ( $p < $attr_limit && ctype_space( $inner[ $p ] ) ) {
+					$p++;
+				}
+
+				if ( $p < $attr_limit && ( '"' === $inner[ $p ] || "'" === $inner[ $p ] ) ) {
+					$quote_char = $inner[ $p ];
+					$val_start  = $p + 1;
+					$close_q    = strpos( $inner, $quote_char, $val_start );
+					if ( false === $close_q || $close_q >= $attr_limit ) {
+						$raw_val = substr( $inner, $val_start, $attr_limit - $val_start );
+						$p       = $attr_limit;
+					} else {
+						$raw_val = substr( $inner, $val_start, $close_q - $val_start );
+						$p       = $close_q + 1;
+					}
+				} else {
+					// Unquoted attribute value (ends at whitespace or slash delimiter).
+					$val_start = $p;
+					while ( $p < $attr_limit && ! ctype_space( $inner[ $p ] ) && '/' !== $inner[ $p ] ) {
+						$p++;
+					}
+					$raw_val = substr( $inner, $val_start, $p - $val_start );
+				}
+			}
+
+			$lower_name = strtolower( $attr_name );
+			$colon_pos  = strrpos( $lower_name, ':' );
+			$local_name = ( false !== $colon_pos ) ? substr( $lower_name, $colon_pos + 1 ) : $lower_name;
+
+			// Drop ALL on*= event handler attributes (including namespaced variants).
+			if ( preg_match( '/^on[a-z]/', $lower_name ) || preg_match( '/^on[a-z]/', $local_name ) ) {
+				continue;
+			}
+
+			// Inspect attribute value for dangerous URI schemes while fast-passing pure raster base64 data URIs.
+			if ( $has_value && '' !== $raw_val ) {
+				$is_safe_raster_b64 = (bool) preg_match( '/^\s*data:image\/(?:png|jpeg|jpg|webp|gif);base64,/i', substr( $raw_val, 0, 64 ) );
+				if ( ! $is_safe_raster_b64 ) {
+					$decoded_val = html_entity_decode( $raw_val, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+					$norm_val    = strtolower( (string) preg_replace( '/[\x00-\x20]+/', '', $decoded_val ) );
+					if (
+						preg_match( '/(?:^|url\s*\(\s*[\'"]?)(?:javascript|vbscript):/i', $norm_val ) ||
+						preg_match( '/data:(?:text\/html|application\/xhtml\+xml|text\/javascript|application\/javascript)/i', $norm_val )
+					) {
+						continue;
+					}
+					if ( 'style' === $local_name && preg_match( '/expression\s*\(|@import/i', $norm_val ) ) {
+						continue;
+					}
+				}
+			}
+
+			if ( $has_value ) {
+				if ( '' !== $quote_char ) {
+					$kept_attrs[] = $attr_name . '=' . $quote_char . $raw_val . $quote_char;
+				} else {
+					$kept_attrs[] = $attr_name . '="' . htmlspecialchars( $raw_val, ENT_QUOTES, 'UTF-8' ) . '"';
+				}
+			} else {
+				$kept_attrs[] = $attr_name;
+			}
+		}
+
+		$attrs_str = ! empty( $kept_attrs ) ? ( ' ' . implode( ' ', $kept_attrs ) ) : '';
+		return '<' . $tag_name . $attrs_str . ( $self_closing ? '/>' : '>' );
 	}
 
 	/**
@@ -108,7 +373,7 @@ final class Plugin {
 			wp_send_json_error( array( 'message' => __( 'Aucun fichier image valide reçu.', 'mr-tee-editor' ) ), 400 );
 		}
 
-		$file = $_FILES['image_file']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		$file      = $_FILES['image_file']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
 		$max_bytes = 15 * 1024 * 1024; // 15 MB
 		if ( ! empty( $file['size'] ) && intval( $file['size'] ) > $max_bytes ) {
 			wp_send_json_error( array( 'message' => __( 'Image trop volumineuse (max 15 Mo).', 'mr-tee-editor' ) ), 400 );
@@ -121,7 +386,7 @@ final class Plugin {
 			wp_send_json_error( array( 'message' => __( 'Format non supporté. Utilisez PNG, JPG, WEBP, GIF ou SVG.', 'mr-tee-editor' ) ), 400 );
 		}
 
-		$raw_bytes = @file_get_contents( $file['tmp_name'] );
+		$raw_bytes = @file_get_contents( $file['tmp_name'] ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents, WordPress.PHP.NoSilencedErrors.Discouraged
 		if ( false === $raw_bytes || '' === $raw_bytes ) {
 			wp_send_json_error( array( 'message' => __( 'Impossible de lire le fichier image.', 'mr-tee-editor' ) ), 400 );
 		}
@@ -130,11 +395,12 @@ final class Plugin {
 			if ( stripos( $raw_bytes, '<svg' ) === false ) {
 				wp_send_json_error( array( 'message' => __( 'Fichier SVG invalide.', 'mr-tee-editor' ) ), 400 );
 			}
-			// Strip potentially dangerous script tags / event attributes in SVG uploads
-			$raw_bytes = preg_replace( '#<script\b[^>]*>.*?</script>#is', '', $raw_bytes );
-			$raw_bytes = preg_replace( '/\son[a-z]+\s*=\s*(?:"[^"]*"|\'[^\']*\')/i', '', $raw_bytes );
+			$raw_bytes = self::sanitize_svg_markup( $raw_bytes );
+			if ( stripos( $raw_bytes, '<svg' ) === false ) {
+				wp_send_json_error( array( 'message' => __( 'Fichier SVG invalide.', 'mr-tee-editor' ) ), 400 );
+			}
 		} else {
-			$img_info = @getimagesizefromstring( $raw_bytes );
+			$img_info = @getimagesizefromstring( $raw_bytes ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 			if ( false === $img_info || empty( $img_info['mime'] ) || strpos( $img_info['mime'], 'image/' ) !== 0 ) {
 				wp_send_json_error( array( 'message' => __( 'Le fichier envoyé n\'est pas une image valide.', 'mr-tee-editor' ) ), 400 );
 			}
@@ -146,7 +412,7 @@ final class Plugin {
 		$dest_file = trailingslashit( $paths['dir'] ) . $unique_fn;
 		$dest_url  = trailingslashit( $paths['url'] ) . $unique_fn;
 
-		if ( false === @file_put_contents( $dest_file, $raw_bytes ) ) {
+		if ( false === @file_put_contents( $dest_file, $raw_bytes ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents, WordPress.PHP.NoSilencedErrors.Discouraged
 			wp_send_json_error( array( 'message' => __( 'Erreur lors de l\'enregistrement de l\'image.', 'mr-tee-editor' ) ), 500 );
 		}
 
@@ -162,9 +428,12 @@ final class Plugin {
 	 * Handle chunked binary uploads for customer photos and print export artifacts
 	 * (preview JPEG/PNG, vector SVG, and 300 DPI print PNG) so WooCommerce Add-to-Cart
 	 * POST bodies remain tiny and never trigger HTTP 413 Request Entity Too Large.
+	 *
+	 * Fully idempotent on chunk retries: each chunk is written to its own indexed part file
+	 * (`.part_{upload_id}_{chunk_index}`) and sequentially assembled on the final chunk.
 	 */
 	public function handle_design_artifact_upload() {
-		$artifact          = isset( $_POST['artifact'] ) ? sanitize_key( wp_unslash( $_POST['artifact'] ) ) : '';
+		$artifact          = isset( $_POST['artifact'] ) ? sanitize_key( wp_unslash( $_POST['artifact'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing
 		$allowed_artifacts = array( 'preview_jpg', 'preview_png', 'svg', 'print_png', 'customer_image' );
 		if ( ! in_array( $artifact, $allowed_artifacts, true ) ) {
 			check_ajax_referer( 'mr_tee_frontend_upload', 'nonce' );
@@ -182,13 +451,13 @@ final class Plugin {
 			check_ajax_referer( 'mr_tee_frontend_upload', 'nonce' );
 		}
 
-		$chunk_index  = isset( $_POST['chunk_index'] ) ? intval( $_POST['chunk_index'] ) : 0;
-		$total_chunks = isset( $_POST['total_chunks'] ) ? intval( $_POST['total_chunks'] ) : 1;
+		$chunk_index  = isset( $_POST['chunk_index'] ) ? intval( $_POST['chunk_index'] ) : 0; // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		$total_chunks = isset( $_POST['total_chunks'] ) ? intval( $_POST['total_chunks'] ) : 1; // phpcs:ignore WordPress.Security.NonceVerification.Missing
 		if ( $total_chunks < 1 || $total_chunks > 200 || $chunk_index < 0 || $chunk_index >= $total_chunks ) {
 			wp_send_json_error( array( 'message' => __( 'Paramètres de transfert invalides.', 'mr-tee-editor' ) ), 400 );
 		}
 
-		$upload_id = isset( $_POST['upload_id'] ) ? preg_replace( '/[^a-zA-Z0-9_-]/', '', wp_unslash( $_POST['upload_id'] ) ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		$upload_id = isset( $_POST['upload_id'] ) ? preg_replace( '/[^a-zA-Z0-9_-]/', '', wp_unslash( $_POST['upload_id'] ) ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.NonceVerification.Missing
 		if ( strlen( $upload_id ) < 6 || strlen( $upload_id ) > 64 ) {
 			wp_send_json_error( array( 'message' => __( 'Identifiant de transfert invalide.', 'mr-tee-editor' ) ), 400 );
 		}
@@ -198,7 +467,7 @@ final class Plugin {
 		}
 
 		$chunk_file  = $_FILES['chunk_file']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
-		$chunk_bytes = @file_get_contents( $chunk_file['tmp_name'] );
+		$chunk_bytes = @file_get_contents( $chunk_file['tmp_name'] ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents, WordPress.PHP.NoSilencedErrors.Discouraged
 		if ( false === $chunk_bytes || strlen( $chunk_bytes ) > 2 * 1024 * 1024 ) {
 			wp_send_json_error( array( 'message' => __( 'Fragment de fichier invalide ou trop volumineux.', 'mr-tee-editor' ) ), 400 );
 		}
@@ -208,7 +477,7 @@ final class Plugin {
 		$ext        = '';
 
 		if ( 'customer_image' === $artifact ) {
-			$orig_name = ! empty( $_POST['file_name'] ) ? sanitize_file_name( wp_unslash( $_POST['file_name'] ) ) : 'image.png';
+			$orig_name = ! empty( $_POST['file_name'] ) ? sanitize_file_name( wp_unslash( $_POST['file_name'] ) ) : 'image.png'; // phpcs:ignore WordPress.Security.NonceVerification.Missing
 			$ext       = strtolower( pathinfo( $orig_name, PATHINFO_EXTENSION ) );
 			$allowed   = array( 'jpg', 'jpeg', 'png', 'webp', 'gif', 'svg' );
 			if ( ! in_array( $ext, $allowed, true ) ) {
@@ -216,7 +485,7 @@ final class Plugin {
 			}
 			$sub_dir = 'customer_uploads/' . gmdate( 'Y-m' );
 		} else {
-			$raw_key    = isset( $_POST['design_key'] ) ? wp_unslash( $_POST['design_key'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+			$raw_key    = isset( $_POST['design_key'] ) ? wp_unslash( $_POST['design_key'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.NonceVerification.Missing
 			$design_key = preg_replace( '/[^a-zA-Z0-9_-]/', '', $raw_key );
 			if ( ! preg_match( '/^mrtee_[a-zA-Z0-9_-]{8,64}$/', $design_key ) ) {
 				wp_send_json_error( array( 'message' => __( 'Clé de création invalide.', 'mr-tee-editor' ) ), 400 );
@@ -224,26 +493,30 @@ final class Plugin {
 			$sub_dir = 'designs/' . $design_key;
 		}
 
-		$paths     = \MrTeeEditor\Export\PrintAssetGenerator::get_upload_dir( $sub_dir );
-		$part_file = trailingslashit( $paths['dir'] ) . '.part_' . $upload_id;
+		$paths          = \MrTeeEditor\Export\PrintAssetGenerator::get_upload_dir( $sub_dir );
+		$part_prefix    = trailingslashit( $paths['dir'] ) . '.part_' . $upload_id . '_';
+		$chunk_part     = $part_prefix . $chunk_index;
+		$assembled_file = trailingslashit( $paths['dir'] ) . '.assembled_' . $upload_id;
 
-		if ( 0 === $chunk_index ) {
-			@unlink( $part_file );
-			$written = @file_put_contents( $part_file, $chunk_bytes );
-		} else {
-			if ( ! file_exists( $part_file ) ) {
-				wp_send_json_error( array( 'message' => __( 'Session de transfert expirée.', 'mr-tee-editor' ) ), 400 );
+		$cleanup_parts = static function () use ( $part_prefix, $total_chunks ) {
+			for ( $ci = 0; $ci < $total_chunks; $ci++ ) {
+				$f = $part_prefix . $ci;
+				if ( file_exists( $f ) ) {
+					@unlink( $f ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+				}
 			}
-			$current_size = @filesize( $part_file );
-			if ( false === $current_size || ( $current_size + strlen( $chunk_bytes ) ) > 25 * 1024 * 1024 ) {
-				@unlink( $part_file );
-				wp_send_json_error( array( 'message' => __( 'Fichier assemblé trop volumineux (max 25 Mo).', 'mr-tee-editor' ) ), 400 );
+			$leftovers = glob( $part_prefix . '*' );
+			if ( is_array( $leftovers ) ) {
+				foreach ( $leftovers as $lf ) {
+					@unlink( $lf ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+				}
 			}
-			$written = @file_put_contents( $part_file, $chunk_bytes, FILE_APPEND );
-		}
+		};
 
+		// Write this chunk to its own indexed part file (100% idempotent on retries).
+		$written = @file_put_contents( $chunk_part, $chunk_bytes ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents, WordPress.PHP.NoSilencedErrors.Discouraged
 		if ( false === $written ) {
-			@unlink( $part_file );
+			@unlink( $chunk_part ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 			wp_send_json_error( array( 'message' => __( 'Erreur d\'écriture sur le serveur.', 'mr-tee-editor' ) ), 500 );
 		}
 
@@ -256,21 +529,64 @@ final class Plugin {
 			);
 		}
 
-		// Final chunk: validate complete assembled file and atomically move into place
+		// Final chunk: verify all chunks 0..(total_chunks-1) exist and total size <= 35 MB.
+		$max_assembled_bytes = 35 * 1024 * 1024; // 35 MB
+		$total_size          = 0;
+		for ( $ci = 0; $ci < $total_chunks; $ci++ ) {
+			$c_path = $part_prefix . $ci;
+			if ( ! file_exists( $c_path ) ) {
+				$cleanup_parts();
+				wp_send_json_error( array( 'message' => __( 'Session de transfert expirée ou fragment manquant.', 'mr-tee-editor' ) ), 400 );
+			}
+			$c_size = @filesize( $c_path ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+			if ( false === $c_size ) {
+				$cleanup_parts();
+				wp_send_json_error( array( 'message' => __( 'Impossible de lire les fragments sur le serveur.', 'mr-tee-editor' ) ), 500 );
+			}
+			$total_size += $c_size;
+			if ( $total_size > $max_assembled_bytes ) {
+				$cleanup_parts();
+				wp_send_json_error( array( 'message' => __( 'Fichier assemblé trop volumineux (max 35 Mo).', 'mr-tee-editor' ) ), 400 );
+			}
+		}
+
+		// Sequentially assemble all chunks into a temporary file, then unlink part files.
+		$out_fp = @fopen( $assembled_file, 'wb' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen, WordPress.PHP.NoSilencedErrors.Discouraged
+		if ( ! $out_fp ) {
+			$cleanup_parts();
+			wp_send_json_error( array( 'message' => __( 'Erreur d\'écriture sur le serveur.', 'mr-tee-editor' ) ), 500 );
+		}
+
+		for ( $ci = 0; $ci < $total_chunks; $ci++ ) {
+			$c_data = @file_get_contents( $part_prefix . $ci ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents, WordPress.PHP.NoSilencedErrors.Discouraged
+			if ( false === $c_data || false === @fwrite( $out_fp, $c_data ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite, WordPress.PHP.NoSilencedErrors.Discouraged
+				fclose( $out_fp ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+				@unlink( $assembled_file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+				$cleanup_parts();
+				wp_send_json_error( array( 'message' => __( 'Erreur lors de l\'assemblage du fichier.', 'mr-tee-editor' ) ), 500 );
+			}
+		}
+		fclose( $out_fp ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+		$cleanup_parts();
+
+		// Validate complete assembled file and atomically move into place.
 		if ( 'customer_image' === $artifact ) {
 			if ( 'svg' === $ext ) {
-				$svg_content = @file_get_contents( $part_file );
+				$svg_content = @file_get_contents( $assembled_file ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents, WordPress.PHP.NoSilencedErrors.Discouraged
 				if ( false === $svg_content || stripos( $svg_content, '<svg' ) === false ) {
-					@unlink( $part_file );
+					@unlink( $assembled_file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 					wp_send_json_error( array( 'message' => __( 'Fichier SVG invalide.', 'mr-tee-editor' ) ), 400 );
 				}
-				$svg_content = preg_replace( '#<script\b[^>]*>.*?</script>#is', '', $svg_content );
-				$svg_content = preg_replace( '/\son[a-z]+\s*=\s*(?:"[^"]*"|\'[^\']*\')/i', '', $svg_content );
-				@file_put_contents( $part_file, $svg_content );
+				$svg_content = self::sanitize_svg_markup( $svg_content );
+				if ( stripos( $svg_content, '<svg' ) === false ) {
+					@unlink( $assembled_file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+					wp_send_json_error( array( 'message' => __( 'Fichier SVG invalide.', 'mr-tee-editor' ) ), 400 );
+				}
+				@file_put_contents( $assembled_file, $svg_content ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents, WordPress.PHP.NoSilencedErrors.Discouraged
 			} else {
-				$img_info = @getimagesize( $part_file );
+				$img_info = @getimagesize( $assembled_file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 				if ( false === $img_info || empty( $img_info['mime'] ) || strpos( $img_info['mime'], 'image/' ) !== 0 ) {
-					@unlink( $part_file );
+					@unlink( $assembled_file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 					wp_send_json_error( array( 'message' => __( 'Le fichier envoyé n\'est pas une image valide.', 'mr-tee-editor' ) ), 400 );
 				}
 			}
@@ -279,8 +595,8 @@ final class Plugin {
 			$dest_file = trailingslashit( $paths['dir'] ) . $unique_fn;
 			$dest_url  = trailingslashit( $paths['url'] ) . $unique_fn;
 
-			if ( ! @rename( $part_file, $dest_file ) ) {
-				@unlink( $part_file );
+			if ( ! @rename( $assembled_file, $dest_file ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+				@unlink( $assembled_file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 				wp_send_json_error( array( 'message' => __( 'Erreur lors de la finalisation de l\'image.', 'mr-tee-editor' ) ), 500 );
 			}
 
@@ -318,17 +634,21 @@ final class Plugin {
 		}
 
 		if ( 'svg' === $artifact ) {
-			$svg_raw = @file_get_contents( $part_file );
+			$svg_raw = @file_get_contents( $assembled_file ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents, WordPress.PHP.NoSilencedErrors.Discouraged
 			if ( false === $svg_raw || stripos( $svg_raw, '<svg' ) === false ) {
-				@unlink( $part_file );
+				@unlink( $assembled_file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 				wp_send_json_error( array( 'message' => __( 'Fichier SVG invalide.', 'mr-tee-editor' ) ), 400 );
 			}
-			$svg_raw = preg_replace( '#<script\b[^>]*>.*?</script>#is', '', $svg_raw );
-			@file_put_contents( $part_file, $svg_raw );
+			$svg_raw = self::sanitize_svg_markup( $svg_raw );
+			if ( stripos( $svg_raw, '<svg' ) === false ) {
+				@unlink( $assembled_file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+				wp_send_json_error( array( 'message' => __( 'Fichier SVG invalide.', 'mr-tee-editor' ) ), 400 );
+			}
+			@file_put_contents( $assembled_file, $svg_raw ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents, WordPress.PHP.NoSilencedErrors.Discouraged
 		} else {
-			$img_info = @getimagesize( $part_file );
+			$img_info = @getimagesize( $assembled_file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 			if ( false === $img_info || empty( $img_info['mime'] ) || strpos( $img_info['mime'], 'image/' ) !== 0 ) {
-				@unlink( $part_file );
+				@unlink( $assembled_file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 				wp_send_json_error( array( 'message' => __( 'Fichier image généré invalide.', 'mr-tee-editor' ) ), 400 );
 			}
 		}
@@ -336,14 +656,14 @@ final class Plugin {
 		$dest_file = trailingslashit( $paths['dir'] ) . $target_name;
 		$dest_url  = trailingslashit( $paths['url'] ) . $target_name;
 
-		if ( ! @rename( $part_file, $dest_file ) ) {
-			@unlink( $part_file );
+		if ( ! @rename( $assembled_file, $dest_file ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+			@unlink( $assembled_file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 			wp_send_json_error( array( 'message' => __( 'Erreur lors de la finalisation du fichier.', 'mr-tee-editor' ) ), 500 );
 		}
 
 		if ( $is_primary && '' !== $suffix ) {
 			$canonical_file = trailingslashit( $paths['dir'] ) . $canonical_name;
-			@copy( $dest_file, $canonical_file );
+			@copy( $dest_file, $canonical_file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 		}
 
 		wp_send_json_success(
@@ -353,7 +673,7 @@ final class Plugin {
 				'suffix'    => $suffix,
 				'file_name' => $target_name,
 				'url'       => $dest_url,
-				'bytes'     => @filesize( $dest_file ),
+				'bytes'     => @filesize( $dest_file ), // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 			)
 		);
 	}
@@ -474,6 +794,69 @@ final class Plugin {
 	}
 
 	/**
+	 * Strip internal server filesystem paths from font definitions before exposing to client JS.
+	 *
+	 * @param array<string, array<string, mixed>> $all_fonts      Raw registered fonts map.
+	 * @param bool                                $strip_data_url Whether to also strip legacy `data_url`.
+	 * @return array<string, array<string, mixed>>
+	 */
+	private function sanitize_fonts_for_client( array $all_fonts, $strip_data_url = false ) {
+		$client_fonts = array();
+		foreach ( $all_fonts as $f_id => $f_meta ) {
+			if ( ! is_array( $f_meta ) ) {
+				continue;
+			}
+			unset( $f_meta['path'] );
+			if ( $strip_data_url ) {
+				unset( $f_meta['data_url'] );
+			}
+			if ( ! empty( $f_meta['url'] ) ) {
+				$f_meta['url'] = SceneGraphSchema::normalize_url_scheme( $f_meta['url'] );
+			}
+			if ( ! empty( $f_meta['thumb_url'] ) ) {
+				$f_meta['thumb_url'] = SceneGraphSchema::normalize_url_scheme( $f_meta['thumb_url'] );
+			}
+			$client_fonts[ $f_id ] = $f_meta;
+		}
+		return $client_fonts;
+	}
+
+	/**
+	 * Determine whether an order item's `_mr_tee_editor_data` already has generated print artifacts.
+	 *
+	 * @param array<string, mixed> $data Order item customization metadata.
+	 * @return bool
+	 */
+	private function order_item_has_print_artifacts( array $data ) {
+		if ( ! empty( $data['side_exports'] ) && is_array( $data['side_exports'] ) ) {
+			$valid_sides = 0;
+			foreach ( $data['side_exports'] as $se ) {
+				if ( is_array( $se ) && ( ! empty( $se['print_url'] ) || ! empty( $se['svg_url'] ) ) ) {
+					$valid_sides++;
+				}
+			}
+			if ( $valid_sides > 1 ) {
+				return true;
+			}
+		}
+		return ( ! empty( $data['print_url'] ) && ! empty( $data['svg_url'] ) );
+	}
+
+	/**
+	 * Append a file-modification-time cache-buster (`?v=<mtime>`) to an artifact URL.
+	 *
+	 * @param string $url  Base URL without query string.
+	 * @param string $file Absolute filesystem path to artifact.
+	 * @return string
+	 */
+	private function append_file_version_query( $url, $file ) {
+		$mtime = ( ! empty( $file ) && file_exists( $file ) ) ? @filemtime( $file ) : false; // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		$ver   = $mtime ? (string) $mtime : (string) time();
+		$sep   = ( false === strpos( $url, '?' ) ) ? '?' : '&';
+		return $url . $sep . 'v=' . $ver;
+	}
+
+	/**
 	 * AJAX handler: return scene-graph data, product config, fonts, and fullMap OpenType-SVG datasets
 	 * for generating 300 DPI PNG and vector SVG files in WP Admin order screens.
 	 */
@@ -518,7 +901,7 @@ final class Plugin {
 				'design_key'  => ! empty( $data['key'] ) ? $data['key'] : '',
 				'editor_data' => $data,
 				'config'      => $config,
-				'fonts'       => $all_fonts,
+				'fonts'       => $this->sanitize_fonts_for_client( $all_fonts ),
 				'svgFonts'    => $svg_fonts,
 				'fontFaceCss' => $font_face_css,
 			)
@@ -553,7 +936,7 @@ final class Plugin {
 		}
 
 		$data = $item->get_meta( '_mr_tee_editor_data', true );
-		if ( empty( $data ) || ! is_array( $data ) || ( ! empty( $data['key'] ) && $data['key'] !== $design_key ) ) {
+		if ( empty( $data ) || ! is_array( $data ) || empty( $data['key'] ) || ! is_string( $data['key'] ) || ! hash_equals( $data['key'], $design_key ) ) {
 			wp_send_json_error( array( 'message' => __( 'Clé de création incohérente.', 'mr-tee-editor' ) ), 400 );
 		}
 
@@ -587,9 +970,7 @@ final class Plugin {
 				}
 
 				$s_svg_file   = trailingslashit( $paths['dir'] ) . $svg_fn;
-				$s_svg_url    = trailingslashit( $paths['url'] ) . $svg_fn;
 				$s_print_file = trailingslashit( $paths['dir'] ) . $print_fn;
-				$s_print_url  = trailingslashit( $paths['url'] ) . $print_fn;
 
 				if ( ! file_exists( $s_svg_file ) || ! filesize( $s_svg_file ) || ! file_exists( $s_print_file ) || ! filesize( $s_print_file ) ) {
 					wp_send_json_error(
@@ -603,6 +984,9 @@ final class Plugin {
 						400
 					);
 				}
+
+				$s_svg_url   = $this->append_file_version_query( trailingslashit( $paths['url'] ) . $svg_fn, $s_svg_file );
+				$s_print_url = $this->append_file_version_query( trailingslashit( $paths['url'] ) . $print_fn, $s_print_file );
 
 				$side_exports[ $side_id ] = array(
 					'side_id'          => $side_id,
@@ -623,20 +1007,53 @@ final class Plugin {
 		}
 
 		if ( ! empty( $side_exports ) ) {
-			$primary_side = reset( $side_exports );
-			$svg_file     = $primary_side['svg_file'];
-			$svg_url      = $primary_side['svg_url'];
-			$print_file   = $primary_side['print_file'];
-			$print_url    = $primary_side['print_url'];
+			$primary_side         = reset( $side_exports );
+			$svg_file             = $primary_side['svg_file'];
+			$svg_url              = $primary_side['svg_url'];
+			$print_file           = $primary_side['print_file'];
+			$print_url            = $primary_side['print_url'];
 			$data['side_exports'] = $side_exports;
+
+			if ( ! empty( $primary_side['print_dimensions'] ) ) {
+				$data['print_dimensions'] = $primary_side['print_dimensions'];
+			}
+			if ( ! empty( $primary_side['real_width'] ) && $primary_side['real_width'] > 0 ) {
+				$data['print_real_width'] = $primary_side['real_width'];
+			}
+			if ( ! empty( $primary_side['real_height'] ) && $primary_side['real_height'] > 0 ) {
+				$data['print_real_height'] = $primary_side['real_height'];
+			}
+			if ( ! empty( $primary_side['width_px'] ) && $primary_side['width_px'] > 0 ) {
+				$data['print_width_px'] = $primary_side['width_px'];
+			}
+			if ( ! empty( $primary_side['height_px'] ) && $primary_side['height_px'] > 0 ) {
+				$data['print_height_px'] = $primary_side['height_px'];
+			}
 		} else {
 			$svg_file   = trailingslashit( $paths['dir'] ) . 'design.svg';
-			$svg_url    = trailingslashit( $paths['url'] ) . 'design.svg';
 			$print_file = trailingslashit( $paths['dir'] ) . 'print_300dpi.png';
-			$print_url  = trailingslashit( $paths['url'] ) . 'print_300dpi.png';
 
 			if ( ! file_exists( $svg_file ) || ! filesize( $svg_file ) || ! file_exists( $print_file ) || ! filesize( $print_file ) ) {
 				wp_send_json_error( array( 'message' => __( 'Les fichiers générés (SVG ou PNG 300 DPI) sont introuvables sur le disque.', 'mr-tee-editor' ) ), 400 );
+			}
+
+			$svg_url   = $this->append_file_version_query( trailingslashit( $paths['url'] ) . 'design.svg', $svg_file );
+			$print_url = $this->append_file_version_query( trailingslashit( $paths['url'] ) . 'print_300dpi.png', $print_file );
+
+			if ( ! empty( $_POST['print_dimensions'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
+				$data['print_dimensions'] = sanitize_text_field( wp_unslash( $_POST['print_dimensions'] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Missing
+			}
+			if ( ! empty( $_POST['print_real_width'] ) && floatval( $_POST['print_real_width'] ) > 0 ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
+				$data['print_real_width'] = floatval( $_POST['print_real_width'] ); // phpcs:ignore WordPress.Security.NonceVerification.Missing
+			}
+			if ( ! empty( $_POST['print_real_height'] ) && floatval( $_POST['print_real_height'] ) > 0 ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
+				$data['print_real_height'] = floatval( $_POST['print_real_height'] ); // phpcs:ignore WordPress.Security.NonceVerification.Missing
+			}
+			if ( ! empty( $_POST['print_width_px'] ) && intval( $_POST['print_width_px'] ) > 0 ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
+				$data['print_width_px'] = intval( $_POST['print_width_px'] ); // phpcs:ignore WordPress.Security.NonceVerification.Missing
+			}
+			if ( ! empty( $_POST['print_height_px'] ) && intval( $_POST['print_height_px'] ) > 0 ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
+				$data['print_height_px'] = intval( $_POST['print_height_px'] ); // phpcs:ignore WordPress.Security.NonceVerification.Missing
 			}
 		}
 
@@ -709,15 +1126,34 @@ final class Plugin {
 			wp_send_json_error( array( 'message' => __( 'Permission refusée.', 'mr-tee-editor' ) ), 403 );
 		}
 
+		$product_id = isset( $_POST['product_id'] ) ? absint( $_POST['product_id'] ) : 0; // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		if ( $product_id > 0 && ! current_user_can( 'edit_post', $product_id ) ) {
+			wp_send_json_error( array( 'message' => __( 'Permission refusée pour ce produit.', 'mr-tee-editor' ) ), 403 );
+		}
+
 		if ( empty( $_FILES['image_file'] ) || ! empty( $_FILES['image_file']['error'] ) ) {
 			wp_send_json_error( array( 'message' => __( 'Aucun fichier image reçu.', 'mr-tee-editor' ) ), 400 );
+		}
+
+		$file      = $_FILES['image_file']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		$orig_name = ! empty( $file['name'] ) ? sanitize_file_name( wp_unslash( $file['name'] ) ) : '';
+		$ext       = strtolower( pathinfo( $orig_name, PATHINFO_EXTENSION ) );
+		$allowed   = array( 'jpg', 'jpeg', 'png', 'webp', 'gif' );
+		if ( ! in_array( $ext, $allowed, true ) ) {
+			wp_send_json_error( array( 'message' => __( 'Format non supporté. Utilisez une image JPG, PNG, WEBP ou GIF.', 'mr-tee-editor' ) ), 400 );
+		}
+
+		$allowed_mimes = array( 'image/jpeg', 'image/png', 'image/webp', 'image/gif' );
+		$img_info      = ! empty( $file['tmp_name'] ) ? @getimagesize( $file['tmp_name'] ) : false; // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		if ( false === $img_info || empty( $img_info['mime'] ) || ! in_array( strtolower( (string) $img_info['mime'] ), $allowed_mimes, true ) ) {
+			wp_send_json_error( array( 'message' => __( 'Le fichier envoyé n\'est pas une image valide.', 'mr-tee-editor' ) ), 400 );
 		}
 
 		require_once ABSPATH . 'wp-admin/includes/file.php';
 		require_once ABSPATH . 'wp-admin/includes/image.php';
 		require_once ABSPATH . 'wp-admin/includes/media.php';
 
-		$attachment_id = media_handle_upload( 'image_file', isset( $_POST['product_id'] ) ? absint( $_POST['product_id'] ) : 0 );
+		$attachment_id = media_handle_upload( 'image_file', $product_id );
 		if ( is_wp_error( $attachment_id ) ) {
 			wp_send_json_error( array( 'message' => $attachment_id->get_error_message() ), 400 );
 		}
@@ -775,7 +1211,7 @@ final class Plugin {
 	 */
 	private function get_asset_version( $relative_path ) {
 		$full_path = MR_TEE_EDITOR_DIR . ltrim( $relative_path, '/' );
-		$mtime     = file_exists( $full_path ) ? @filemtime( $full_path ) : false;
+		$mtime     = file_exists( $full_path ) ? @filemtime( $full_path ) : false; // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 		return $mtime ? ( MR_TEE_EDITOR_VERSION . '.' . $mtime ) : MR_TEE_EDITOR_VERSION;
 	}
 
@@ -805,23 +1241,41 @@ final class Plugin {
 		if ( $order_id > 0 && function_exists( 'wc_get_order' ) ) {
 			$order = wc_get_order( $order_id );
 			if ( $order ) {
-				$has_mr_tee_items = false;
-				$order_font_ids   = array();
+				$has_mr_tee_items  = false;
+				$has_pending_print = false;
+				$order_font_ids    = array();
 				foreach ( $order->get_items() as $item ) {
 					$data = $item->get_meta( '_mr_tee_editor_data', true );
 					if ( ! empty( $data ) && is_array( $data ) ) {
 						$has_mr_tee_items = true;
-						$pid              = method_exists( $item, 'get_product_id' ) ? (int) $item->get_product_id() : 0;
-						$cfg              = ( $pid > 0 && get_post( $pid ) ) ? SceneGraphSchema::get_product_config( $pid ) : array();
-						$order_font_ids   = array_merge( $order_font_ids, $this->collect_font_ids_for_item( $data, $cfg ) );
+						if ( ! $this->order_item_has_print_artifacts( $data ) ) {
+							$has_pending_print = true;
+							$pid               = method_exists( $item, 'get_product_id' ) ? (int) $item->get_product_id() : 0;
+							$cfg               = ( $pid > 0 && get_post( $pid ) )
+								? SceneGraphSchema::get_product_config( $pid, array( 'compile_scene_graph' => false ) )
+								: array();
+							$order_font_ids    = array_merge( $order_font_ids, $this->collect_font_ids_for_item( $data, $cfg ) );
+						}
 					}
 				}
 
 				if ( $has_mr_tee_items ) {
 					$all_fonts     = \MrTeeEditor\Registry\FontRegistry::get_fonts();
-					$order_font_ids = array_values( array_unique( array_filter( $order_font_ids ) ) );
-					$svg_fonts     = $this->load_svg_fonts_for_ids( $order_font_ids, $all_fonts );
 					$font_face_css = \MrTeeEditor\Registry\FontRegistry::get_font_face_css();
+
+					// Eagerly hydrate OpenType-SVG datasets only when at least one item still needs print generation.
+					$svg_fonts = array();
+					if ( $has_pending_print ) {
+						$order_font_ids = array_values( array_unique( array_filter( $order_font_ids ) ) );
+						$svg_fonts      = $this->load_svg_fonts_for_ids( $order_font_ids, $all_fonts );
+					}
+
+					// Inject @font-face CSS into the admin document so Canvas TTF width measurement matches storefront 1:1.
+					if ( '' !== $font_face_css ) {
+						wp_register_style( 'mr-tee-admin-order-fonts', false, array(), MR_TEE_EDITOR_VERSION );
+						wp_enqueue_style( 'mr-tee-admin-order-fonts' );
+						wp_add_inline_style( 'mr-tee-admin-order-fonts', $font_face_css );
+					}
 
 					wp_enqueue_script(
 						'mr-tee-admin-order-export-js',
@@ -839,7 +1293,7 @@ final class Plugin {
 							'ajaxUrl'     => admin_url( 'admin-ajax.php', $proto ),
 							'nonce'       => wp_create_nonce( 'mr_tee_admin_nonce' ),
 							'pluginUrl'   => MR_TEE_EDITOR_URL,
-							'fonts'       => $all_fonts,
+							'fonts'       => $this->sanitize_fonts_for_client( $all_fonts ),
 							'svgFonts'    => $svg_fonts,
 							'fontFaceCss' => $font_face_css,
 						)
@@ -862,7 +1316,7 @@ final class Plugin {
 			wp_enqueue_media( array( 'post' => $post->ID ) );
 		}
 
-		$config = SceneGraphSchema::get_product_config( $post->ID );
+		$config = SceneGraphSchema::get_product_config( $post->ID, array( 'compile_scene_graph' => false ) );
 
 		// Collect strictly the fonts selected on this product (allowed_fonts + active text line fonts)
 		$all_fonts         = \MrTeeEditor\Registry\FontRegistry::get_fonts();
@@ -933,21 +1387,8 @@ final class Plugin {
 			}
 		}
 
-		// Strip internal server paths & unused fields from localized admin font registry
-		$admin_fonts = array();
-		foreach ( $all_fonts as $f_id => $f_meta ) {
-			if ( ! is_array( $f_meta ) ) {
-				continue;
-			}
-			unset( $f_meta['path'], $f_meta['data_url'], $f_meta['palette'] );
-			if ( ! empty( $f_meta['url'] ) ) {
-				$f_meta['url'] = SceneGraphSchema::normalize_url_scheme( $f_meta['url'] );
-			}
-			if ( ! empty( $f_meta['thumb_url'] ) ) {
-				$f_meta['thumb_url'] = SceneGraphSchema::normalize_url_scheme( $f_meta['thumb_url'] );
-			}
-			$admin_fonts[ $f_id ] = $f_meta;
-		}
+		// Strip internal server paths & legacy data_url while preserving `palette` for accurate admin WYSIWYG colors
+		$admin_fonts = $this->sanitize_fonts_for_client( $all_fonts, true );
 
 		// Strip duplicate fonts/scene-graph/palettes from localized admin config (~40 KB -> ~4 KB)
 		$admin_config = $config;

@@ -1,5 +1,5 @@
 /**
- * Mr. Tee Editor - Dedicated Storefront Gallery Controller (v2.4.0)
+ * Mr. Tee Editor - Dedicated Storefront Gallery Controller (v2.5.0)
  *
  * Zero-dependency, GPU-accelerated multi-view swipe gallery with:
  * - Page-builder client-side fallback mounting from window.mrTeeProductData.gallerySlides
@@ -11,6 +11,11 @@
  *
  * @package MrTeeEditor\Assets\Modules
  */
+
+const SVG_ICON_SHIRT = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.38 3.46L16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 .99.84H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.15a1 1 0 0 0 .99-.84l.58-3.47a2 2 0 0 0-1.34-2.23z"/></svg>';
+const SVG_ICON_ZOOM = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
+const SVG_ICON_PHOTO = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
+const SVG_ICON_EYE = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 
 export class DedicatedGallery {
 	constructor(config = {}, options = {}) {
@@ -43,6 +48,7 @@ export class DedicatedGallery {
 		this.lbNextBtn = null;
 		this.isLightboxOpen = false;
 		this.isZoomed = false;
+		this._suppressLightboxSvgSync = false;
 
 		this.init();
 	}
@@ -125,6 +131,28 @@ export class DedicatedGallery {
 	}
 
 	/**
+	 * Scroll an active pill or thumbnail horizontally inside its strip without ever triggering vertical page scroll.
+	 *
+	 * @param {HTMLElement} el Active child element inside a horizontal scroll strip.
+	 */
+	static scrollChildHorizontally(el) {
+		if (!el || !el.parentElement) return;
+		const container = el.parentElement;
+		if (container.scrollWidth <= container.clientWidth + 1) return;
+		const cRect = container.getBoundingClientRect();
+		const eRect = el.getBoundingClientRect();
+		if (eRect.left < cRect.left || eRect.right > cRect.right) {
+			const delta = (eRect.left - cRect.left) - Math.max(8, (cRect.width - eRect.width) / 2);
+			const nextLeft = container.scrollLeft + delta;
+			if (typeof container.scrollTo === 'function') {
+				container.scrollTo({ left: nextLeft, behavior: 'smooth' });
+			} else {
+				container.scrollLeft = nextLeft;
+			}
+		}
+	}
+
+	/**
 	 * Render identical gallery markup into a detected page-builder gallery container
 	 * when the active builder bypassed WooCommerce's single-product/product-image.php.
 	 *
@@ -155,13 +183,25 @@ export class DedicatedGallery {
 			'.product-images',
 		];
 
+		const isVisibleContainer = (el) => {
+			if (!el || !el.isConnected) return false;
+			const style = window.getComputedStyle(el);
+			if (!style || style.display === 'none' || style.visibility === 'hidden') return false;
+			if (el.offsetParent !== null || style.position === 'fixed') return true;
+			const rect = typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : null;
+			return Boolean(rect && rect.width > 0);
+		};
+
 		let container = null;
 		for (const sel of targetSelectors) {
-			const el = document.querySelector(sel);
-			if (el && !el.closest('#mr-tee-editor-container')) {
-				container = el;
-				break;
+			const matches = document.querySelectorAll(sel);
+			for (const el of matches) {
+				if (el && !el.closest('#mr-tee-editor-container') && isVisibleContainer(el)) {
+					container = el;
+					break;
+				}
 			}
+			if (container) break;
 		}
 		if (!container) {
 			return null;
@@ -178,10 +218,19 @@ export class DedicatedGallery {
 		}
 		const count = rawSlides.length;
 
+		let primaryVariationIdx = 0;
+		for (let i = 0; i < rawSlides.length; i++) {
+			const rs = rawSlides[i];
+			if (rs && rs.is_customizable && (rs.side_id || 'front') === 'front' && (rs.view_role || 'full') === 'full') {
+				primaryVariationIdx = i;
+				break;
+			}
+		}
+
 		let pillsHtml = '';
 		if (count > 1) {
 			const pillItems = rawSlides.map((s, idx) => {
-				const icon = !s.is_customizable ? '🖼️' : ((s.view_role === 'closeup' || s.view_role === 'detail') ? '🔍' : '👕');
+				const icon = !s.is_customizable ? SVG_ICON_PHOTO : ((s.view_role === 'closeup' || s.view_role === 'detail') ? SVG_ICON_ZOOM : SVG_ICON_SHIRT);
 				return `<button type="button" role="tab" class="mr-tee-view-pill${idx === 0 ? ' is-active' : ''}" aria-selected="${idx === 0 ? 'true' : 'false'}" data-slide-index="${idx}" data-view-id="${DedicatedGallery.escHtml(s.view_id)}" data-side-id="${DedicatedGallery.escHtml(s.side_id || '')}" data-view-role="${DedicatedGallery.escHtml(s.view_role || 'full')}"><span class="mr-tee-view-pill-icon" aria-hidden="true">${icon}</span><span class="mr-tee-view-pill-label">${DedicatedGallery.escHtml(s.label || '')}</span></button>`;
 			}).join('');
 			pillsHtml = `<div class="mr-tee-view-pills" role="tablist" aria-label="${DedicatedGallery.escHtml(i18n.viewsLabel || 'Vues du produit')}">${pillItems}</div>`;
@@ -211,7 +260,7 @@ export class DedicatedGallery {
 			const overlayHtml = s.is_customizable
 				? `<div class="mr-tee-live-stage-overlay" data-view-id="${DedicatedGallery.escHtml(s.view_id)}" data-side-id="${DedicatedGallery.escHtml(s.side_id || 'front')}" data-blend="${DedicatedGallery.escHtml(s.blend_mode || 'normal')}"><div class="mr-tee-live-svg-container"></div></div>`
 				: '';
-			return `<div class="mr-tee-slide${idx === 0 ? ' is-active' : ''}" data-slide-index="${idx}" data-view-id="${DedicatedGallery.escHtml(s.view_id)}" data-side-id="${DedicatedGallery.escHtml(s.side_id || '')}" data-view-role="${DedicatedGallery.escHtml(s.view_role || 'full')}" data-customizable="${s.is_customizable ? '1' : '0'}"><div class="${stageClass}"${stageStyle}><img src="${DedicatedGallery.escHtml(imgUrl)}"${srcsetAttr}${sizesAttr} alt="${DedicatedGallery.escHtml(s.alt || s.label || '')}" class="mr-tee-slide-img${idx === 0 ? ' wp-post-image' : ''} skip-lazy no-lazyload" data-no-lazy="1" data-skip-lazy="1" data-large_image="${DedicatedGallery.escHtml(imgUrl)}"${dimAttrs}${loadAttrs} draggable="false" />${overlayHtml}</div></div>`;
+			return `<div class="mr-tee-slide${idx === 0 ? ' is-active' : ''}" data-slide-index="${idx}" data-view-id="${DedicatedGallery.escHtml(s.view_id)}" data-side-id="${DedicatedGallery.escHtml(s.side_id || '')}" data-view-role="${DedicatedGallery.escHtml(s.view_role || 'full')}" data-customizable="${s.is_customizable ? '1' : '0'}"><div class="${stageClass}"${stageStyle}><img src="${DedicatedGallery.escHtml(imgUrl)}"${srcsetAttr}${sizesAttr} alt="${DedicatedGallery.escHtml(s.alt || s.label || '')}" class="mr-tee-slide-img${idx === primaryVariationIdx ? ' wp-post-image' : ''} skip-lazy no-lazyload" data-no-lazy="1" data-skip-lazy="1" data-large_image="${DedicatedGallery.escHtml(imgUrl)}"${dimAttrs}${loadAttrs} draggable="false" />${overlayHtml}</div></div>`;
 		}).join('');
 
 		const arrowsHtml = count > 1
@@ -240,6 +289,15 @@ export class DedicatedGallery {
 
 		// Preserve outer theme layout classes if replacing a .woocommerce-product-gallery node directly
 		if (container.classList.contains('woocommerce-product-gallery')) {
+			const skipClasses = new Set([
+				'woocommerce-product-gallery--with-images',
+				'woocommerce-product-gallery--without-images',
+			]);
+			container.classList.forEach((cls) => {
+				if (cls && !skipClasses.has(cls) && !wrapper.classList.contains(cls)) {
+					wrapper.classList.add(cls);
+				}
+			});
 			container.replaceWith(wrapper);
 		} else {
 			container.innerHTML = '';
@@ -278,6 +336,8 @@ export class DedicatedGallery {
 			const blendMode = overlayEl ? (overlayEl.getAttribute('data-blend') || 'normal') : 'normal';
 			const meta = metaByView.get(viewId) || dataSlides[idx] || {};
 			const label = meta.label || (imgEl && imgEl.getAttribute('alt')) || viewId;
+			const isLocked = Boolean(stageEl && stageEl.classList.contains('mr-tee-slide-stage--locked'));
+			const lockRatio = stageEl ? (stageEl.style.getPropertyValue('--mr-tee-slide-ratio') || stageEl.style.aspectRatio || '').trim() : '';
 
 			const slideObj = {
 				index: idx,
@@ -292,6 +352,8 @@ export class DedicatedGallery {
 				blendMode,
 				customizable,
 				label,
+				isLocked,
+				lockRatio,
 				aspectRatio: parseFloat(meta.aspect_ratio) || 0,
 			};
 
@@ -381,6 +443,7 @@ export class DedicatedGallery {
 	 */
 	bindSwipeGestures() {
 		if (!this.viewport || !this.track || this.slides.length <= 1) return;
+		this.viewport.classList.add('is-draggable');
 
 		let dragging = false;
 		let axis = null; // 'x' | 'y' | null
@@ -403,6 +466,16 @@ export class DedicatedGallery {
 			viewportWidth = Math.max(1, this.viewport.clientWidth || 320);
 		};
 
+		const cancelDrag = () => {
+			if (!dragging) return;
+			dragging = false;
+			axis = null;
+			deltaX = 0;
+			this.track.classList.remove('is-dragging');
+			this.viewport.classList.remove('is-grabbing');
+			this.track.style.transform = `translate3d(-${this.activeIndex * 100}%, 0, 0)`;
+		};
+
 		const moveDrag = (clientX, clientY) => {
 			if (!dragging) return;
 			const dx = clientX - startX;
@@ -413,6 +486,7 @@ export class DedicatedGallery {
 				axis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
 				if (axis === 'y') {
 					dragging = false;
+					this.viewport.classList.remove('is-grabbing');
 					return;
 				}
 				this.track.classList.add('is-dragging');
@@ -449,6 +523,7 @@ export class DedicatedGallery {
 			if (!dragging) return;
 			dragging = false;
 			this.track.classList.remove('is-dragging');
+			this.viewport.classList.remove('is-grabbing');
 
 			if (axis === 'x' && Math.abs(deltaX) > 36) {
 				if (deltaX < -36 && this.activeIndex < this.slides.length - 1) {
@@ -467,22 +542,30 @@ export class DedicatedGallery {
 
 		// Touch events (passive so vertical scroll is never blocked!)
 		this.viewport.addEventListener('touchstart', (e) => {
-			if (!e.touches || e.touches.length !== 1 || isControlTarget(e.target)) return;
+			if (!e.touches || e.touches.length !== 1 || isControlTarget(e.target)) {
+				if (e.touches && e.touches.length > 1) cancelDrag();
+				return;
+			}
 			startDrag(e.touches[0].clientX, e.touches[0].clientY);
 		}, { passive: true });
 
 		this.viewport.addEventListener('touchmove', (e) => {
-			if (!dragging || !e.touches || e.touches.length !== 1) return;
+			if (!dragging) return;
+			if (!e.touches || e.touches.length !== 1) {
+				cancelDrag();
+				return;
+			}
 			moveDrag(e.touches[0].clientX, e.touches[0].clientY);
 		}, { passive: true });
 
 		this.viewport.addEventListener('touchend', endDrag, { passive: true });
-		this.viewport.addEventListener('touchcancel', endDrag, { passive: true });
+		this.viewport.addEventListener('touchcancel', cancelDrag, { passive: true });
 
 		// Desktop mouse drag via Pointer Events (ignores touch pointers already handled above)
 		this.viewport.addEventListener('pointerdown', (e) => {
 			if (e.pointerType !== 'mouse' || e.button !== 0 || isControlTarget(e.target)) return;
 			activePointerId = e.pointerId;
+			this.viewport.classList.add('is-grabbing');
 			startDrag(e.clientX, e.clientY);
 			try {
 				this.viewport.setPointerCapture(e.pointerId);
@@ -543,19 +626,29 @@ export class DedicatedGallery {
 		if (!imgEl.dataset.mrTeeOrigSrc) {
 			imgEl.dataset.mrTeeOrigSrc = imgEl.getAttribute('src') || '';
 		}
+		if (!imgEl.dataset.mrTeeOrigLarge) {
+			imgEl.dataset.mrTeeOrigLarge = imgEl.getAttribute('data-large_image') || imgEl.dataset.mrTeeOrigSrc || '';
+		}
 		if (thumbEl && !thumbEl.dataset.mrTeeOrigSrc) {
 			thumbEl.dataset.mrTeeOrigSrc = thumbEl.getAttribute('src') || '';
 		}
 
-		const applySlideImage = (nextUrl, thumbUrl = '') => {
+		let syncToken = 0;
+
+		const applySlideImage = (nextUrl, thumbUrl = '', largeUrl = '') => {
 			const normalized = DedicatedGallery.normalizeProtocol(nextUrl);
 			if (!normalized) return;
+			const normalizedLarge = DedicatedGallery.normalizeProtocol(largeUrl || nextUrl) || normalized;
+			const token = ++syncToken;
 
 			imgEl.removeAttribute('srcset');
 			imgEl.removeAttribute('sizes');
-			imgEl.setAttribute('data-large_image', normalized);
+			imgEl.removeAttribute('width');
+			imgEl.removeAttribute('height');
+			imgEl.setAttribute('data-large_image', normalizedLarge);
 
 			const notify = () => {
+				if (token !== syncToken) return;
 				if (imgEl.naturalWidth > 2 && imgEl.naturalHeight > 2) {
 					targetSlide.aspectRatio = imgEl.naturalWidth / imgEl.naturalHeight;
 				}
@@ -563,13 +656,16 @@ export class DedicatedGallery {
 					this.onSlideImageChanged(targetSlide.viewId, imgEl);
 				}
 				if (this.isLightboxOpen && this.activeIndex === targetSlide.index && this.lbImgEl) {
-					this.lbImgEl.src = normalized;
+					this.lbImgEl.src = normalizedLarge;
 				}
 			};
 
-			if (imgEl.getAttribute('src') !== normalized) {
+			const currentSrc = DedicatedGallery.normalizeProtocol(imgEl.getAttribute('src') || '');
+			if (currentSrc !== normalized) {
 				imgEl.addEventListener('load', notify, { once: true });
 				imgEl.src = normalized;
+			} else if (!imgEl.complete || imgEl.naturalWidth <= 2) {
+				imgEl.addEventListener('load', notify, { once: true });
 			} else {
 				notify();
 			}
@@ -587,14 +683,21 @@ export class DedicatedGallery {
 		const $bindTarget = $forms.length ? $forms : $(document);
 
 		$bindTarget.on('found_variation.mrTeeGallery', (event, variation) => {
-			if (variation && variation.image && variation.image.src) {
-				applySlideImage(variation.image.src, variation.image.gallery_thumbnail_src || variation.image.thumb_src || variation.image.src);
+			if (variation && variation.image && (variation.image.src || variation.image.full_src)) {
+				const src = variation.image.src || variation.image.full_src;
+				const large = variation.image.full_src || variation.image.src;
+				const thumb = variation.image.gallery_thumbnail_src || variation.image.thumb_src || src;
+				applySlideImage(src, thumb, large);
 			}
 		});
 
 		$bindTarget.on('reset_image.mrTeeGallery', () => {
 			if (imgEl.dataset.mrTeeOrigSrc) {
-				applySlideImage(imgEl.dataset.mrTeeOrigSrc, thumbEl ? thumbEl.dataset.mrTeeOrigSrc : '');
+				applySlideImage(
+					imgEl.dataset.mrTeeOrigSrc,
+					thumbEl ? thumbEl.dataset.mrTeeOrigSrc : '',
+					imgEl.dataset.mrTeeOrigLarge || imgEl.dataset.mrTeeOrigSrc
+				);
 			}
 		});
 	}
@@ -611,7 +714,7 @@ export class DedicatedGallery {
 		const fab = document.createElement('button');
 		fab.type = 'button';
 		fab.className = 'mr-tee-mobile-preview-fab';
-		fab.innerHTML = `<span aria-hidden="true">👁️</span><span>${DedicatedGallery.escHtml(i18n.previewBtn || 'Aperçu')}</span>`;
+		fab.innerHTML = `${SVG_ICON_EYE}<span>${DedicatedGallery.escHtml(i18n.previewBtn || 'Aperçu')}</span>`;
 		fab.addEventListener('click', () => {
 			this.root.scrollIntoView({ behavior: 'smooth', block: 'start' });
 		});
@@ -620,7 +723,7 @@ export class DedicatedGallery {
 		let galleryInView = true;
 		let editorInView = false;
 		const syncFab = () => {
-			const show = !galleryInView && editorInView && window.innerWidth < 992;
+			const show = !galleryInView && editorInView;
 			fab.classList.toggle('is-visible', show);
 		};
 
@@ -682,10 +785,8 @@ export class DedicatedGallery {
 			const active = pIdx === normalized;
 			p.classList.toggle('is-active', active);
 			p.setAttribute('aria-selected', active ? 'true' : 'false');
-			if (active && changed && typeof p.scrollIntoView === 'function') {
-				try {
-					p.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
-				} catch (e) {}
+			if (active && changed) {
+				DedicatedGallery.scrollChildHorizontally(p);
 			}
 		});
 
@@ -693,34 +794,23 @@ export class DedicatedGallery {
 			const tIdx = parseInt(t.getAttribute('data-slide-index'), 10);
 			const active = tIdx === normalized;
 			t.classList.toggle('is-active', active);
-			if (active && changed && typeof t.scrollIntoView === 'function') {
-				try {
-					t.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
-				} catch (e) {}
+			if (active && changed) {
+				DedicatedGallery.scrollChildHorizontally(t);
 			}
 		});
 
 		const activeSlide = this.slides[normalized];
 		if (!silent && this.onViewChange && activeSlide) {
-			this.onViewChange(activeSlide.viewId, normalized, activeSlide);
+			this._suppressLightboxSvgSync = this.isLightboxOpen;
+			try {
+				this.onViewChange(activeSlide.viewId, normalized, activeSlide);
+			} finally {
+				this._suppressLightboxSvgSync = false;
+			}
 		}
 
 		if (this.isLightboxOpen) {
 			this.refreshLightboxContent();
-		}
-	}
-
-	/**
-	 * Jump directly to a slide matching `viewId`.
-	 *
-	 * @param {string} viewId Target view ID.
-	 * @param {Object} opts Optional flags.
-	 */
-	goToView(viewId, opts = {}) {
-		if (!viewId) return;
-		const slide = this.slidesByViewId.get(String(viewId));
-		if (slide) {
-			this.goToIndex(slide.index, opts);
 		}
 	}
 
@@ -774,15 +864,6 @@ export class DedicatedGallery {
 	 */
 	getCustomizableViews() {
 		return this.slides.filter(s => s.customizable);
-	}
-
-	/**
-	 * Return all slide DOM elements.
-	 *
-	 * @return {Array<HTMLElement>}
-	 */
-	getSlideElements() {
-		return this.slides.map(s => s.el);
 	}
 
 	/**
@@ -857,14 +938,86 @@ export class DedicatedGallery {
 
 		const closeBtn = lb.querySelector('.mr-tee-lb-close');
 		const lbBody = lb.querySelector('.mr-tee-lb-body');
+		let suppressNextStageClick = false;
 
 		if (closeBtn) closeBtn.addEventListener('click', () => this.closeFullscreen());
 		if (this.lbZoomBtn) this.lbZoomBtn.addEventListener('click', () => this.toggleFullscreenZoom());
-		if (this.lbStageEl) this.lbStageEl.addEventListener('click', () => this.toggleFullscreenZoom());
+		if (this.lbStageEl) {
+			this.lbStageEl.addEventListener('click', () => {
+				if (suppressNextStageClick) {
+					suppressNextStageClick = false;
+					return;
+				}
+				this.toggleFullscreenZoom();
+			});
+		}
 		if (lbBody) {
 			lbBody.addEventListener('click', (e) => {
 				if (e.target === lbBody) this.closeFullscreen();
 			});
+
+			// Horizontal touch swipe inside lightbox when not zoomed
+			if (this.slides.length > 1) {
+				let lbDragging = false;
+				let lbAxis = null;
+				let lbStartX = 0;
+				let lbStartY = 0;
+				let lbDeltaX = 0;
+
+				lbBody.addEventListener('touchstart', (e) => {
+					if (this.isZoomed || !e.touches || e.touches.length !== 1) {
+						lbDragging = false;
+						return;
+					}
+					if (e.target && e.target.closest && e.target.closest('button')) return;
+					lbDragging = true;
+					lbAxis = null;
+					lbStartX = e.touches[0].clientX;
+					lbStartY = e.touches[0].clientY;
+					lbDeltaX = 0;
+				}, { passive: true });
+
+				lbBody.addEventListener('touchmove', (e) => {
+					if (!lbDragging) return;
+					if (this.isZoomed || !e.touches || e.touches.length !== 1) {
+						lbDragging = false;
+						lbAxis = null;
+						return;
+					}
+					const dx = e.touches[0].clientX - lbStartX;
+					const dy = e.touches[0].clientY - lbStartY;
+					if (!lbAxis) {
+						if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+						lbAxis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+						if (lbAxis === 'y') {
+							lbDragging = false;
+							return;
+						}
+					}
+					if (lbAxis === 'x') {
+						lbDeltaX = dx;
+					}
+				}, { passive: true });
+
+				const finishLbSwipe = () => {
+					if (!lbDragging) return;
+					lbDragging = false;
+					if (!this.isZoomed && lbAxis === 'x' && Math.abs(lbDeltaX) > 40) {
+						suppressNextStageClick = true;
+						setTimeout(() => { suppressNextStageClick = false; }, 320);
+						this.goToIndex(this.activeIndex + (lbDeltaX < 0 ? 1 : -1));
+					}
+					lbAxis = null;
+					lbDeltaX = 0;
+				};
+
+				lbBody.addEventListener('touchend', finishLbSwipe, { passive: true });
+				lbBody.addEventListener('touchcancel', () => {
+					lbDragging = false;
+					lbAxis = null;
+					lbDeltaX = 0;
+				}, { passive: true });
+			}
 		}
 		if (this.lbPrevBtn) {
 			this.lbPrevBtn.addEventListener('click', (e) => {
@@ -890,8 +1043,11 @@ export class DedicatedGallery {
 		const i18n = (window.mrTeeProductData && window.mrTeeProductData.i18n) || {};
 		const nextZoom = forceState !== null ? Boolean(forceState) : !this.isZoomed;
 
-		if (nextZoom && !this.isZoomed && this.lbImgEl) {
-			const rect = this.lbImgEl.getBoundingClientRect();
+		if (nextZoom && !this.isZoomed) {
+			const measureEl = (this.lbStageEl && this.lbStageEl.classList.contains('mr-tee-lb-stage--locked'))
+				? this.lbStageEl
+				: this.lbImgEl;
+			const rect = measureEl ? measureEl.getBoundingClientRect() : null;
 			if (rect && rect.width > 40) {
 				this.lightboxEl.style.setProperty('--mr-tee-lb-zoom-w', `${Math.round(rect.width * 1.75)}px`);
 			}
@@ -921,6 +1077,20 @@ export class DedicatedGallery {
 			this.lbTitleEl.textContent = `${slide.label}${counter}`;
 		}
 
+		if (this.lbStageEl) {
+			if (slide.isLocked) {
+				this.lbStageEl.classList.add('mr-tee-lb-stage--locked');
+				if (slide.lockRatio) {
+					this.lbStageEl.style.setProperty('--mr-tee-slide-ratio', slide.lockRatio);
+					this.lbStageEl.style.aspectRatio = slide.lockRatio;
+				}
+			} else {
+				this.lbStageEl.classList.remove('mr-tee-lb-stage--locked');
+				this.lbStageEl.style.removeProperty('--mr-tee-slide-ratio');
+				this.lbStageEl.style.aspectRatio = '';
+			}
+		}
+
 		if (this.lbImgEl && slide.imgEl) {
 			const src = slide.imgEl.getAttribute('data-large_image') || slide.imgEl.currentSrc || slide.imgEl.src || '';
 			this.lbImgEl.src = src;
@@ -944,6 +1114,7 @@ export class DedicatedGallery {
 	 * Open built-in fullscreen lightbox on the active slide.
 	 */
 	openFullscreen() {
+		if (this.isLightboxOpen) return;
 		this.ensureLightboxDom();
 		this.isLightboxOpen = true;
 		this.lightboxEl.classList.add('is-open');

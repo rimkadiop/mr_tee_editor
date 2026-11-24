@@ -32,20 +32,12 @@ class FontRegistry {
 	private static $svg_data_cache = array();
 
 	/**
-	 * Return all registered fancy fonts.
-	 *
-	 * Every font in this registry is physically bundled inside assets/fonts/,
-	 * guaranteeing 100% offline availability, zero CORS issues, and identical
-	 * rendering across frontend product pages and high-resolution print exports.
+	 * Return all built-in bundled font definitions (cannot be overwritten or deleted by custom uploads).
 	 *
 	 * @return array<string, array<string, mixed>>
 	 */
-	public static function get_fonts() {
-		if ( null !== self::$fonts_cache ) {
-			return apply_filters( 'mr_tee_registered_fonts', self::$fonts_cache );
-		}
-
-		$fonts = array(
+	private static function get_builtin_fonts() {
+		return array(
 			'super_mario' => array(
 				'id'                => 'super_mario',
 				'name'              => 'Super Mario (Jeu Vidéo)',
@@ -398,11 +390,33 @@ class FontRegistry {
 				'uppercase'         => true,
 			),
 		);
+	}
 
-		// Merge persistent custom fonts uploaded by merchant
+	/**
+	 * Return all registered fancy fonts (built-in bundled fonts + merchant custom fonts).
+	 *
+	 * @return array<string, array<string, mixed>>
+	 */
+	public static function get_fonts() {
+		if ( null !== self::$fonts_cache ) {
+			return apply_filters( 'mr_tee_registered_fonts', self::$fonts_cache );
+		}
+
+		$fonts = self::get_builtin_fonts();
+
+		// Merge persistent custom fonts uploaded by merchant (never allow overriding built-in core IDs)
 		$custom = get_option( 'mr_tee_custom_fonts', array() );
 		if ( ! empty( $custom ) && is_array( $custom ) ) {
-			$fonts = array_merge( $fonts, $custom );
+			foreach ( $custom as $c_id => $c_def ) {
+				if ( ! is_array( $c_def ) || isset( $fonts[ $c_id ] ) ) {
+					continue;
+				}
+				if ( ! empty( $c_def['file'] ) && 'otf' === strtolower( pathinfo( (string) $c_def['file'], PATHINFO_EXTENSION ) ) ) {
+					$c_def['format'] = 'opentype';
+				}
+				$c_def['is_custom'] = true;
+				$fonts[ $c_id ]     = $c_def;
+			}
 		}
 
 		// Enrich OpenType-SVG fonts with lightweight package URLs (manifest & thumbnail)
@@ -435,82 +449,218 @@ class FontRegistry {
 	}
 
 	/**
+	 * Validate that a file on disk is a genuine SFNT (TrueType / OpenType) binary
+	 * and within the 30 MB size cap.
+	 *
+	 * @param string $file_path Absolute path to font binary.
+	 * @return bool
+	 */
+	private static function is_valid_sfnt_file( $file_path ) {
+		if ( ! is_string( $file_path ) || '' === $file_path || ! file_exists( $file_path ) || ! is_readable( $file_path ) ) {
+			return false;
+		}
+		$max_bytes = 30 * 1024 * 1024; // 30 MB
+		$size      = @filesize( $file_path ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		if ( false === $size || $size < 12 || $size > $max_bytes ) {
+			return false;
+		}
+		$fh = @fopen( $file_path, 'rb' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen, WordPress.PHP.NoSilencedErrors.Discouraged
+		if ( ! $fh ) {
+			return false;
+		}
+		$magic = fread( $fh, 4 ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fread
+		fclose( $fh ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+
+		return in_array( $magic, array( "\x00\x01\x00\x00", 'OTTO', 'true', 'typ1' ), true );
+	}
+
+	/**
+	 * Recursively remove a directory ONLY if its canonical realpath resides strictly
+	 * inside `$allowed_parent`.
+	 *
+	 * @param string $target_dir     Directory to remove.
+	 * @param string $allowed_parent Parent directory boundary.
+	 */
+	private static function recursive_rmdir_inside( $target_dir, $allowed_parent ) {
+		if ( ! is_dir( $target_dir ) || ! is_dir( $allowed_parent ) ) {
+			return;
+		}
+		$real_target = realpath( $target_dir );
+		$real_parent = realpath( $allowed_parent );
+		if ( false === $real_target || false === $real_parent ) {
+			return;
+		}
+		$norm_target = wp_normalize_path( $real_target );
+		$norm_parent = trailingslashit( wp_normalize_path( $real_parent ) );
+		if ( 0 !== strpos( $norm_target, $norm_parent ) || $norm_target === rtrim( $norm_parent, '/' ) ) {
+			return;
+		}
+
+		$entries = @scandir( $real_target ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		if ( is_array( $entries ) ) {
+			foreach ( $entries as $entry ) {
+				if ( '.' === $entry || '..' === $entry ) {
+					continue;
+				}
+				$full = $real_target . DIRECTORY_SEPARATOR . $entry;
+				if ( is_dir( $full ) && ! is_link( $full ) ) {
+					self::recursive_rmdir_inside( $full, $real_parent );
+				} else {
+					@unlink( $full ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+				}
+			}
+		}
+		@rmdir( $real_target ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+	}
+
+	/**
 	 * Handle admin AJAX font upload (.ttf, .otf, .zip).
+	 *
+	 * Always stores custom fonts inside `wp-content/uploads/mr_tee_editor/fonts/` with unique
+	 * filenames and validates SFNT magic bytes so bundled core fonts are never overwritten.
 	 */
 	public static function ajax_upload_font() {
 		check_ajax_referer( 'mr_tee_admin_nonce', 'nonce' );
 
 		if ( ! current_user_can( 'manage_woocommerce' ) && ! current_user_can( 'edit_products' ) ) {
-			wp_send_json_error( array( 'message' => __( 'Permissions insuffisantes.', 'mr-tee-editor' ) ) );
+			wp_send_json_error( array( 'message' => __( 'Permissions insuffisantes.', 'mr-tee-editor' ) ), 403 );
 		}
 
-		if ( empty( $_FILES['font_file'] ) ) {
-			wp_send_json_error( array( 'message' => __( 'Aucun fichier fourni.', 'mr-tee-editor' ) ) );
+		if ( empty( $_FILES['font_file'] ) || ! is_array( $_FILES['font_file'] ) ) {
+			wp_send_json_error( array( 'message' => __( 'Aucun fichier fourni.', 'mr-tee-editor' ) ), 400 );
 		}
 
-		$file = $_FILES['font_file'];
-		$ext  = strtolower( pathinfo( $file['name'], PATHINFO_EXTENSION ) );
+		$file = $_FILES['font_file']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		if ( ! empty( $file['error'] ) && UPLOAD_ERR_OK !== intval( $file['error'] ) ) {
+			wp_send_json_error( array( 'message' => __( 'Erreur lors du téléversement du fichier police.', 'mr-tee-editor' ) ), 400 );
+		}
+
+		$max_bytes = 30 * 1024 * 1024; // 30 MB
+		if ( ! empty( $file['size'] ) && intval( $file['size'] ) > $max_bytes ) {
+			wp_send_json_error( array( 'message' => __( 'Fichier trop volumineux (max 30 Mo).', 'mr-tee-editor' ) ), 400 );
+		}
+
+		$orig_filename = ! empty( $file['name'] ) ? sanitize_file_name( wp_unslash( $file['name'] ) ) : '';
+		$ext           = strtolower( pathinfo( $orig_filename, PATHINFO_EXTENSION ) );
 
 		if ( ! in_array( $ext, array( 'ttf', 'otf', 'zip' ), true ) ) {
-			wp_send_json_error( array( 'message' => __( 'Format non supporté. Veuillez envoyer un fichier .ttf, .otf ou .zip.', 'mr-tee-editor' ) ) );
+			wp_send_json_error( array( 'message' => __( 'Format non supporté. Veuillez envoyer un fichier .ttf, .otf ou .zip.', 'mr-tee-editor' ) ), 400 );
 		}
 
-		$fonts_dir = MR_TEE_EDITOR_DIR . 'assets/fonts/';
-		$fonts_url = MR_TEE_EDITOR_URL . 'assets/fonts/';
+		// Always persist custom fonts in uploads/mr_tee_editor/fonts/ (never overwrite bundled assets/fonts/).
+		$upload_paths = \MrTeeEditor\Export\PrintAssetGenerator::get_upload_dir( 'fonts' );
+		$fonts_dir    = trailingslashit( $upload_paths['dir'] );
+		$fonts_url    = trailingslashit( $upload_paths['url'] );
+
 		if ( ! is_dir( $fonts_dir ) ) {
 			wp_mkdir_p( $fonts_dir );
-		}
-		$is_plugin_writable = is_dir( $fonts_dir ) && ( function_exists( 'wp_is_writable' ) ? wp_is_writable( $fonts_dir ) : is_writable( $fonts_dir ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_is_writable
-		if ( ! $is_plugin_writable ) {
-			$wp_up     = wp_upload_dir();
-			$fonts_dir = trailingslashit( $wp_up['basedir'] ) . 'mr_tee_editor/fonts/';
-			$fonts_url = trailingslashit( $wp_up['baseurl'] ) . 'mr_tee_editor/fonts/';
-			if ( ! is_dir( $fonts_dir ) ) {
-				wp_mkdir_p( $fonts_dir );
-			}
 		}
 
 		$uploaded_fonts = array();
 
 		if ( 'zip' === $ext ) {
 			if ( ! class_exists( 'ZipArchive' ) ) {
-				wp_send_json_error( array( 'message' => __( 'Extension ZipArchive manquante sur le serveur.', 'mr-tee-editor' ) ) );
+				wp_send_json_error( array( 'message' => __( 'Extension ZipArchive manquante sur le serveur.', 'mr-tee-editor' ) ), 500 );
 			}
 			$zip = new \ZipArchive();
 			if ( true === $zip->open( $file['tmp_name'] ) ) {
-				for ( $i = 0; $i < $zip->numFiles; $i++ ) {
-					$filename = $zip->getNameIndex( $i );
+				$max_entries = min( (int) $zip->numFiles, 50 );
+				for ( $i = 0; $i < $max_entries; $i++ ) {
+					$filename = (string) $zip->getNameIndex( $i );
 					$f_ext    = strtolower( pathinfo( $filename, PATHINFO_EXTENSION ) );
-					if ( in_array( $f_ext, array( 'ttf', 'otf' ), true ) && ! str_contains( $filename, '__MACOSX' ) ) {
-						$target_name = sanitize_file_name( basename( $filename ) );
-						$target_path = $fonts_dir . $target_name;
-						if ( @copy( 'zip://' . $file['tmp_name'] . '#' . $filename, $target_path ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
-							$uploaded_fonts[] = $target_path;
+					if ( ! in_array( $f_ext, array( 'ttf', 'otf' ), true ) || false !== strpos( $filename, '__MACOSX' ) ) {
+						continue;
+					}
+					$stat = $zip->statIndex( $i );
+					if ( ! is_array( $stat ) || empty( $stat['size'] ) || (int) $stat['size'] > $max_bytes ) {
+						continue;
+					}
+					$base_name   = sanitize_file_name( basename( $filename ) );
+					$unique_name = wp_unique_filename( $fonts_dir, $base_name );
+					$target_path = $fonts_dir . $unique_name;
+					$stream      = $zip->getStream( $filename );
+					if ( ! $stream ) {
+						continue;
+					}
+					$out_fp = @fopen( $target_path, 'wb' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen, WordPress.PHP.NoSilencedErrors.Discouraged
+					if ( ! $out_fp ) {
+						fclose( $stream ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+						continue;
+					}
+					$copied = 0;
+					$ok     = true;
+					while ( ! feof( $stream ) ) {
+						$buf = fread( $stream, 65536 ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fread
+						if ( false === $buf ) {
+							$ok = false;
+							break;
 						}
+						$copied += strlen( $buf );
+						if ( $copied > $max_bytes ) {
+							$ok = false;
+							break;
+						}
+						if ( '' !== $buf && false === fwrite( $out_fp, $buf ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fwrite
+							$ok = false;
+							break;
+						}
+					}
+					fclose( $stream ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+					fclose( $out_fp ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+
+					if ( $ok && self::is_valid_sfnt_file( $target_path ) ) {
+						$uploaded_fonts[] = $target_path;
+					} else {
+						@unlink( $target_path ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 					}
 				}
 				$zip->close();
 			}
 		} else {
-			$target_name = sanitize_file_name( $file['name'] );
-			$target_path = $fonts_dir . $target_name;
-			if ( move_uploaded_file( $file['tmp_name'], $target_path ) || copy( $file['tmp_name'], $target_path ) ) {
-				$uploaded_fonts[] = $target_path;
+			$unique_name = wp_unique_filename( $fonts_dir, $orig_filename );
+			$target_path = $fonts_dir . $unique_name;
+			if ( move_uploaded_file( $file['tmp_name'], $target_path ) || @copy( $file['tmp_name'], $target_path ) ) { // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+				if ( self::is_valid_sfnt_file( $target_path ) ) {
+					$uploaded_fonts[] = $target_path;
+				} else {
+					@unlink( $target_path ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+				}
 			}
 		}
 
 		if ( empty( $uploaded_fonts ) ) {
-			wp_send_json_error( array( 'message' => __( 'Aucune police TTF/OTF valide trouvée dans l\'archive.', 'mr-tee-editor' ) ) );
+			wp_send_json_error( array( 'message' => __( 'Aucune police TTF/OTF valide trouvée (signature SFNT invalide ou fichier corrompu).', 'mr-tee-editor' ) ), 400 );
 		}
 
+		$builtin_fonts      = self::get_builtin_fonts();
 		$registered_results = array();
 		$custom_fonts       = get_option( 'mr_tee_custom_fonts', array() );
+		if ( ! is_array( $custom_fonts ) ) {
+			$custom_fonts = array();
+		}
 
 		foreach ( $uploaded_fonts as $font_path ) {
 			$filename_clean = pathinfo( $font_path, PATHINFO_FILENAME );
-			$font_id        = sanitize_key( str_replace( array( '-', ' ' ), '_', $filename_clean ) );
-			$font_name      = ucwords( str_replace( array( '-', '_' ), ' ', $filename_clean ) );
-			$is_ot_svg      = OpenTypeSvgParser::is_opentype_svg( $font_path );
+			$f_ext          = strtolower( pathinfo( $font_path, PATHINFO_EXTENSION ) );
+			$base_id        = sanitize_key( str_replace( array( '-', ' ' ), '_', $filename_clean ) );
+			if ( '' === $base_id ) {
+				$base_id = 'custom_font_' . substr( md5( basename( $font_path ) ), 0, 8 );
+			}
+
+			// Never collide with built-in font IDs or overwrite another existing custom font.
+			$font_id = $base_id;
+			if ( isset( $builtin_fonts[ $font_id ] ) ) {
+				$font_id = $base_id . '_custom';
+			}
+			$suffix = 2;
+			while ( isset( $builtin_fonts[ $font_id ] ) || isset( $custom_fonts[ $font_id ] ) ) {
+				$font_id = $base_id . '_' . $suffix;
+				$suffix++;
+			}
+
+			$font_name   = ucwords( str_replace( array( '-', '_' ), ' ', $filename_clean ) );
+			$is_ot_svg   = OpenTypeSvgParser::is_opentype_svg( $font_path );
+			$font_format = ( 'otf' === $f_ext ) ? 'opentype' : 'truetype';
 
 			$font_def = array(
 				'id'             => $font_id,
@@ -518,7 +668,7 @@ class FontRegistry {
 				'family'         => $font_name,
 				'aliases'        => array( $font_id, $font_name ),
 				'file'           => basename( $font_path ),
-				'format'         => 'truetype',
+				'format'         => $font_format,
 				'url'            => $fonts_url . basename( $font_path ),
 				'path'           => $font_path,
 				'font_type'      => $is_ot_svg ? 'opentype_svg' : 'truetype',
@@ -526,7 +676,16 @@ class FontRegistry {
 				'category'       => $is_ot_svg ? 'color_svg' : 'display',
 				'letter_spacing' => 0.05,
 				'uppercase'      => true,
+				'is_custom'      => true,
 			);
+
+			if ( ! $is_ot_svg ) {
+				$font_def['multi_color']  = false;
+				$font_def['palette']      = array( '#111827' );
+				$font_def['stroke']       = 'transparent';
+				$font_def['stroke_width'] = 0;
+				$font_def['outside_only'] = false;
+			}
 
 			if ( $is_ot_svg ) {
 				$manifest = SvgFontPackager::build( $font_path, $font_id, $font_name );
@@ -535,15 +694,17 @@ class FontRegistry {
 					$font_def['thumb_url']    = SvgFontPackager::thumb_url( $font_id );
 					$font_def['glyph_count']  = ! empty( $manifest['glyphs'] ) ? count( (array) $manifest['glyphs'] ) : 0;
 				} else {
-					$cache_data = OpenTypeSvgParser::get_or_create_cache( $font_path, $font_id, $font_name );
-					$fallback_base = $is_plugin_writable ? ( MR_TEE_EDITOR_URL . 'assets/fonts/cache/' ) : SvgFontPackager::uploads_cache_base_url();
-					$font_def['data_url']    = $fallback_base . $font_id . '.json';
+					$cache_data              = OpenTypeSvgParser::get_or_create_cache( $font_path, $font_id, $font_name );
+					$font_def['data_url']    = SvgFontPackager::uploads_cache_base_url() . $font_id . '.json';
 					$font_def['glyph_count'] = ! empty( $cache_data['glyphs'] ) ? count( $cache_data['glyphs'] ) : 0;
 				}
 			}
 
 			$custom_fonts[ $font_id ] = $font_def;
-			$registered_results[]     = $font_def;
+
+			$public_def = $font_def;
+			unset( $public_def['path'] );
+			$registered_results[] = $public_def;
 		}
 
 		update_option( 'mr_tee_custom_fonts', $custom_fonts );
@@ -559,23 +720,165 @@ class FontRegistry {
 	}
 
 	/**
+	 * Handle admin AJAX deletion of a merchant-uploaded custom font.
+	 *
+	 * Refuses deletion of built-in bundled fonts, removes the font from `mr_tee_custom_fonts`,
+	 * unlinks the uploaded font file and its font-cache directory, and returns the updated font registry.
+	 */
+	public static function ajax_delete_custom_font() {
+		check_ajax_referer( 'mr_tee_admin_nonce', 'nonce' );
+
+		if ( ! current_user_can( 'edit_products' ) && ! current_user_can( 'manage_woocommerce' ) ) {
+			wp_send_json_error( array( 'message' => __( 'Permissions insuffisantes.', 'mr-tee-editor' ) ), 403 );
+		}
+
+		$raw_id  = isset( $_POST['font_id'] ) ? wp_unslash( $_POST['font_id'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.NonceVerification.Missing
+		$font_id = sanitize_key( (string) $raw_id );
+		if ( '' === $font_id ) {
+			wp_send_json_error( array( 'message' => __( 'Identifiant de police manquant.', 'mr-tee-editor' ) ), 400 );
+		}
+
+		$builtin_fonts = self::get_builtin_fonts();
+		if ( isset( $builtin_fonts[ $font_id ] ) ) {
+			wp_send_json_error( array( 'message' => __( 'Impossible de supprimer une police intégrée au plugin.', 'mr-tee-editor' ) ), 400 );
+		}
+
+		$custom_fonts = get_option( 'mr_tee_custom_fonts', array() );
+		if ( ! is_array( $custom_fonts ) || ! isset( $custom_fonts[ $font_id ] ) ) {
+			wp_send_json_error( array( 'message' => __( 'Police personnalisée introuvable.', 'mr-tee-editor' ) ), 404 );
+		}
+
+		$target = $custom_fonts[ $font_id ];
+
+		// Safely unlink custom font binary only if strictly inside uploads/mr_tee_editor/fonts/.
+		$wp_up          = wp_upload_dir();
+		$uploads_root   = ! empty( $wp_up['basedir'] ) ? trailingslashit( $wp_up['basedir'] ) . 'mr_tee_editor/' : '';
+		$uploads_fonts  = $uploads_root ? $uploads_root . 'fonts/' : '';
+		$uploads_fcache = SvgFontPackager::uploads_cache_base_dir();
+
+		if ( ! empty( $target['path'] ) && is_string( $target['path'] ) && file_exists( $target['path'] ) && '' !== $uploads_fonts && is_dir( $uploads_fonts ) ) {
+			$real_file = realpath( $target['path'] );
+			$real_dir  = realpath( rtrim( $uploads_fonts, '/' ) );
+			if ( false !== $real_file && false !== $real_dir ) {
+				$norm_file = wp_normalize_path( $real_file );
+				$norm_dir  = trailingslashit( wp_normalize_path( $real_dir ) );
+				if ( 0 === strpos( $norm_file, $norm_dir ) ) {
+					@unlink( $real_file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+				}
+			}
+		}
+
+		// Clean up uploads font-cache directory and legacy JSON caches for this custom font.
+		if ( is_dir( $uploads_fcache ) ) {
+			self::recursive_rmdir_inside( $uploads_fcache . $font_id, $uploads_fcache );
+			$legacy_json = $uploads_fcache . $font_id . '.json';
+			if ( file_exists( $legacy_json ) ) {
+				@unlink( $legacy_json ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+			}
+		}
+		if ( '' !== $uploads_fonts && file_exists( $uploads_fonts . 'cache/' . $font_id . '.json' ) ) {
+			@unlink( $uploads_fonts . 'cache/' . $font_id . '.json' ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		}
+		// Also clean any non-builtin cache folder created inside plugin cache dir if present.
+		$plugin_cache_base = SvgFontPackager::get_plugin_dir() . 'assets/fonts/cache/';
+		if ( is_dir( $plugin_cache_base . $font_id ) ) {
+			self::recursive_rmdir_inside( $plugin_cache_base . $font_id, $plugin_cache_base );
+		}
+
+		unset( $custom_fonts[ $font_id ] );
+		update_option( 'mr_tee_custom_fonts', $custom_fonts );
+
+		self::$fonts_cache    = null;
+		self::$svg_data_cache = array();
+
+		$updated_fonts = array();
+		foreach ( self::get_fonts() as $fid => $fmeta ) {
+			if ( ! is_array( $fmeta ) ) {
+				continue;
+			}
+			unset( $fmeta['path'], $fmeta['data_url'] );
+			$updated_fonts[ $fid ] = $fmeta;
+		}
+
+		wp_send_json_success(
+			array(
+				'deleted_id' => $font_id,
+				'message'    => __( 'Police personnalisée supprimée avec succès.', 'mr-tee-editor' ),
+				'fonts'      => $updated_fonts,
+			)
+		);
+	}
+
+	/**
 	 * AJAX endpoint to return parsed SVG font data by font ID.
+	 *
+	 * Strictly validates `$font_id` against registered fonts (returns 404 if unknown, no fallback),
+	 * restricts `fullMap` to privileged staff (`manage_woocommerce`, `edit_products`, `edit_shop_orders`),
+	 * and never triggers synchronous `SvgFontPackager::build()` for unauthenticated visitors.
 	 */
 	public static function ajax_get_svg_font_data() {
-		$font_id = ! empty( $_GET['font_id'] ) ? sanitize_key( $_GET['font_id'] ) : ( ! empty( $_POST['font_id'] ) ? sanitize_key( $_POST['font_id'] ) : '' );
-		if ( empty( $font_id ) ) {
-			wp_send_json_error( array( 'message' => 'Paramètre font_id manquant.' ) );
+		$raw_id  = ! empty( $_GET['font_id'] ) ? wp_unslash( $_GET['font_id'] ) : ( ! empty( $_POST['font_id'] ) ? wp_unslash( $_POST['font_id'] ) : '' ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended,WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		$font_id = sanitize_key( (string) $raw_id );
+		if ( '' === $font_id ) {
+			wp_send_json_error( array( 'message' => 'Paramètre font_id manquant.' ), 400 );
+		}
+
+		$all_fonts = self::get_fonts();
+		if ( ! isset( $all_fonts[ $font_id ] ) ) {
+			wp_send_json_error( array( 'message' => 'Police introuvable.' ), 404 );
+		}
+
+		$font      = $all_fonts[ $font_id ];
+		$is_ot_svg = ( ! empty( $font['font_type'] ) && 'opentype_svg' === $font['font_type'] ) || ! empty( $font['color_svg'] );
+		if ( ! $is_ot_svg || empty( $font['path'] ) || ! file_exists( $font['path'] ) ) {
+			wp_send_json_error( array( 'message' => 'Police non trouvée ou non compatible SVG.' ), 404 );
+		}
+
+		$can_admin_export = current_user_can( 'manage_woocommerce' ) || current_user_can( 'edit_products' ) || current_user_can( 'edit_shop_orders' );
+
+		if ( ! $can_admin_export ) {
+			// Unauthenticated / customer request: serve ONLY pre-cached package data; never invoke synchronous build().
+			$data          = null;
+			$manifest_file = SvgFontPackager::manifest_path( $font_id );
+			if ( file_exists( $manifest_file ) ) {
+				$json     = @file_get_contents( $manifest_file ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents, WordPress.PHP.NoSilencedErrors.Discouraged
+				$manifest = json_decode( (string) $json, true );
+				if ( is_array( $manifest ) && ! empty( $manifest['glyphs'] ) ) {
+					$data = SvgFontPackager::hydrate( $manifest, $font_id );
+				}
+			}
+
+			if ( empty( $data ) ) {
+				$legacy_candidates = array(
+					dirname( $font['path'] ) . '/cache/' . $font_id . '.json',
+					SvgFontPackager::uploads_cache_base_dir() . $font_id . '.json',
+				);
+				foreach ( $legacy_candidates as $cand ) {
+					if ( file_exists( $cand ) ) {
+						$cached = @file_get_contents( $cand ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents, WordPress.PHP.NoSilencedErrors.Discouraged
+						$parsed = json_decode( (string) $cached, true );
+						if ( is_array( $parsed ) && ! empty( $parsed['glyphs'] ) ) {
+							$data = $parsed;
+							break;
+						}
+					}
+				}
+			}
+
+			if ( empty( $data ) ) {
+				wp_send_json_error( array( 'message' => 'Cache de police non disponible.' ), 404 );
+			}
+
+			unset( $data['fullMap'] );
+			$data['preview'] = false;
+			wp_send_json_success( $data );
 		}
 
 		$data = self::get_svg_font_data( $font_id );
 		if ( ! empty( $data ) ) {
-			if ( ! current_user_can( 'manage_woocommerce' ) && ! current_user_can( 'edit_products' ) ) {
-				unset( $data['fullMap'] );
-				$data['preview'] = false;
-			}
 			wp_send_json_success( $data );
 		} else {
-			wp_send_json_error( array( 'message' => 'Police non trouvée ou non compatible SVG.' ) );
+			wp_send_json_error( array( 'message' => 'Police non trouvée ou non compatible SVG.' ), 404 );
 		}
 	}
 
@@ -622,7 +925,7 @@ class FontRegistry {
 	}
 
 	/**
-	 * Get a single font definition by ID with fallback to 'super_mario'.
+	 * Get a single font definition by ID with fallback to first registered font.
 	 *
 	 * @param string $font_id Font identifier.
 	 * @return array<string, mixed>
@@ -649,7 +952,7 @@ class FontRegistry {
 	/**
 	 * Build clean inline @font-face CSS declarations for registered standard vector fonts.
 	 *
-	 * Skips OpenType-SVG color fonts ('opentype_svg') because those are rendered via
+	 * Skips large bitmap OpenType-SVG color fonts (> 768 KB) because those are rendered via
 	 * SvgRenderer WebP/PNG glyph packages and browsers ignore SVG color tables in standard
 	 * HTML buttons/spans—preventing 9 MB to 26+ MB of wasted raw .otf binary downloads on page load.
 	 *
@@ -674,27 +977,48 @@ class FontRegistry {
 			$fonts = $filtered;
 		}
 
+		$site_host = strtolower( (string) wp_parse_url( home_url(), PHP_URL_HOST ) );
+		$http_host = isset( $_SERVER['HTTP_HOST'] )
+			? strtolower( (string) preg_replace( '/:\d+$/', '', sanitize_text_field( wp_unslash( $_SERVER['HTTP_HOST'] ) ) ) )
+			: '';
+
 		foreach ( $fonts as $font ) {
+			$f_path = ! empty( $font['path'] ) ? (string) $font['path'] : '';
+
+			// Skip local fonts whose file no longer exists on disk (e.g. deleted custom fonts).
+			if ( '' !== $f_path && ! file_exists( $f_path ) ) {
+				continue;
+			}
+
 			$is_ot_svg = ( ! empty( $font['font_type'] ) && 'opentype_svg' === $font['font_type'] ) || ! empty( $font['color_svg'] );
 			if ( $is_ot_svg ) {
-				// Skip multi-megabyte bitmap OpenType-SVG fonts (> 512 KB), but emit @font-face for lightweight
-				// hybrid COLR/CPAL/TrueType fonts (such as palestine_1445) so their vector outline glyphs render natively.
-				$f_path = ! empty( $font['path'] ) ? $font['path'] : '';
-				if ( empty( $f_path ) || ! file_exists( $f_path ) || filesize( $f_path ) > 524288 ) {
+				// Skip multi-megabyte bitmap OpenType-SVG fonts (> 768 KB), but emit @font-face for lightweight
+				// hybrid COLR/CPAL/TrueType fonts (such as palestine_1445 at ~557 KB) so their vector outline glyphs render natively.
+				if ( '' === $f_path || filesize( $f_path ) > 786432 ) {
 					continue;
 				}
 			}
 
 			if ( ! empty( $font['url'] ) ) {
-				$parsed   = wp_parse_url( $font['url'] );
-				$font_url = ! empty( $parsed['path'] ) ? $parsed['path'] : esc_url( $font['url'] );
+				$parsed    = wp_parse_url( $font['url'] );
+				$url_host  = ! empty( $parsed['host'] ) ? strtolower( (string) $parsed['host'] ) : '';
+				$same_host = ( '' === $url_host || $url_host === $site_host || ( '' !== $http_host && $url_host === $http_host ) );
+
+				if ( $same_host && ! empty( $parsed['path'] ) ) {
+					$font_url = $parsed['path'] . ( ! empty( $parsed['query'] ) ? '?' . $parsed['query'] : '' );
+				} else {
+					// Preserve external CDN hostnames untouched.
+					$font_url = $font['url'];
+				}
+
+				$format = ! empty( $font['format'] ) ? $font['format'] : 'truetype';
 
 				// Primary font-family declaration
 				$css .= sprintf(
 					"@font-face { font-family: '%s'; src: url('%s') format('%s'); font-weight: normal; font-style: normal; font-display: swap; }\n",
 					esc_attr( $font['family'] ),
 					esc_url( $font_url ),
-					esc_attr( $font['format'] )
+					esc_attr( $format )
 				);
 
 				// Family aliases declarations (e.g. 'SuperMario256' for 'Super Mario Wii')
@@ -705,7 +1029,7 @@ class FontRegistry {
 								"@font-face { font-family: '%s'; src: url('%s') format('%s'); font-weight: normal; font-style: normal; font-display: swap; }\n",
 								esc_attr( $alias ),
 								esc_url( $font_url ),
-								esc_attr( $font['format'] )
+								esc_attr( $format )
 							);
 						}
 					}

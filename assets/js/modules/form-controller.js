@@ -11,8 +11,26 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.4.0.2';
-import { PrintExporter } from './print-exporter.js?v=2.4.0.2';
+import { SvgRenderer } from './svg-renderer.js?v=2.5.0';
+
+const SVG_PLACEHOLDER_IMAGE = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
+const ALLOWED_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml']);
+const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
+
+function normalizeSameHostUrl(rawUrl) {
+	if (!rawUrl || typeof rawUrl !== 'string') return '';
+	if (rawUrl.startsWith('data:')) return rawUrl;
+	try {
+		const u = new URL(rawUrl, window.location.origin);
+		if (u.hostname === window.location.hostname) return u.pathname + u.search;
+	} catch (e) {}
+	return rawUrl;
+}
+
+function resolveAjaxUrl() {
+	const data = (typeof window !== 'undefined' && window.mrTeeProductData) || {};
+	return normalizeSameHostUrl(data.ajaxUrl || '/wp-admin/admin-ajax.php');
+}
 
 export class FormController {
 	constructor(store, config, onExportRequested, options = {}) {
@@ -26,19 +44,40 @@ export class FormController {
 		this.bypassWarning = false;
 		this.isSubmitting = false;
 		this.pendingUploads = [];
+		this._printExporterClass = null;
 
 		this.initDom();
 		this.bindEvents();
 	}
 
 	/**
-	 * Notify gallery stage when a user focuses or interacts with a control inside
-	 * a `.mr-tee-field-group[data-side-id]` so multi-side products auto-swipe smoothly.
+	 * Dynamically load PrintExporter module strictly on demand (e.g., large chunked customer uploads).
 	 *
-	 * @param {Element|null} targetEl Interacted control element.
+	 * @return {Promise<Function>}
+	 */
+	async loadPrintExporter() {
+		if (this._printExporterClass) return this._printExporterClass;
+		const mod = await import('./print-exporter.js?v=2.5.0');
+		this._printExporterClass = mod.PrintExporter;
+		if (typeof window !== 'undefined') {
+			window.mrTeePrintExporter = mod.PrintExporter;
+		}
+		return this._printExporterClass;
+	}
+
+	/**
+	 * Notify gallery stage when a user focuses or interacts with a control inside
+	 * a `.mr-tee-field-group[data-side-id]` or explicit side ID string.
+	 *
+	 * @param {Element|string|null} targetEl Interacted control element or explicit side ID.
 	 */
 	notifySideFocus(targetEl) {
-		if (!this.onFieldSideFocus || !targetEl || !targetEl.closest) return;
+		if (!this.onFieldSideFocus || !targetEl) return;
+		if (typeof targetEl === 'string') {
+			this.onFieldSideFocus(targetEl);
+			return;
+		}
+		if (!targetEl.closest) return;
 		const group = targetEl.closest('.mr-tee-field-group[data-side-id]');
 		if (!group) return;
 		const sideId = group.getAttribute('data-side-id');
@@ -48,8 +87,84 @@ export class FormController {
 	}
 
 	/**
+	 * Highlight field groups belonging to the currently active gallery side on multi-side products.
+	 *
+	 * @param {string} sideId Active print side identifier.
+	 */
+	setActiveSide(sideId) {
+		if (!this.container) return;
+		const groups = Array.from(this.container.querySelectorAll('.mr-tee-field-group[data-side-id]'));
+		const distinctSides = new Set(groups.map(g => g.getAttribute('data-side-id')).filter(Boolean));
+		if (distinctSides.size <= 1) return;
+		const target = sideId ? String(sideId) : '';
+		groups.forEach((g) => {
+			g.classList.toggle('is-active-side', Boolean(target && g.getAttribute('data-side-id') === target));
+		});
+	}
+
+	/**
+	 * Update character counter using Unicode code-point count and apply amber/red threshold classes.
+	 *
+	 * @param {Element|null} counterWrapEl `.mr-tee-char-counter` element.
+	 * @param {Element|null} countEl `.mr-tee-char-count` element.
+	 * @param {string} val Current text value.
+	 * @param {number} maxChars Maximum allowed character count.
+	 */
+	updateCharCounter(counterWrapEl, countEl, val, maxChars) {
+		const len = Array.from(String(val || '')).length;
+		if (countEl) {
+			countEl.textContent = String(len);
+		}
+		if (counterWrapEl && maxChars > 0) {
+			const ratio = len / maxChars;
+			counterWrapEl.classList.toggle('is-at-limit', len >= maxChars);
+			counterWrapEl.classList.toggle('is-near-limit', len < maxChars && ratio >= 0.85);
+		}
+	}
+
+	/**
+	 * Synchronize color swatch picker visibility, active pill state, and color name readout
+	 * when switching between standard vector fonts and OpenType-SVG color fonts.
+	 *
+	 * @param {Element|null} fieldGroup `.mr-tee-field-group` element.
+	 * @param {boolean} isOtSvg Whether the newly selected font is an OpenType-SVG font.
+	 */
+	syncSwatchesForLine(fieldGroup, isOtSvg) {
+		const swatchesWrap = fieldGroup ? fieldGroup.querySelector('.mr-tee-color-swatches-wrap') : null;
+		if (!swatchesWrap) return;
+
+		if (isOtSvg) {
+			swatchesWrap.style.display = 'none';
+			return;
+		}
+		swatchesWrap.style.display = '';
+
+		const colorRefId = swatchesWrap.getAttribute('data-color-ref-id');
+		const colorRef = colorRefId ? this.store.getReference(colorRefId) : null;
+		const activeHex = (colorRef && colorRef.colorMode !== 'multi' && colorRef.colorHex)
+			? String(colorRef.colorHex).toLowerCase()
+			: '';
+		let matchedName = '';
+
+		swatchesWrap.querySelectorAll('.mr-tee-color-swatch-pill').forEach((sp) => {
+			const spHex = String(sp.getAttribute('data-color-hex') || '').toLowerCase();
+			const isActive = Boolean(activeHex && spHex === activeHex);
+			sp.classList.toggle('is-active', isActive);
+			sp.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+			if (isActive) {
+				matchedName = sp.getAttribute('data-color-name') || sp.getAttribute('title') || '';
+			}
+		});
+
+		const nameReadout = swatchesWrap.querySelector('.mr-tee-active-color-name');
+		if (nameReadout) {
+			nameReadout.textContent = matchedName;
+		}
+	}
+
+	/**
 	 * Horizontally scroll each `.mr-tee-font-pills` strip so its active pill is visible on load
-	 * without ever causing vertical page scroll.
+	 * without ever causing vertical page scroll (supports both LTR and RTL).
 	 */
 	scrollActiveFontPillsIntoView() {
 		if (!this.container) return;
@@ -58,10 +173,23 @@ export class FormController {
 			const activePill = scroller.querySelector('.mr-tee-font-pill.is-active');
 			if (!activePill) return;
 			const viewW = scroller.clientWidth || 0;
+			if (viewW <= 0 || scroller.scrollWidth <= viewW + 1) return;
+
+			const isRtl = typeof window !== 'undefined' && window.getComputedStyle(scroller).direction === 'rtl';
+			if (isRtl) {
+				const sRect = scroller.getBoundingClientRect();
+				const pRect = activePill.getBoundingClientRect();
+				if (pRect.left < sRect.left || pRect.right > sRect.right) {
+					const delta = (pRect.left - sRect.left) - Math.max(8, Math.round((viewW - pRect.width) / 2));
+					scroller.scrollLeft += delta;
+				}
+				return;
+			}
+
 			const pillLeft = activePill.offsetLeft;
 			const pillRight = pillLeft + activePill.offsetWidth;
 			const currentLeft = scroller.scrollLeft;
-			if (viewW > 0 && (pillLeft < currentLeft || pillRight > currentLeft + viewW)) {
+			if (pillLeft < currentLeft || pillRight > currentLeft + viewW) {
 				const targetLeft = Math.max(0, pillLeft - Math.max(8, Math.round((viewW - activePill.offsetWidth) / 2)));
 				scroller.scrollLeft = targetLeft;
 			}
@@ -83,6 +211,7 @@ export class FormController {
 		this.activeCountDisplay = document.getElementById('mr-tee-active-count-display');
 		this.stepVal = document.getElementById('mr-tee-step-val');
 		const parentCartForm = this.container ? this.container.closest('form.cart') : null;
+		this.cartForm = parentCartForm || document.querySelector('form.cart');
 		this.addToCartBtn = (parentCartForm && parentCartForm.querySelector('button[type="submit"], input[type="submit"], .single_add_to_cart_button'))
 			|| document.querySelector('form.cart button[type="submit"], form.cart input[type="submit"], .single_add_to_cart_button');
 
@@ -104,13 +233,21 @@ export class FormController {
 
 	bindEvents() {
 		if (!this.container) return;
+		const i18n = (window.mrTeeProductData && window.mrTeeProductData.i18n) || {};
 
-		// 1. Text Inputs with Live Character Counters & Stage Sync
+		// 1. Text Inputs with Live Character Counters, Max-Lines Enforcement & Stage Sync
 		this.container.querySelectorAll('.mr-tee-text-inputs-wrap .mr-tee-text-input').forEach((input) => {
 			const group = input.closest('.mr-tee-field-group');
 			const lineIdx = parseInt(group.getAttribute('data-line-index'), 10);
 			const lineConfig = (this.config.text_lines && this.config.text_lines[lineIdx]) || {};
+			const counterWrap = group.querySelector('.mr-tee-char-counter');
 			const charCounter = group.querySelector('.mr-tee-char-count');
+			const maxChars = parseInt(input.getAttribute('maxlength') || lineConfig.max_chars || 0, 10) || 0;
+			const maxLines = input.tagName === 'TEXTAREA'
+				? (parseInt(lineConfig.max_lines || input.getAttribute('data-max-lines') || 0, 10) || 0)
+				: 0;
+
+			this.updateCharCounter(counterWrap, charCounter, input.value, maxChars);
 
 			const warmLineFont = () => {
 				this.notifySideFocus(input);
@@ -131,12 +268,34 @@ export class FormController {
 			input.addEventListener('pointerdown', warmLineFont, { passive: true });
 			input.addEventListener('focus', warmLineFont);
 
+			if (maxLines > 0) {
+				input.addEventListener('keydown', (e) => {
+					if (e.key !== 'Enter') return;
+					const normalized = input.value.replace(/\r\n?/g, '\n');
+					const curLines = normalized.split('\n').length;
+					if (curLines >= maxLines) {
+						const start = input.selectionStart || 0;
+						const end = input.selectionEnd || 0;
+						const selectedHasNewline = input.value.slice(start, end).includes('\n');
+						if (!selectedHasNewline) {
+							e.preventDefault();
+						}
+					}
+				});
+			}
+
 			input.addEventListener('input', () => {
 				this.notifySideFocus(input);
-				const val = input.value;
-				if (charCounter) {
-					charCounter.textContent = val.length;
+				let val = input.value;
+				if (maxLines > 0) {
+					const normalized = val.replace(/\r\n?/g, '\n');
+					const parts = normalized.split('\n');
+					if (parts.length > maxLines) {
+						val = parts.slice(0, maxLines).join('\n');
+						input.value = val;
+					}
 				}
+				this.updateCharCounter(counterWrap, charCounter, val, maxChars);
 				if (lineConfig.ref_id) {
 					this.store.setTextValue(lineConfig.ref_id, val);
 				}
@@ -162,12 +321,19 @@ export class FormController {
 			pill.addEventListener('click', () => {
 				this.notifySideFocus(pill);
 				const pillsContainer = pill.closest('.mr-tee-font-pills');
+				const fieldGroup = pill.closest('.mr-tee-field-group');
 				const lineIdx = parseInt(pillsContainer.getAttribute('data-line-index'), 10);
 				const lineConfig = (this.config.text_lines && this.config.text_lines[lineIdx]) || {};
 				const fontId = pill.getAttribute('data-font-id');
 
-				// Highlight active
-				pillsContainer.querySelectorAll('.mr-tee-font-pill').forEach(p => p.classList.remove('is-active'));
+				const prevActivePill = pillsContainer.querySelector('.mr-tee-font-pill.is-active');
+				const prevFontId = lineConfig.font;
+
+				// Highlight active immediately for snappy feedback
+				pillsContainer.querySelectorAll('.mr-tee-font-pill').forEach((p) => {
+					p.classList.remove('is-active', 'is-loading');
+					p.removeAttribute('aria-busy');
+				});
 				pill.classList.add('is-active');
 
 				const fonts = (window.mrTeeProductData && window.mrTeeProductData.fonts)
@@ -177,19 +343,47 @@ export class FormController {
 				const isOtSvg = Boolean(fontDef && (fontDef.font_type === 'opentype_svg' || fontDef.color_svg));
 
 				const refId = lineConfig.ref_id || `id-ref-text-line-${lineIdx + 1}`;
+				const reqToken = (lineConfig._fontLoadToken || 0) + 1;
+				lineConfig._fontLoadToken = reqToken;
 				lineConfig.font = fontId;
 				const currentInput = document.getElementById(`mr_tee_line_${lineIdx}`);
 				const currentText = currentInput ? currentInput.value : (lineConfig.default_text || '');
 
 				if (isOtSvg) {
+					const isAlreadyLoaded = Boolean(SvgRenderer.getSvgFontData(fontId));
+					if (!isAlreadyLoaded) {
+						pill.classList.add('is-loading');
+						pill.setAttribute('aria-busy', 'true');
+					}
 					const isUpper = (lineConfig.casing === 'UPPER') || Boolean(fontDef && fontDef.uppercase);
 					const warmText = isUpper ? currentText.toUpperCase() : currentText;
-					SvgRenderer.ensureSvgFontLoaded(fontId, fontDef, { prewarmGlyphs: true, priorityText: warmText }).then(() => {
-						if (lineConfig.font !== fontId) return;
-						this.store.setTextFont(refId, fontId, fontDef);
-					});
+					const revertSelection = () => {
+						if (lineConfig._fontLoadToken !== reqToken) return;
+						lineConfig.font = prevFontId;
+						pill.classList.remove('is-active', 'is-loading');
+						pill.removeAttribute('aria-busy');
+						if (prevActivePill && prevActivePill !== pill) {
+							prevActivePill.classList.add('is-active');
+						}
+					};
+					SvgRenderer.ensureSvgFontLoaded(fontId, fontDef, { prewarmGlyphs: true, priorityText: warmText })
+						.then((loadedData) => {
+							pill.classList.remove('is-loading');
+							pill.removeAttribute('aria-busy');
+							if (lineConfig._fontLoadToken !== reqToken || lineConfig.font !== fontId) return;
+							if (!loadedData) {
+								revertSelection();
+								return;
+							}
+							this.store.setTextFont(refId, fontId, fontDef);
+							this.syncSwatchesForLine(fieldGroup, true);
+						})
+						.catch(() => {
+							revertSelection();
+						});
 				} else {
 					this.store.setTextFont(refId, fontId, fontDef);
+					this.syncSwatchesForLine(fieldGroup, false);
 				}
 			});
 		});
@@ -203,11 +397,20 @@ export class FormController {
 				const group = pill.closest('.mr-tee-color-swatches-wrap');
 				const colorRefId = group ? group.getAttribute('data-color-ref-id') : 'id-ref-color-selector';
 				const colorHex = pill.getAttribute('data-color-hex');
+				const colorName = pill.getAttribute('data-color-name') || pill.getAttribute('title') || '';
 
 				if (group) {
-					group.querySelectorAll('.mr-tee-color-swatch-pill').forEach(p => p.classList.remove('is-active'));
+					group.querySelectorAll('.mr-tee-color-swatch-pill').forEach((p) => {
+						p.classList.remove('is-active');
+						p.setAttribute('aria-pressed', 'false');
+					});
+					const nameReadout = group.querySelector('.mr-tee-active-color-name');
+					if (nameReadout) {
+						nameReadout.textContent = colorName;
+					}
 				}
 				pill.classList.add('is-active');
+				pill.setAttribute('aria-pressed', 'true');
 
 				if (colorHex) {
 					this.store.setColorSelection(colorRefId, colorHex);
@@ -222,11 +425,23 @@ export class FormController {
 		const stepMinusBtn = document.getElementById('mr-tee-step-minus');
 		const stepPlusBtn = document.getElementById('mr-tee-step-plus');
 
-		let tempCount = this.store.state.activeCount;
+		const minItems = (this.config.repeater && this.config.repeater.min_items !== undefined)
+			? Math.max(0, parseInt(this.config.repeater.min_items, 10) || 0)
+			: 0;
+		const maxItems = (this.config.repeater && this.config.repeater.max_items !== undefined)
+			? Math.max(minItems, parseInt(this.config.repeater.max_items, 10) || 0)
+			: 6;
+		this._repeaterMin = minItems;
+		this._repeaterMax = maxItems;
+		this._stepMinusBtn = stepMinusBtn;
+		this._stepPlusBtn = stepPlusBtn;
+
+		let tempCount = Math.max(minItems, Math.min(maxItems, this.store.state.activeCount));
 
 		if (openCountBtn && this.countModal) {
 			openCountBtn.addEventListener('click', () => {
-				tempCount = this.store.state.activeCount;
+				this.notifySideFocus('front');
+				tempCount = Math.max(minItems, Math.min(maxItems, this.store.state.activeCount));
 				this.updateModalCountDisplay(tempCount);
 				this.countModal.style.display = 'flex';
 			});
@@ -240,6 +455,7 @@ export class FormController {
 
 		if (confirmCountBtn && this.countModal) {
 			confirmCountBtn.addEventListener('click', () => {
+				this.notifySideFocus('front');
 				this.store.updateVisibilityFromCount(tempCount, true);
 				this.countModal.style.display = 'none';
 				this.updateAccordionCardsVisibility(tempCount);
@@ -251,7 +467,7 @@ export class FormController {
 
 		if (stepMinusBtn) {
 			stepMinusBtn.addEventListener('click', () => {
-				if (tempCount > 0) {
+				if (tempCount > minItems) {
 					tempCount--;
 					this.updateModalCountDisplay(tempCount);
 				}
@@ -260,8 +476,7 @@ export class FormController {
 
 		if (stepPlusBtn) {
 			stepPlusBtn.addEventListener('click', () => {
-				const max = (this.config.repeater && this.config.repeater.max_items) || 6;
-				if (tempCount < max) {
+				if (tempCount < maxItems) {
 					tempCount++;
 					this.updateModalCountDisplay(tempCount);
 				}
@@ -272,8 +487,11 @@ export class FormController {
 		if (this.countModal) {
 			this.countModal.querySelectorAll('.mr-tee-count-dot-btn').forEach((dot) => {
 				dot.addEventListener('click', () => {
-					tempCount = parseInt(dot.getAttribute('data-count'), 10);
-					this.updateModalCountDisplay(tempCount);
+					const rawDot = parseInt(dot.getAttribute('data-count'), 10);
+					if (!Number.isNaN(rawDot)) {
+						tempCount = Math.max(minItems, Math.min(maxItems, rawDot));
+						this.updateModalCountDisplay(tempCount);
+					}
 				});
 			});
 
@@ -286,28 +504,40 @@ export class FormController {
 
 		// 4. Individual Mushroom Accordions
 		this.container.querySelectorAll('.mr-tee-repeater-item-card').forEach((card) => {
-			const itemNum = parseInt(card.getAttribute('data-item-num'), 10);
 			const itemIdx = parseInt(card.getAttribute('data-item-index'), 10);
 			const header = card.querySelector('.mr-tee-rep-card-header');
+			const toggleBtn = card.querySelector('.mr-tee-rep-toggle-btn');
 			const nameInput = card.querySelector('.mr-tee-rep-name-input');
+			const counterWrap = card.querySelector('.mr-tee-char-counter');
 			const charCounter = card.querySelector('.mr-tee-char-count');
 			const summaryText = card.querySelector('.mr-tee-rep-summary-text');
 			const thumbImg = card.querySelector('.mr-tee-rep-thumb img');
+			const repMaxChars = nameInput
+				? (parseInt(nameInput.getAttribute('maxlength') || (this.config.repeater && this.config.repeater.max_chars) || 0, 10) || 0)
+				: 0;
+
+			if (nameInput) {
+				this.updateCharCounter(counterWrap, charCounter, nameInput.value, repMaxChars);
+			}
 
 			// Accordion expand/collapse
 			if (header) {
 				header.addEventListener('click', (e) => {
 					if (e.target && e.target.closest('input')) return;
-					card.classList.toggle('is-open');
+					this.notifySideFocus('front');
+					const isOpen = card.classList.toggle('is-open');
+					if (toggleBtn) toggleBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
 				});
 			}
 
 			// Name input
 			if (nameInput) {
+				nameInput.addEventListener('focus', () => this.notifySideFocus('front'));
 				nameInput.addEventListener('input', () => {
+					this.notifySideFocus('front');
 					const val = nameInput.value;
-					if (charCounter) charCounter.textContent = val.length;
-					if (summaryText) summaryText.textContent = val || 'Sans nom';
+					this.updateCharCounter(counterWrap, charCounter, val, repMaxChars);
+					if (summaryText) summaryText.textContent = val || (i18n.unnamed || 'Sans nom');
 					this.store.setMushroomName(itemIdx, val);
 				});
 			}
@@ -315,6 +545,7 @@ export class FormController {
 			// Icon radio picker
 			card.querySelectorAll('.mr-tee-icon-option input[type="radio"]').forEach((radio) => {
 				radio.addEventListener('change', () => {
+					this.notifySideFocus('front');
 					card.querySelectorAll('.mr-tee-icon-option').forEach(o => o.classList.remove('is-selected'));
 					const parentOption = radio.closest('.mr-tee-icon-option');
 					if (parentOption) parentOption.classList.add('is-selected');
@@ -335,33 +566,46 @@ export class FormController {
 		// 4b. Customer Image Fields (Upload / Preview / Reset)
 		this.bindImageFields();
 
-		// 5. Intercept Add-to-Cart for Unedited Field Validation (IGNORE_PERSO_WARNINGS_LABEL)
-		if (this.addToCartBtn) {
-			this.addToCartBtn.addEventListener('click', (e) => {
-				if (this.bypassWarning) {
-					return; // Allow submission
-				}
-				if (
+		// 5. Capture-phase Add-to-Cart click + form submit interceptors (beats theme AJAX cart handlers)
+		const handleAddToCartIntercept = (e) => {
+			if (this.bypassWarning) {
+				return; // Allow final submission after export completes
+			}
+			if (this.isSubmitting) {
+				e.preventDefault();
+				e.stopImmediatePropagation();
+				return false;
+			}
+			if (
+				this.addToCartBtn && (
 					this.addToCartBtn.disabled ||
 					this.addToCartBtn.classList.contains('disabled') ||
 					this.addToCartBtn.classList.contains('wc-variation-selection-needed')
-				) {
-					return; // Let WooCommerce handle unselected variation alert natively
-				}
+				)
+			) {
+				return; // Let WooCommerce handle unselected variation alert natively
+			}
 
-				this.store.validateWarnings();
-				if (this.store.state.hasUneditedWarnings) {
-					e.preventDefault();
-					e.stopPropagation();
-					this.showWarningModal();
-					return false;
-				}
-
-				// If no warnings, proceed with 300 DPI rasterization and submission
+			this.store.validateWarnings();
+			if (this.store.state.hasUneditedWarnings) {
 				e.preventDefault();
-				e.stopPropagation();
-				this.runExportAndSubmit();
-			});
+				e.stopImmediatePropagation();
+				this.showWarningModal();
+				return false;
+			}
+
+			// No warnings: pause submission, prepare preview & payload, then re-submit
+			e.preventDefault();
+			e.stopImmediatePropagation();
+			this.runExportAndSubmit();
+		};
+
+		if (this.addToCartBtn) {
+			this.addToCartBtn.addEventListener('click', handleAddToCartIntercept, { capture: true });
+		}
+		const targetForm = (this.addToCartBtn && this.addToCartBtn.closest('form')) || this.cartForm;
+		if (targetForm) {
+			targetForm.addEventListener('submit', handleAddToCartIntercept, { capture: true });
 		}
 
 		// Warning Modal buttons
@@ -392,10 +636,16 @@ export class FormController {
 					targetInput = this.container.querySelector('.mr-tee-text-input[data-warning="1"], .mr-tee-image-file-input[data-warning="1"]');
 				}
 				if (targetInput) {
-					this.notifySideFocus(targetInput);
 					const repCard = targetInput.closest('.mr-tee-repeater-item-card');
-					if (repCard && !repCard.classList.contains('is-open')) {
-						repCard.classList.add('is-open');
+					if (repCard) {
+						this.notifySideFocus('front');
+						if (!repCard.classList.contains('is-open')) {
+							repCard.classList.add('is-open');
+							const repToggle = repCard.querySelector('.mr-tee-rep-toggle-btn');
+							if (repToggle) repToggle.setAttribute('aria-expanded', 'true');
+						}
+					} else {
+						this.notifySideFocus(targetInput);
 					}
 					if (targetInput.classList.contains('mr-tee-image-file-input')) {
 						const card = targetInput.closest('.mr-tee-image-field-card');
@@ -468,6 +718,7 @@ export class FormController {
 		const restoreBtn = () => {
 			this.isSubmitting = false;
 			this.bypassWarning = false;
+			this._awaitingCartRedirect = false;
 			if (btn) {
 				btn.removeAttribute('aria-busy');
 				btn.style.pointerEvents = '';
@@ -482,7 +733,7 @@ export class FormController {
 
 		if (this.pendingUploads.length > 0) {
 			try {
-				await Promise.allSettled(this.pendingUploads);
+				await Promise.allSettled(this.pendingUploads.slice());
 			} catch (e) {}
 		}
 		if (this.onExportRequested) {
@@ -507,6 +758,17 @@ export class FormController {
 		if (!this.container) return;
 		const i18n = (window.mrTeeProductData && window.mrTeeProductData.i18n) || {};
 
+		const isAllowedImageFile = (file) => {
+			if (!file) return false;
+			if (file.type && ALLOWED_IMAGE_MIMES.has(file.type.toLowerCase())) {
+				return true;
+			}
+			if (!file.type && file.name) {
+				return /\.(png|jpe?g|webp|gif|svg)$/i.test(file.name);
+			}
+			return false;
+		};
+
 		this.container.querySelectorAll('.mr-tee-image-field-card').forEach((card) => {
 			const fileInput = card.querySelector('.mr-tee-image-file-input');
 			const uploadBtn = card.querySelector('.mr-tee-image-upload-btn');
@@ -514,6 +776,14 @@ export class FormController {
 			const thumbWrap = card.querySelector('.mr-tee-img-field-thumb');
 			const statusEl = card.querySelector('.mr-tee-img-field-status');
 			const defaultImg = card.getAttribute('data-default-image') || '';
+
+			const detachActiveUpload = () => {
+				if (card._activeUploadPromise) {
+					const idx = this.pendingUploads.indexOf(card._activeUploadPromise);
+					if (idx !== -1) this.pendingUploads.splice(idx, 1);
+					card._activeUploadPromise = null;
+				}
+			};
 
 			if (uploadBtn && fileInput) {
 				uploadBtn.addEventListener('pointerdown', () => this.notifySideFocus(uploadBtn), { passive: true });
@@ -530,6 +800,7 @@ export class FormController {
 				resetBtn.addEventListener('click', () => {
 					this.notifySideFocus(resetBtn);
 					card._uploadToken = (card._uploadToken || 0) + 1;
+					detachActiveUpload();
 					fileInput.value = '';
 					const refId = fileInput.getAttribute('data-ref-id');
 					if (thumbWrap) {
@@ -538,7 +809,7 @@ export class FormController {
 							thumbWrap.innerHTML = `<img src="${SvgRenderer.escapeXml(defaultImg)}" alt="" />`;
 						} else {
 							thumbWrap.classList.add('is-empty');
-							thumbWrap.innerHTML = '<span class="mr-tee-img-field-placeholder-icon" aria-hidden="true">🖼️</span>';
+							thumbWrap.innerHTML = `<span class="mr-tee-img-field-placeholder-icon" aria-hidden="true">${SVG_PLACEHOLDER_IMAGE}</span>`;
 						}
 					}
 					if (statusEl) {
@@ -559,21 +830,36 @@ export class FormController {
 			if (fileInput) {
 				fileInput.addEventListener('change', async () => {
 					const file = fileInput.files && fileInput.files[0];
+					fileInput.value = '';
 					if (!file) return;
+
+					const setUploadError = (msg) => {
+						if (statusEl) {
+							statusEl.textContent = msg;
+							statusEl.style.color = '#dc2626';
+							statusEl.setAttribute('data-upload-state', 'error');
+						}
+					};
+
+					if (!isAllowedImageFile(file)) {
+						setUploadError(i18n.imageInvalidType || 'Format d\'image non pris en charge (PNG, JPG, WebP, GIF, SVG).');
+						return;
+					}
+					if (file.size > MAX_IMAGE_BYTES) {
+						setUploadError(i18n.imageTooLarge || 'L\'image dépasse la taille maximale autorisée (15 Mo).');
+						return;
+					}
 
 					const refId = fileInput.getAttribute('data-ref-id');
 					const token = (card._uploadToken || 0) + 1;
 					card._uploadToken = token;
+					detachActiveUpload();
 
 					let previewDataUrl = '';
 					try {
 						previewDataUrl = await this.readImageAsDataUrl(file);
 					} catch (err) {
-						if (statusEl) {
-							statusEl.textContent = i18n.imageUploadError || 'Erreur lors du chargement de l\'image.';
-							statusEl.style.color = '#dc2626';
-							statusEl.setAttribute('data-upload-state', 'error');
-						}
+						setUploadError(i18n.imageUploadError || 'Erreur lors du chargement de l\'image.');
 						return;
 					}
 
@@ -589,7 +875,7 @@ export class FormController {
 						thumbWrap.innerHTML = `<img src="${previewDataUrl}" alt="" />`;
 					}
 					if (statusEl) {
-						statusEl.textContent = `… ${file.name}`;
+						statusEl.textContent = `${i18n.uploadingImage || 'Envoi en cours...'} (${file.name})`;
 						statusEl.style.color = '#2563eb';
 						statusEl.setAttribute('data-upload-state', 'uploading');
 					}
@@ -605,14 +891,14 @@ export class FormController {
 						this.store.setImageValue(refId, previewDataUrl, file.name, true);
 					}
 
-					// Upload file to server in background (chunked when large) for lightweight persistent order storage
-					const uploadPromise = this.uploadCustomerImage(file, previewDataUrl).then((serverUrl) => {
+					// Upload ORIGINAL full-res file to server in background so 300 DPI prints stay crisp
+					const uploadPromise = this.uploadCustomerImage(file).then((serverUrl) => {
 						if (card._uploadToken !== token) return;
 						if (serverUrl) {
 							if (typeof window !== 'undefined') {
 								window.mrTeeImageB64Cache = window.mrTeeImageB64Cache || {};
 								window.mrTeeImageB64Cache[serverUrl] = previewDataUrl;
-								const normUrl = PrintExporter.normalizeSameHostUrl(serverUrl);
+								const normUrl = normalizeSameHostUrl(serverUrl);
 								if (normUrl) window.mrTeeImageB64Cache[normUrl] = previewDataUrl;
 							}
 							if (refId) {
@@ -623,22 +909,20 @@ export class FormController {
 								statusEl.style.color = '#059669';
 								statusEl.setAttribute('data-upload-state', 'done');
 							}
-						} else if (statusEl) {
-							statusEl.textContent = file.name;
-							statusEl.style.color = '#0f172a';
-							statusEl.setAttribute('data-upload-state', 'local');
+						} else {
+							setUploadError(i18n.imageUploadError || 'Erreur lors du chargement de l\'image.');
 						}
 					}).catch(() => {
 						if (card._uploadToken !== token) return;
-						if (statusEl) {
-							statusEl.textContent = file.name;
-							statusEl.style.color = '#0f172a';
-							statusEl.setAttribute('data-upload-state', 'local');
-						}
+						setUploadError(i18n.imageUploadError || 'Erreur lors du chargement de l\'image.');
 					});
 
+					card._activeUploadPromise = uploadPromise;
 					this.pendingUploads.push(uploadPromise);
 					uploadPromise.finally(() => {
+						if (card._activeUploadPromise === uploadPromise) {
+							card._activeUploadPromise = null;
+						}
 						const idx = this.pendingUploads.indexOf(uploadPromise);
 						if (idx !== -1) this.pendingUploads.splice(idx, 1);
 					});
@@ -681,21 +965,14 @@ export class FormController {
 		});
 	}
 
-	async uploadCustomerImage(file, previewDataUrl = '') {
+	async uploadCustomerImage(file) {
 		const data = window.mrTeeProductData || {};
-		const ajaxUrl = PrintExporter.resolveAjaxUrl();
+		const ajaxUrl = resolveAjaxUrl();
+		const uploadName = file.name || 'image.png';
 
-		let uploadBlob = file;
-		let uploadName = file.name || 'image.png';
-		if (previewDataUrl && file.type !== 'image/svg+xml' && (file.type === 'image/jpeg' || file.type === 'image/png')) {
-			const downscaledBlob = PrintExporter.dataUrlToBlob(previewDataUrl);
-			if (downscaledBlob && downscaledBlob.size > 0 && downscaledBlob.size < file.size) {
-				uploadBlob = downscaledBlob;
-			}
-		}
-
-		if (uploadBlob.size > 550 * 1024) {
-			const res = await PrintExporter.uploadBlobInChunks(uploadBlob, {
+		if (file.size > 550 * 1024) {
+			const PrintExporter = await this.loadPrintExporter();
+			const res = await PrintExporter.uploadBlobInChunks(file, {
 				artifact: 'customer_image',
 				fileName: uploadName,
 			});
@@ -707,7 +984,7 @@ export class FormController {
 			formData.append('action', 'mr_tee_upload_customer_image');
 			formData.append('nonce', data.uploadNonce || '');
 			formData.append('product_id', String(this.config.productId || data.productId || 0));
-			formData.append('image_file', uploadBlob, uploadName);
+			formData.append('image_file', file, uploadName);
 
 			const resp = await fetch(ajaxUrl, { method: 'POST', body: formData });
 			if (resp.ok) {
@@ -719,7 +996,8 @@ export class FormController {
 		} catch (e) {}
 
 		// Fallback to resilient chunked uploader on any transient single-POST error
-		const fallbackRes = await PrintExporter.uploadBlobInChunks(uploadBlob, {
+		const PrintExporter = await this.loadPrintExporter();
+		const fallbackRes = await PrintExporter.uploadBlobInChunks(file, {
 			artifact: 'customer_image',
 			fileName: uploadName,
 		});
@@ -736,12 +1014,12 @@ export class FormController {
 			window.jQuery(document.body).on('added_to_cart.mrTeeRedirect', () => {
 				if (this._awaitingCartRedirect) {
 					this._awaitingCartRedirect = false;
-					window.location.href = PrintExporter.normalizeSameHostUrl(cartUrl) || cartUrl;
+					window.location.href = normalizeSameHostUrl(cartUrl) || cartUrl;
 				}
 			});
 		}
 
-		const form = this.addToCartBtn ? this.addToCartBtn.closest('form') : document.querySelector('form.cart');
+		const form = (this.addToCartBtn ? this.addToCartBtn.closest('form') : null) || this.cartForm || document.querySelector('form.cart');
 		if (form) {
 			if (form.action && location.protocol === 'http:' && form.action.startsWith('https:')) {
 				form.action = form.action.replace('https:', 'http:');
@@ -778,6 +1056,7 @@ export class FormController {
 			} else {
 				this.bypassWarning = false;
 				this.isSubmitting = false;
+				this._awaitingCartRedirect = false;
 			}
 		}, 2500);
 	}
@@ -785,6 +1064,12 @@ export class FormController {
 	updateModalCountDisplay(count) {
 		if (this.stepVal) {
 			this.stepVal.textContent = count;
+		}
+		if (this._stepMinusBtn) {
+			this._stepMinusBtn.disabled = count <= (this._repeaterMin || 0);
+		}
+		if (this._stepPlusBtn) {
+			this._stepPlusBtn.disabled = count >= (this._repeaterMax !== undefined ? this._repeaterMax : 6);
 		}
 		if (this.countModal) {
 			this.countModal.querySelectorAll('.mr-tee-count-dot-btn').forEach((dot) => {
@@ -806,13 +1091,14 @@ export class FormController {
 
 	showWarningModal() {
 		if (!this.warningModal) return;
+		const i18n = (window.mrTeeProductData && window.mrTeeProductData.i18n) || {};
 		const textEl = document.getElementById('mr-tee-warning-text');
 		const warnings = (this.store && this.store.state && Array.isArray(this.store.state.warnings)) ? this.store.state.warnings : [];
 		if (textEl) {
 			if (warnings.length > 0) {
 				const maxShow = 3;
 				const labels = warnings.slice(0, maxShow).map((w) => {
-					const name = w.name || 'Champ';
+					const name = w.name || i18n.fieldDefault || 'Champ';
 					if (w.type === 'IMAGE') {
 						return name;
 					}
@@ -825,11 +1111,10 @@ export class FormController {
 				});
 				const extra = warnings.length > maxShow ? ` (+${warnings.length - maxShow})` : '';
 				const summary = `${labels.join(', ')}${extra}`;
-				textEl.textContent = warnings.length === 1
-					? `Le champ suivant n'a pas été personnalisé : ${summary}. Voulez-vous continuer avec cette valeur par défaut ou modifier votre personnalisation ?`
-					: `Les champs suivants n'ont pas été personnalisés : ${summary}. Voulez-vous continuer avec les valeurs par défaut ou modifier votre personnalisation ?`;
+				const singleTpl = i18n.warningSingle || 'Le champ suivant n\'a pas été personnalisé : %s. Voulez-vous continuer avec cette valeur par défaut ou modifier votre personnalisation ?';
+				const multiTpl = i18n.warningMulti || 'Les champs suivants n\'ont pas été personnalisés : %s. Voulez-vous continuer avec les valeurs par défaut ou modifier votre personnalisation ?';
+				textEl.textContent = (warnings.length === 1 ? singleTpl : multiTpl).replace('%s', summary);
 			} else {
-				const i18n = (window.mrTeeProductData && window.mrTeeProductData.i18n) || {};
 				textEl.textContent = i18n.warningMessage || 'Un ou plusieurs champs n\'ont pas été personnalisés. Souhaitez-vous continuer avec les valeurs par défaut ?';
 			}
 		}

@@ -110,8 +110,45 @@ class SvgFontPackager {
 	 * @return string
 	 */
 	private static function to_url_path( $url ) {
-		$parsed = function_exists( 'wp_parse_url' ) ? wp_parse_url( $url ) : parse_url( $url ); // phpcs:ignore WordPress.WP.AlternativeFunctions.parse_url_parse_url
+		$parsed    = function_exists( 'wp_parse_url' ) ? wp_parse_url( $url ) : parse_url( $url ); // phpcs:ignore WordPress.WP.AlternativeFunctions.parse_url_parse_url
+		$url_host  = ! empty( $parsed['host'] ) ? strtolower( (string) $parsed['host'] ) : '';
+		$site_host = ( function_exists( 'home_url' ) && function_exists( 'wp_parse_url' ) )
+			? strtolower( (string) wp_parse_url( home_url(), PHP_URL_HOST ) )
+			: '';
+		$http_host = isset( $_SERVER['HTTP_HOST'] )
+			? strtolower( (string) preg_replace( '/:\d+$/', '', (string) ( function_exists( 'wp_unslash' ) ? wp_unslash( $_SERVER['HTTP_HOST'] ) : $_SERVER['HTTP_HOST'] ) ) ) // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+			: '';
+
+		// Preserve full URL when served from an external CDN or distinct hostname.
+		if ( '' !== $url_host && '' !== $site_host && $url_host !== $site_host && ( '' === $http_host || $url_host !== $http_host ) ) {
+			return $url;
+		}
+
 		return ! empty( $parsed['path'] ) ? $parsed['path'] : $url;
+	}
+
+	/**
+	 * Check whether a specific manifest.json file exists, matches the current FORMAT,
+	 * and (when `$font_path` is provided) is at least as new as the source font file.
+	 *
+	 * @param string $manifest_file Absolute path to manifest.json.
+	 * @param string $font_path     Optional source font file path.
+	 * @return bool
+	 */
+	private static function is_manifest_file_fresh( $manifest_file, $font_path = '' ) {
+		if ( ! is_string( $manifest_file ) || '' === $manifest_file || ! file_exists( $manifest_file ) ) {
+			return false;
+		}
+		if ( '' !== $font_path ) {
+			if ( ! file_exists( $font_path ) ) {
+				return false;
+			}
+			if ( filemtime( $manifest_file ) < filemtime( $font_path ) ) {
+				return false;
+			}
+		}
+		$head = (string) @file_get_contents( $manifest_file, false, null, 0, 160 ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents, WordPress.PHP.NoSilencedErrors.Discouraged
+		return false !== strpos( $head, '"' . self::FORMAT . '"' );
 	}
 
 	/**
@@ -141,15 +178,17 @@ class SvgFontPackager {
 	}
 
 	/**
-	 * Resolve cache location (`base_dir`, `base_url`, `dir`, `url_path`) for a font package,
-	 * preferring the plugin directory for prebuilt packages and falling back to wp_upload_dir
-	 * whenever the plugin directory is read-only.
+	 * Resolve cache location (`base_dir`, `base_url`, `dir`, `url_path`) for a font package.
+	 *
+	 * When reading (`$for_write === false`), prefers whichever location has a fresh manifest
+	 * matching `self::FORMAT` (preferring uploads over a stale plugin-dir manifest).
 	 *
 	 * @param string $font_id   Font identifier.
 	 * @param bool   $for_write Whether resolving for writing/building packages.
+	 * @param string $font_path Optional source font path for mtime freshness comparison.
 	 * @return array{base_dir: string, base_url: string, dir: string, url_path: string}
 	 */
-	private static function resolve_cache_location( $font_id, $for_write = false ) {
+	private static function resolve_cache_location( $font_id, $for_write = false, $font_path = '' ) {
 		$clean_id    = sanitize_key( $font_id );
 		$plugin_base = self::get_plugin_dir() . 'assets/fonts/cache/';
 		$plugin_url  = self::get_plugin_url() . 'assets/fonts/cache/';
@@ -159,40 +198,48 @@ class SvgFontPackager {
 		$upload_url  = self::uploads_cache_base_url();
 		$upload_dir  = $upload_base . $clean_id . '/';
 
-		if ( ! $for_write ) {
-			if ( file_exists( $plugin_dir . 'manifest.json' ) || file_exists( $plugin_dir . 'thumb.webp' ) || file_exists( $plugin_dir . 'thumb.png' ) ) {
-				return array(
-					'base_dir' => $plugin_base,
-					'base_url' => $plugin_url,
-					'dir'      => $plugin_dir,
-					'url_path' => self::to_url_path( $plugin_url . $clean_id . '/' ),
-				);
-			}
-			if ( file_exists( $upload_dir . 'manifest.json' ) || file_exists( $upload_dir . 'thumb.webp' ) || file_exists( $upload_dir . 'thumb.png' ) ) {
-				return array(
-					'base_dir' => $upload_base,
-					'base_url' => $upload_url,
-					'dir'      => $upload_dir,
-					'url_path' => self::to_url_path( $upload_url . $clean_id . '/' ),
-				);
-			}
-		}
-
-		if ( self::is_dir_writable( $plugin_base ) ) {
-			return array(
-				'base_dir' => $plugin_base,
-				'base_url' => $plugin_url,
-				'dir'      => $plugin_dir,
-				'url_path' => self::to_url_path( $plugin_url . $clean_id . '/' ),
-			);
-		}
-
-		return array(
+		$plugin_loc = array(
+			'base_dir' => $plugin_base,
+			'base_url' => $plugin_url,
+			'dir'      => $plugin_dir,
+			'url_path' => self::to_url_path( $plugin_url . $clean_id . '/' ),
+		);
+		$upload_loc = array(
 			'base_dir' => $upload_base,
 			'base_url' => $upload_url,
 			'dir'      => $upload_dir,
 			'url_path' => self::to_url_path( $upload_url . $clean_id . '/' ),
 		);
+
+		if ( ! $for_write ) {
+			$plugin_manifest = $plugin_dir . 'manifest.json';
+			$upload_manifest = $upload_dir . 'manifest.json';
+			$plugin_fresh    = self::is_manifest_file_fresh( $plugin_manifest, $font_path );
+			$upload_fresh    = self::is_manifest_file_fresh( $upload_manifest, $font_path );
+
+			if ( $plugin_fresh && $upload_fresh ) {
+				return ( filemtime( $upload_manifest ) > filemtime( $plugin_manifest ) ) ? $upload_loc : $plugin_loc;
+			}
+			if ( $plugin_fresh ) {
+				return $plugin_loc;
+			}
+			if ( $upload_fresh ) {
+				return $upload_loc;
+			}
+
+			if ( file_exists( $plugin_manifest ) || file_exists( $plugin_dir . 'thumb.webp' ) || file_exists( $plugin_dir . 'thumb.png' ) ) {
+				return $plugin_loc;
+			}
+			if ( file_exists( $upload_manifest ) || file_exists( $upload_dir . 'thumb.webp' ) || file_exists( $upload_dir . 'thumb.png' ) ) {
+				return $upload_loc;
+			}
+		}
+
+		if ( self::is_dir_writable( $plugin_base ) ) {
+			return $plugin_loc;
+		}
+
+		return $upload_loc;
 	}
 
 	/**
@@ -208,7 +255,7 @@ class SvgFontPackager {
 
 	/**
 	 * Root-relative URL path of a font package (protocol/host agnostic to avoid
-	 * mixed-content and http/https mismatch issues).
+	 * mixed-content and http/https mismatch issues, while preserving external CDNs).
 	 *
 	 * @param string $font_id Font identifier.
 	 * @return string
@@ -229,7 +276,7 @@ class SvgFontPackager {
 	}
 
 	/**
-	 * Versioned root-relative URL of the manifest, or empty string if not built yet.
+	 * Versioned URL of the manifest, or empty string if missing or stale (wrong FORMAT).
 	 *
 	 * @param string $font_id Font identifier.
 	 * @return string
@@ -241,11 +288,11 @@ class SvgFontPackager {
 		}
 		$loc  = self::resolve_cache_location( $font_id, false );
 		$file = $loc['dir'] . 'manifest.json';
-		if ( ! file_exists( $file ) ) {
+		if ( ! self::is_manifest_file_fresh( $file ) ) {
 			self::$url_cache[ $cache_key ] = '';
 			return '';
 		}
-		$url = $loc['url_path'] . 'manifest.json?v=' . filemtime( $file );
+		$url                           = $loc['url_path'] . 'manifest.json?v=' . filemtime( $file );
 		self::$url_cache[ $cache_key ] = $url;
 		return $url;
 	}
@@ -265,7 +312,7 @@ class SvgFontPackager {
 		$dir = $loc['dir'];
 		foreach ( array( 'thumb.webp', 'thumb.png' ) as $name ) {
 			if ( file_exists( $dir . $name ) ) {
-				$url = $loc['url_path'] . $name . '?v=' . filemtime( $dir . $name );
+				$url                           = $loc['url_path'] . $name . '?v=' . filemtime( $dir . $name );
 				self::$url_cache[ $cache_key ] = $url;
 				return $url;
 			}
@@ -282,16 +329,8 @@ class SvgFontPackager {
 	 * @return bool
 	 */
 	public static function is_fresh( $font_path, $font_id ) {
-		$manifest = self::manifest_path( $font_id );
-		if ( ! file_exists( $manifest ) || ! file_exists( $font_path ) ) {
-			return false;
-		}
-		if ( filemtime( $manifest ) < filemtime( $font_path ) ) {
-			return false;
-		}
-		// Cheap format check: read only the head of the file.
-		$head = (string) file_get_contents( $manifest, false, null, 0, 160 ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
-		return false !== strpos( $head, '"' . self::FORMAT . '"' );
+		$loc = self::resolve_cache_location( $font_id, false, $font_path );
+		return self::is_manifest_file_fresh( $loc['dir'] . 'manifest.json', $font_path );
 	}
 
 	/**
@@ -308,13 +347,14 @@ class SvgFontPackager {
 		}
 
 		if ( ! self::is_fresh( $font_path, $font_id ) ) {
-			$built = self::build( $font_path, $font_id, $font_name );
+			$built                             = self::build( $font_path, $font_id, $font_name );
 			self::$manifest_cache[ $font_id ] = ! empty( $built ) ? $built : null;
 			return self::$manifest_cache[ $font_id ];
 		}
 
-		$json = file_get_contents( self::manifest_path( $font_id ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
-		$data = json_decode( (string) $json, true );
+		$loc                              = self::resolve_cache_location( $font_id, false, $font_path );
+		$json                             = file_get_contents( $loc['dir'] . 'manifest.json' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
+		$data                             = json_decode( (string) $json, true );
 		self::$manifest_cache[ $font_id ] = ( is_array( $data ) && ! empty( $data['glyphs'] ) ) ? $data : null;
 		return self::$manifest_cache[ $font_id ];
 	}

@@ -54,7 +54,7 @@ class SceneGraphSchema {
 	 *
 	 * @return array<string, string>
 	 */
-	private static function get_default_color_swatches_map() {
+	public static function get_default_color_swatches_map() {
 		$map = array();
 		foreach ( ColorPaletteRegistry::get_solid_swatches() as $swatch ) {
 			if ( is_array( $swatch ) && ! empty( $swatch['hex'] ) && 0 === strpos( (string) $swatch['hex'], '#' ) ) {
@@ -96,6 +96,48 @@ class SceneGraphSchema {
 		}
 
 		return $url;
+	}
+
+	/**
+	 * Return the complete canonical structural defaults for the 2-row Avatar / Icon Repeater module.
+	 * Ensures enabling the repeater on any preset never hits missing keys or zero font sizes.
+	 *
+	 * @return array<string, mixed>
+	 */
+	public static function get_default_repeater_config() {
+		return array(
+			'enabled'       => false,
+			'section_id'    => 5832,
+			'label'         => __( 'Nombre d\'éléments', 'mr-tee-editor' ),
+			'subtitle'      => __( '(Modifiable à tout moment)', 'mr-tee-editor' ),
+			'item_label'    => __( 'Élément', 'mr-tee-editor' ),
+			'min_items'     => 0,
+			'max_items'     => 0,
+			'default_count' => 0,
+			'max_chars'     => 12,
+			'items_per_row' => 3,
+			'box_left'      => 28.0,
+			'box_top'       => 45.0,
+			'box_width'     => 44.0,
+			'box_height'    => 28.0,
+			'row1_y_pct'    => 50.2,
+			'row1_text_y'   => 62.263,
+			'row2_y_pct'    => 73.2,
+			'row2_text_y'   => 85.476,
+			'icon_width'    => 21.0,
+			'icon_height'   => 19.0,
+			'name_size'     => 3.5,
+			'name_max_w'    => 17.0,
+			'col_x_centers' => array( 30.0, 50.0, 70.0 ),
+			'defaults'      => array(
+				array( 'name' => 'Léo',   'icon' => 'mushroom_red' ),
+				array( 'name' => 'Emma',  'icon' => 'mushroom_green' ),
+				array( 'name' => 'Lucas', 'icon' => 'mushroom_blue' ),
+				array( 'name' => 'Chloé', 'icon' => 'mushroom_yellow' ),
+				array( 'name' => 'Hugo',  'icon' => 'mushroom_purple' ),
+				array( 'name' => 'Lina',  'icon' => 'mushroom_pink' ),
+			),
+		);
 	}
 
 	/**
@@ -256,6 +298,7 @@ class SceneGraphSchema {
 					'perso_translate_x'   => 0.0,
 					'perso_translate_y'   => 0.0,
 					'perso_rotate_degree' => 0.0,
+					'allowed_fonts'       => array( 'cocogoose', 'pacifico', 'bebas', 'bungee', 'abril', 'marker' ),
 					'garment_colors'      => ColorPaletteRegistry::get_default_garment_colors(),
 					'text_lines'          => array(
 						array(
@@ -341,6 +384,7 @@ class SceneGraphSchema {
 					'perso_translate_x'   => 0.0,
 					'perso_translate_y'   => 0.0,
 					'perso_rotate_degree' => 0.0,
+					'allowed_fonts'       => array( 'pacifico', 'cinzel', 'abril', 'bebas', 'marker' ),
 					'garment_colors'      => ColorPaletteRegistry::get_default_garment_colors(),
 					'vector_clipart'      => array(
 						'name'         => 'Coeur',
@@ -597,7 +641,7 @@ class SceneGraphSchema {
 
 		if ( ! empty( $saved['template_preset'] ) ) {
 			$preset = $saved['template_preset'];
-		} elseif ( ( ! empty( $saved['repeater'] ) && is_array( $saved['repeater'] ) && ! empty( $saved['repeater']['enabled'] ) ) || ( empty( $saved ) && 'mr_tee_editor' === $engine ) ) {
+		} elseif ( ! empty( $saved['repeater'] ) && is_array( $saved['repeater'] ) && ! empty( $saved['repeater']['enabled'] ) ) {
 			$preset = 'super_mushroom_24987';
 		} else {
 			$preset = 'classic_custom_text';
@@ -608,11 +652,24 @@ class SceneGraphSchema {
 		$config['engine']        = ! empty( $engine ) ? $engine : ( isset( $defaults['engine'] ) ? $defaults['engine'] : 'none' );
 		$config['nbd_handshake'] = isset( $saved['nbd_handshake'] ) ? (bool) $saved['nbd_handshake'] : true;
 
-		// Normalize allowed_fonts at product level (ordered array of chosen fonts)
+		// Validate allowed_fonts against currently registered fonts (scrubs deleted custom fonts cleanly)
+		$registered_fonts   = FontRegistry::get_fonts();
+		$first_reg_font_id  = array_key_first( $registered_fonts ) ?: 'super_mario';
+		$raw_allowed_fonts  = null;
 		if ( isset( $saved['allowed_fonts'] ) && is_array( $saved['allowed_fonts'] ) ) {
-			$config['allowed_fonts'] = array_values( array_filter( array_map( 'sanitize_key', $saved['allowed_fonts'] ) ) );
+			$raw_allowed_fonts = $saved['allowed_fonts'];
 		} elseif ( isset( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
-			$config['allowed_fonts'] = array_values( array_filter( array_map( 'sanitize_key', $config['allowed_fonts'] ) ) );
+			$raw_allowed_fonts = $config['allowed_fonts'];
+		}
+		if ( is_array( $raw_allowed_fonts ) ) {
+			$clean_allowed = array();
+			foreach ( $raw_allowed_fonts as $af_id ) {
+				$san_id = sanitize_key( $af_id );
+				if ( '' !== $san_id && isset( $registered_fonts[ $san_id ] ) && ! in_array( $san_id, $clean_allowed, true ) ) {
+					$clean_allowed[] = $san_id;
+				}
+			}
+			$config['allowed_fonts'] = ! empty( $clean_allowed ) ? $clean_allowed : null;
 		} else {
 			$config['allowed_fonts'] = null;
 		}
@@ -630,12 +687,12 @@ class SceneGraphSchema {
 		if ( $real_h <= 0 ) {
 			$real_h = 40.0;
 		}
-		$dpi          = isset( $config['dpi'] ) ? max( 72, intval( $config['dpi'] ) ) : 300;
+		$dpi          = isset( $config['dpi'] ) ? max( 72, min( 1200, intval( $config['dpi'] ) ) ) : 300;
 		$product_type = ! empty( $config['product_type'] ) ? sanitize_key( $config['product_type'] ) : 'garment';
 		if ( ! in_array( $product_type, array( 'garment', 'flat_object' ), true ) ) {
 			$product_type = 'garment';
 		}
-		$lock_ratio   = isset( $config['lock_aspect_ratio'] ) ? ! empty( $config['lock_aspect_ratio'] ) : ( 'flat_object' === $product_type );
+		$lock_ratio   = ( 'flat_object' === $product_type ) ? true : ( isset( $config['lock_aspect_ratio'] ) ? ! empty( $config['lock_aspect_ratio'] ) : false );
 
 		// Normalize multi-side printable zones (`print_sides`) with 100% backward compatibility
 		$fallback_side_dims = array(
@@ -673,7 +730,7 @@ class SceneGraphSchema {
 		// Dynamic fields parsing supporting arbitrary number of custom text & image fields
 		$raw_text_lines             = ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) ? $config['text_lines'] : $defaults['text_lines'];
 		$has_explicit_allowed_fonts = ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] );
-		$first_line_allowed_fonts   = null;
+		$union_line_allowed_fonts   = array();
 		$normalized_lines           = array();
 		$line_index                 = 0;
 
@@ -716,7 +773,7 @@ class SceneGraphSchema {
 					'box_height'       => 10.0,
 					'max_chars'        => 30,
 					'font'             => 'bebas',
-					'allowed_fonts'    => array_keys( FontRegistry::get_fonts() ),
+					'allowed_fonts'    => array_keys( $registered_fonts ),
 					'allow_font_pick'  => true,
 					'allow_color_pick' => true,
 					'color_mode'       => 'solid',
@@ -733,22 +790,44 @@ class SceneGraphSchema {
 				$merged['image_fit']          = ( isset( $merged['image_fit'] ) && 'cover' === $merged['image_fit'] ) ? 'cover' : 'contain';
 				$merged['allow_image_upload'] = isset( $merged['allow_image_upload'] ) ? (bool) $merged['allow_image_upload'] : true;
 			} else {
+				$line_font = ! empty( $merged['font'] ) ? sanitize_key( $merged['font'] ) : '';
+				if ( '' !== $line_font && ! isset( $registered_fonts[ $line_font ] ) ) {
+					$line_font = '';
+				}
+
 				// Enforce product-level allowed_fonts if explicitly specified
 				if ( $has_explicit_allowed_fonts ) {
 					$merged['allowed_fonts'] = $config['allowed_fonts'];
 					// First font in allowed_fonts is the primary / default font
-					if ( empty( $merged['font'] ) || ! in_array( $merged['font'], $config['allowed_fonts'], true ) ) {
-						$merged['font'] = $config['allowed_fonts'][0];
+					if ( '' === $line_font || ! in_array( $line_font, $config['allowed_fonts'], true ) ) {
+						$line_font = $config['allowed_fonts'][0];
 					}
+					$merged['font'] = $line_font;
 				} else {
-					if ( empty( $merged['allowed_fonts'] ) || ! is_array( $merged['allowed_fonts'] ) ) {
-						$merged['allowed_fonts'] = array_keys( FontRegistry::get_fonts() );
+					$line_allowed_clean = array();
+					if ( ! empty( $merged['allowed_fonts'] ) && is_array( $merged['allowed_fonts'] ) ) {
+						foreach ( $merged['allowed_fonts'] as $laf ) {
+							$san_laf = sanitize_key( $laf );
+							if ( '' !== $san_laf && isset( $registered_fonts[ $san_laf ] ) && ! in_array( $san_laf, $line_allowed_clean, true ) ) {
+								$line_allowed_clean[] = $san_laf;
+							}
+						}
 					}
-					if ( ! empty( $merged['font'] ) && ! in_array( $merged['font'], $merged['allowed_fonts'], true ) ) {
-						array_unshift( $merged['allowed_fonts'], $merged['font'] );
+					if ( '' === $line_font ) {
+						$line_font = ! empty( $line_allowed_clean[0] ) ? $line_allowed_clean[0] : $first_reg_font_id;
 					}
-					if ( null === $first_line_allowed_fonts ) {
-						$first_line_allowed_fonts = $merged['allowed_fonts'];
+					if ( ! in_array( $line_font, $line_allowed_clean, true ) ) {
+						array_unshift( $line_allowed_clean, $line_font );
+					}
+					if ( empty( $line_allowed_clean ) ) {
+						$line_allowed_clean = array_keys( $registered_fonts );
+					}
+					$merged['font']          = $line_font;
+					$merged['allowed_fonts'] = $line_allowed_clean;
+					foreach ( $line_allowed_clean as $uf_id ) {
+						if ( ! in_array( $uf_id, $union_line_allowed_fonts, true ) ) {
+							$union_line_allowed_fonts[] = $uf_id;
+						}
 					}
 				}
 				if ( ! empty( $merged['allow_color_pick'] ) && ( empty( $merged['color_swatches'] ) || ! is_array( $merged['color_swatches'] ) ) ) {
@@ -810,8 +889,8 @@ class SceneGraphSchema {
 			$line_index++;
 		}
 
-		if ( ! $has_explicit_allowed_fonts && ! empty( $first_line_allowed_fonts ) ) {
-			$config['allowed_fonts'] = $first_line_allowed_fonts;
+		if ( ! $has_explicit_allowed_fonts ) {
+			$config['allowed_fonts'] = ! empty( $union_line_allowed_fonts ) ? $union_line_allowed_fonts : array( $first_reg_font_id );
 		}
 		$config['text_lines'] = $normalized_lines;
 
@@ -820,12 +899,16 @@ class SceneGraphSchema {
 			$config['vector_clipart'] = $defaults['vector_clipart'];
 		}
 
+		$canonical_rep_defaults = wp_parse_args(
+			( ! empty( $defaults['repeater'] ) && is_array( $defaults['repeater'] ) ) ? $defaults['repeater'] : array(),
+			self::get_default_repeater_config()
+		);
 		if ( empty( $config['repeater'] ) || ! is_array( $config['repeater'] ) ) {
-			$config['repeater'] = $defaults['repeater'];
+			$config['repeater'] = $canonical_rep_defaults;
 		} else {
-			$config['repeater'] = wp_parse_args( $config['repeater'], $defaults['repeater'] );
+			$config['repeater'] = wp_parse_args( $config['repeater'], $canonical_rep_defaults );
 			if ( empty( $config['repeater']['defaults'] ) || ! is_array( $config['repeater']['defaults'] ) ) {
-				$config['repeater']['defaults'] = isset( $defaults['repeater']['defaults'] ) ? $defaults['repeater']['defaults'] : array();
+				$config['repeater']['defaults'] = $canonical_rep_defaults['defaults'];
 			}
 		}
 
@@ -906,12 +989,12 @@ class SceneGraphSchema {
 		if ( $fb_h <= 0 ) {
 			$fb_h = 40.0;
 		}
-		$fb_dpi  = isset( $fallback_dims['dpi'] ) ? max( 72, intval( $fallback_dims['dpi'] ) ) : 300;
+		$fb_dpi  = isset( $fallback_dims['dpi'] ) ? max( 72, min( 1200, intval( $fallback_dims['dpi'] ) ) ) : 300;
 		$fb_type = ! empty( $fallback_dims['product_type'] ) ? sanitize_key( $fallback_dims['product_type'] ) : 'garment';
 		if ( ! in_array( $fb_type, array( 'garment', 'flat_object' ), true ) ) {
 			$fb_type = 'garment';
 		}
-		$fb_lock = isset( $fallback_dims['lock_aspect_ratio'] ) ? (bool) $fallback_dims['lock_aspect_ratio'] : ( 'flat_object' === $fb_type );
+		$fb_lock = ( 'flat_object' === $fb_type ) ? true : ( isset( $fallback_dims['lock_aspect_ratio'] ) ? (bool) $fallback_dims['lock_aspect_ratio'] : false );
 
 		if ( is_string( $raw_sides ) ) {
 			$decoded   = json_decode( $raw_sides, true );
@@ -958,14 +1041,14 @@ class SceneGraphSchema {
 				if ( $s_h <= 0 ) {
 					$s_h = $fb_h;
 				}
-				$s_dpi  = isset( $raw_side['dpi'] ) ? max( 72, intval( $raw_side['dpi'] ) ) : $fb_dpi;
+				$s_dpi  = isset( $raw_side['dpi'] ) ? max( 72, min( 1200, intval( $raw_side['dpi'] ) ) ) : $fb_dpi;
 				$s_type = ! empty( $raw_side['product_type'] ) ? sanitize_key( $raw_side['product_type'] ) : $fb_type;
 				if ( ! in_array( $s_type, array( 'garment', 'flat_object' ), true ) ) {
 					$s_type = $fb_type;
 				}
-				$s_lock = isset( $raw_side['lock_aspect_ratio'] )
-					? (bool) $raw_side['lock_aspect_ratio']
-					: ( 'flat_object' === $s_type ? true : $fb_lock );
+				$s_lock = ( 'flat_object' === $s_type )
+					? true
+					: ( isset( $raw_side['lock_aspect_ratio'] ) ? (bool) $raw_side['lock_aspect_ratio'] : $fb_lock );
 
 				$sides[] = array(
 					'id'                => $sid,
@@ -1208,12 +1291,27 @@ class SceneGraphSchema {
 			$raw_placements = array();
 		}
 
-		$seed = array(
-			'box_left'   => isset( $base_box['box_left'] ) ? floatval( $base_box['box_left'] ) : 30.0,
-			'box_top'    => isset( $base_box['box_top'] ) ? floatval( $base_box['box_top'] ) : 25.0,
-			'box_width'  => isset( $base_box['box_width'] ) ? floatval( $base_box['box_width'] ) : 40.0,
-			'box_height' => isset( $base_box['box_height'] ) ? floatval( $base_box['box_height'] ) : 8.5,
-			'box_rotate' => isset( $base_box['box_rotate'] ) ? floatval( $base_box['box_rotate'] ) : 0.0,
+		$clamp_box = function ( $l, $t, $w, $h, $r ) {
+			$cw = max( 2.0, min( 100.0, floatval( $w ) ) );
+			$ch = max( 2.0, min( 100.0, floatval( $h ) ) );
+			$cl = max( 0.0, min( 100.0 - $cw, floatval( $l ) ) );
+			$ct = max( 0.0, min( 100.0 - $ch, floatval( $t ) ) );
+			$cr = max( -180.0, min( 180.0, floatval( $r ) ) );
+			return array(
+				'box_left'   => round( $cl, 2 ),
+				'box_top'    => round( $ct, 2 ),
+				'box_width'  => round( $cw, 2 ),
+				'box_height' => round( $ch, 2 ),
+				'box_rotate' => round( $cr, 2 ),
+			);
+		};
+
+		$seed = $clamp_box(
+			isset( $base_box['box_left'] ) ? floatval( $base_box['box_left'] ) : 30.0,
+			isset( $base_box['box_top'] ) ? floatval( $base_box['box_top'] ) : 25.0,
+			isset( $base_box['box_width'] ) ? floatval( $base_box['box_width'] ) : 40.0,
+			isset( $base_box['box_height'] ) ? floatval( $base_box['box_height'] ) : 8.5,
+			isset( $base_box['box_rotate'] ) ? floatval( $base_box['box_rotate'] ) : 0.0
 		);
 
 		$normalized = array();
@@ -1224,12 +1322,12 @@ class SceneGraphSchema {
 			$vid = (string) $view['id'];
 			if ( isset( $raw_placements[ $vid ] ) && is_array( $raw_placements[ $vid ] ) ) {
 				$p                  = $raw_placements[ $vid ];
-				$normalized[ $vid ] = array(
-					'box_left'   => isset( $p['box_left'] ) ? floatval( $p['box_left'] ) : $seed['box_left'],
-					'box_top'    => isset( $p['box_top'] ) ? floatval( $p['box_top'] ) : $seed['box_top'],
-					'box_width'  => isset( $p['box_width'] ) ? floatval( $p['box_width'] ) : $seed['box_width'],
-					'box_height' => isset( $p['box_height'] ) ? floatval( $p['box_height'] ) : $seed['box_height'],
-					'box_rotate' => isset( $p['box_rotate'] ) ? floatval( $p['box_rotate'] ) : $seed['box_rotate'],
+				$normalized[ $vid ] = $clamp_box(
+					isset( $p['box_left'] ) ? $p['box_left'] : $seed['box_left'],
+					isset( $p['box_top'] ) ? $p['box_top'] : $seed['box_top'],
+					isset( $p['box_width'] ) ? $p['box_width'] : $seed['box_width'],
+					isset( $p['box_height'] ) ? $p['box_height'] : $seed['box_height'],
+					isset( $p['box_rotate'] ) ? $p['box_rotate'] : $seed['box_rotate']
 				);
 			} else {
 				$normalized[ $vid ] = $seed;
@@ -1249,7 +1347,7 @@ class SceneGraphSchema {
 	 * @return array{width_px: int, height_px: int, aspect_ratio: float, ratio_str: string}
 	 */
 	public static function compute_print_dimensions( $width, $height, $unit = 'cm', $dpi = 300 ) {
-		$dpi   = max( 72, intval( $dpi ) );
+		$dpi   = max( 72, min( 1200, intval( $dpi ) ) );
 		$w_val = floatval( $width );
 		$h_val = floatval( $height );
 		if ( $w_val <= 0 ) {
@@ -1744,7 +1842,9 @@ class SceneGraphSchema {
 				'value'            => $line['default_text'],
 				'editable'         => true,
 				'multiLine'        => ! empty( $line['multiline'] ),
-				'maxLines'         => ! empty( $line['max_lines'] ) ? intval( $line['max_lines'] ) : 1,
+				'maxLines'         => ! empty( $line['multiline'] )
+					? ( ! empty( $line['max_lines'] ) ? max( 2, intval( $line['max_lines'] ) ) : 3 )
+					: 1,
 				'lineHeight'       => isset( $line['line_height'] ) ? floatval( $line['line_height'] ) : 0.95,
 				'maxCharsPerLine'  => ! empty( $line['max_chars'] ) ? intval( $line['max_chars'] ) : 40,
 				'validCharacters'  => "^[a-zA-Z0-9À-ÿ\\s'&.!\\-\n]*$",
@@ -1865,6 +1965,8 @@ class SceneGraphSchema {
 		// 2. Build 2-Row Mushroom Repeater Layers (`Ligne 1` [1..3] and `Ligne 2` [4..6])
 		$cfg_items = array();
 		if ( ! empty( $rep['enabled'] ) ) {
+			$rep         = wp_parse_args( $rep, self::get_default_repeater_config() );
+			$item_label  = ! empty( $rep['item_label'] ) ? (string) $rep['item_label'] : __( 'Élément', 'mr-tee-editor' );
 			$vis_row1_id = 'id-ref-vis-ligne-1';
 			$vis_row2_id = 'id-ref-vis-ligne-2';
 
@@ -1893,11 +1995,13 @@ class SceneGraphSchema {
 				$col_index  = $i % 3;
 				$center_x   = isset( $col_xs[ $col_index ] ) ? floatval( $col_xs[ $col_index ] ) : ( 30.0 + $col_index * 20.0 );
 				$icon_y     = ( 1 === $row_index ) ? floatval( $rep['row1_y_pct'] ) : floatval( $rep['row2_y_pct'] );
-				$text_y     = ( 1 === $row_index ) ? floatval( $rep['row1_text_y'] ) : floatval( $rep['row2_text_y'] );
-				$icon_w     = floatval( $rep['icon_width'] );
-				$icon_h     = floatval( $rep['icon_height'] );
-				$name_size  = floatval( $rep['name_size'] );
-				$name_max_w = floatval( $rep['name_max_w'] );
+				$icon_w     = max( 1.0, floatval( $rep['icon_width'] ) );
+				$icon_h     = max( 1.0, floatval( $rep['icon_height'] ) );
+				$text_y     = ( 1 === $row_index )
+					? ( isset( $rep['row1_text_y'] ) ? floatval( $rep['row1_text_y'] ) : round( $icon_y + ( $icon_h / 2.0 ) + 2.5, 3 ) )
+					: ( isset( $rep['row2_text_y'] ) ? floatval( $rep['row2_text_y'] ) : round( $icon_y + ( $icon_h / 2.0 ) + 2.5, 3 ) );
+				$name_size  = max( 1.5, floatval( $rep['name_size'] ) );
+				$name_max_w = max( 5.0, floatval( $rep['name_max_w'] ) );
 
 				$def_item   = isset( $rep['defaults'][ $i ] ) ? $rep['defaults'][ $i ] : array( 'name' => 'Prénom ' . $item_num, 'icon' => 'mushroom_red' );
 				$icon_key   = isset( $def_item['icon'] ) && isset( $icons[ $def_item['icon'] ] ) ? $def_item['icon'] : 'mushroom_red';
@@ -1911,7 +2015,7 @@ class SceneGraphSchema {
 				$references[] = array(
 					'id'       => $vis_ref_id,
 					'type'     => 'VISIBILITY',
-					'name'     => 'Visibilité ' . $rep['item_label'] . ' ' . $item_num,
+					'name'     => 'Visibilité ' . $item_label . ' ' . $item_num,
 					'editable' => false,
 					'visible'  => $is_active,
 				);
@@ -1919,7 +2023,7 @@ class SceneGraphSchema {
 				$references[] = array(
 					'id'       => $group_ref_id,
 					'type'     => 'GROUP_REFS',
-					'name'     => $rep['item_label'] . ' ' . $item_num,
+					'name'     => $item_label . ' ' . $item_num,
 					'editable' => $is_active,
 					'items'    => array(
 						array(
@@ -1963,7 +2067,7 @@ class SceneGraphSchema {
 
 				$champ_group = array(
 					'type'       => 'GROUP',
-					'name'       => $rep['item_label'] . ' ' . $item_num,
+					'name'       => $item_label . ' ' . $item_num,
 					'side_id'    => $default_side_id,
 					'slotIndex'  => $i,
 					'rowIndex'   => $row_index,

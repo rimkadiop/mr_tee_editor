@@ -831,7 +831,7 @@ final class Plugin {
 		if ( ! empty( $data['side_exports'] ) && is_array( $data['side_exports'] ) ) {
 			$valid_sides = 0;
 			foreach ( $data['side_exports'] as $se ) {
-				if ( is_array( $se ) && ( ! empty( $se['print_url'] ) || ! empty( $se['svg_url'] ) ) ) {
+				if ( is_array( $se ) && ! empty( $se['print_url'] ) && ! empty( $se['svg_url'] ) ) {
 					$valid_sides++;
 				}
 			}
@@ -942,7 +942,13 @@ final class Plugin {
 
 		$paths         = \MrTeeEditor\Export\PrintAssetGenerator::get_upload_dir( 'designs/' . $design_key );
 		$raw_sides     = isset( $_POST['sides_json'] ) ? wp_unslash( $_POST['sides_json'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.NonceVerification.Missing
-		$decoded_sides = ! empty( $raw_sides ) ? json_decode( $raw_sides, true ) : null;
+		$decoded_sides = null;
+		if ( '' !== trim( (string) $raw_sides ) ) {
+			$decoded_sides = json_decode( $raw_sides, true );
+			if ( JSON_ERROR_NONE !== json_last_error() || ! is_array( $decoded_sides ) ) {
+				wp_send_json_error( array( 'message' => __( 'Payload sides_json invalide.', 'mr-tee-editor' ) ), 400 );
+			}
+		}
 		$side_exports  = array();
 
 		if ( is_array( $decoded_sides ) && ! empty( $decoded_sides ) ) {
@@ -1120,9 +1126,11 @@ final class Plugin {
 	 * Handle direct file upload for admin default image field (stores in WP Media Library).
 	 */
 	public function handle_admin_default_image_upload() {
-		check_ajax_referer( 'mr_tee_admin_nonce', 'nonce' );
+		if ( false === check_ajax_referer( 'mr_tee_admin_nonce', 'nonce', false ) ) {
+			wp_send_json_error( array( 'message' => __( 'Nonce de sécurité invalide ou expiré.', 'mr-tee-editor' ) ), 403 );
+		}
 
-		if ( ! current_user_can( 'upload_files' ) ) {
+		if ( ! current_user_can( 'upload_files' ) || ( ! current_user_can( 'edit_products' ) && ! current_user_can( 'manage_woocommerce' ) ) ) {
 			wp_send_json_error( array( 'message' => __( 'Permission refusée.', 'mr-tee-editor' ) ), 403 );
 		}
 
@@ -1136,6 +1144,11 @@ final class Plugin {
 		}
 
 		$file      = $_FILES['image_file']; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+		$max_bytes = 15 * 1024 * 1024; // 15 MB
+		if ( ! empty( $file['size'] ) && intval( $file['size'] ) > $max_bytes ) {
+			wp_send_json_error( array( 'message' => __( 'Image trop volumineuse (max 15 Mo).', 'mr-tee-editor' ) ), 400 );
+		}
+
 		$orig_name = ! empty( $file['name'] ) ? sanitize_file_name( wp_unslash( $file['name'] ) ) : '';
 		$ext       = strtolower( pathinfo( $orig_name, PATHINFO_EXTENSION ) );
 		$allowed   = array( 'jpg', 'jpeg', 'png', 'webp', 'gif' );
@@ -1158,7 +1171,7 @@ final class Plugin {
 			wp_send_json_error( array( 'message' => $attachment_id->get_error_message() ), 400 );
 		}
 
-		$url = wp_get_attachment_url( $attachment_id );
+		$url = SceneGraphSchema::normalize_url_scheme( wp_get_attachment_url( $attachment_id ) );
 		wp_send_json_success(
 			array(
 				'id'  => $attachment_id,
@@ -1187,7 +1200,11 @@ final class Plugin {
 			if ( $same_orig && ! empty( $parsed['path'] ) ) {
 				$resolved_src = $parsed['path'] . ( ! empty( $parsed['query'] ) ? '?' . $parsed['query'] : '' );
 			}
-			return sprintf( '<script type="module" src="%s" id="mr-tee-admin-order-export-js-js"></script>' . "\n", esc_url( $resolved_src ) );
+			// Preserve existing script tag attributes (e.g. CSP nonce) while adding type="module" and normalized src
+			$updated = preg_replace( '/\btype=(["\'])[^"\']*\1/i', '', $tag );
+			$updated = preg_replace( '/\bsrc=(["\'])[^"\']*\1/i', 'src="' . esc_url( $resolved_src ) . '"', $updated, 1 );
+			$updated = preg_replace( '/<script\b/i', '<script type="module"', $updated, 1 );
+			return $updated ?: sprintf( '<script type="module" src="%s" id="mr-tee-admin-order-export-js-js"></script>' . "\n", esc_url( $resolved_src ) );
 		}
 		return $tag;
 	}
@@ -1365,9 +1382,9 @@ final class Plugin {
 			true
 		);
 
-		// Preload ONLY active text line OpenType-SVG fonts (other allowed OpenType-SVG fonts are lazy-loaded when selected)
+		// Preload ONLY active text line OpenType-SVG fonts when Mr. Tee Editor is active
 		$preloaded_svg_fonts = array();
-		if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
+		if ( ! empty( $config['engine'] ) && 'mr_tee_editor' === $config['engine'] && ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
 			foreach ( $config['text_lines'] as $line ) {
 				if ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) {
 					continue;

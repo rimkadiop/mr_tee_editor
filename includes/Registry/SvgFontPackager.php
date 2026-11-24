@@ -235,7 +235,9 @@ class SvgFontPackager {
 			}
 		}
 
-		if ( self::is_dir_writable( $plugin_base ) ) {
+		// Custom uploaded fonts (stored inside uploads/) must always package into uploads/ so plugin updates never wipe them.
+		$is_custom_font_path = '' !== $font_path && 0 !== strpos( wp_normalize_path( $font_path ), wp_normalize_path( self::get_plugin_dir() ) );
+		if ( ! $is_custom_font_path && self::is_dir_writable( $plugin_base ) ) {
 			return $plugin_loc;
 		}
 

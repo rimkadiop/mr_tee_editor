@@ -13,11 +13,11 @@
 
 	const FIELD_COLORS = [
 		'#2563eb', // Blue
-		'#059669', // Emerald
+		'#047857', // Emerald (WCAG AA)
 		'#7c3aed', // Purple
-		'#d97706', // Amber
+		'#b45309', // Amber (WCAG AA)
 		'#db2777', // Rose
-		'#0891b2', // Cyan
+		'#0e7490', // Cyan (WCAG AA)
 		'#dc2626', // Red
 		'#4f46e5', // Indigo
 	];
@@ -54,6 +54,11 @@
 		}
 
 		init() {
+			this._bootstrapping = true;
+			this._history = [];
+			this._historyIdx = -1;
+			this._failedSvgFetches = new Set();
+
 			this.bindEngineSelector();
 			this.bindTabs();
 			this.bindFieldSwitcher();
@@ -70,9 +75,20 @@
 			this.bindMultiViewManager();
 			this.bindFontUploader();
 			this.bindProductAllowedFonts();
+			this.bindFontLibraryCatalog();
 			this.bindCustomFontDelete();
 			this.bindRepeaterToggle();
 			this.bindStagePreviewRefreshes();
+			this.bindDirtyTracking();
+			this.bindSubmitGuards();
+
+			// Keep the engine fieldset / compact state in sync with the (possibly browser-restored) radio.
+			const $checkedEngine = $('input[name="mr_tee_engine_mode"]:checked');
+			if ($checkedEngine.length) {
+				const isMrTee = $checkedEngine.val() === 'mr_tee_editor';
+				$('#mr-tee-settings-fieldset').prop('disabled', !isMrTee);
+				$('#mr-tee-engine-selector-box').toggleClass('is-compact', isMrTee);
+			}
 
 			// Sync initial color controls visibility & toolbar button state
 			const count = $('.mr-tee-field-panel').length;
@@ -81,6 +97,30 @@
 			}
 			this.updateFieldToolbarState();
 			this.renderExportSummary();
+			this.syncFontLibraryCards();
+			this.updateHistoryButtons();
+
+			// Establish the undo baseline after the first layout pass, then start tracking real edits.
+			setTimeout(() => {
+				this._bootstrapping = false;
+				this._history = [this.snapshotGeometry()];
+				this._historyIdx = 0;
+				this.updateHistoryButtons();
+			}, 400);
+		}
+
+		/**
+		 * Capture-phase `invalid` listener so keyboard-Enter submit never fails silently on a hidden tab.
+		 */
+		bindSubmitGuards() {
+			const self = this;
+			const form = document.getElementById('post');
+			if (!form) return;
+			form.addEventListener('invalid', function() {
+				if (typeof self.ensureMetaboxInputsValid === 'function') {
+					self.ensureMetaboxInputsValid();
+				}
+			}, true);
 		}
 
 		isSvgFont(fontDef) {
@@ -188,19 +228,6 @@
 			return this.allowedFonts;
 		}
 
-		getFirstTextFieldIndex() {
-			let firstText = 0;
-			const $panels = $('.mr-tee-field-panel');
-			if (!$panels.length) return 0;
-			for (let i = 0; i < $panels.length; i++) {
-				if (this.getFieldType(i) !== 'image') {
-					firstText = i;
-					break;
-				}
-			}
-			return firstText;
-		}
-
 		seedInitiallyLoadedTtfFonts() {
 			const initialIds = new Set();
 			if (Array.isArray(this.config.allowed_fonts)) {
@@ -219,7 +246,7 @@
 			initialIds.forEach(fid => this._loadedTtfFonts.add(fid));
 		}
 
-		ensureTtfFontLoaded(fontId) {
+		ensureTtfFontLoaded(fontId, opts = {}) {
 			if (!fontId || this._loadedTtfFonts.has(fontId)) return;
 			const fonts = (window.mrTeeAdminData && window.mrTeeAdminData.fonts) || {};
 			const fontDef = fonts[fontId];
@@ -234,8 +261,8 @@
 				document.head.appendChild(styleEl);
 			}
 
-			const fontUrl = this.toSameOriginPath(fontDef.url);
-			const format = fontDef.format || 'truetype';
+			const fontUrl = this.toSameOriginPath(fontDef.url).replace(/['"\\\n\r]/g, '');
+			const format = String(fontDef.format || 'truetype').replace(/['"\\\n\r]/g, '');
 			const families = [fontDef.family];
 			if (Array.isArray(fontDef.aliases)) {
 				fontDef.aliases.forEach(alias => {
@@ -246,25 +273,276 @@
 			let css = '';
 			families.forEach(fam => {
 				if (fam) {
-					css += `@font-face { font-family: '${fam}'; src: url('${fontUrl}') format('${format}'); font-weight: normal; font-style: normal; font-display: swap; }\n`;
+					const safeFam = String(fam).replace(/['"\\\n\r]/g, '');
+					css += `@font-face { font-family: '${safeFam}'; src: url('${fontUrl}') format('${format}'); font-weight: normal; font-style: normal; font-display: swap; }\n`;
 				}
 			});
 			styleEl.textContent += css;
 
-			if (document.fonts && typeof document.fonts.load === 'function' && fontDef.family) {
-				document.fonts.load(`16px "${fontDef.family}"`).then(() => {
+			if (!opts.skipLoad && document.fonts && typeof document.fonts.load === 'function' && fontDef.family) {
+				document.fonts.load(`16px "${String(fontDef.family).replace(/["\\]/g, '')}"`).then(() => {
+					document.querySelectorAll('.mr-tee-field-box').forEach(el => { el._glyphsKey = ''; });
 					this.renderAllBoxesPreviews();
 				}).catch(() => {});
 			}
 		}
 
+		/**
+		 * Lazily register @font-face rules for every TTF in the library so each "Aa" card
+		 * previews its real typeface (the browser only downloads faces actually painted).
+		 */
+		ensureAllLibraryTtfFontsLoaded() {
+			if (this._libraryFontsRegistered) return;
+			this._libraryFontsRegistered = true;
+			const fonts = (window.mrTeeAdminData && window.mrTeeAdminData.fonts) || {};
+			Object.keys(fonts).forEach(fid => this.ensureTtfFontLoaded(fid, { skipLoad: true }));
+		}
+
+		/* =====================================================================
+		 * Dirty indicator + geometry Undo / Redo history
+		 * ===================================================================== */
+
+		markDirty() {
+			if (this._bootstrapping || this._restoringHistory) return;
+			this._dirty = true;
+			const badge = document.getElementById('mr-tee-dirty-badge');
+			if (badge && badge.hasAttribute('hidden')) badge.removeAttribute('hidden');
+		}
+
+		clearDirty() {
+			this._dirty = false;
+			const badge = document.getElementById('mr-tee-dirty-badge');
+			if (badge) badge.setAttribute('hidden', '');
+		}
+
+		bindDirtyTracking() {
+			const self = this;
+			$(document).on('input change', '.mr-tee-admin-wrap input, .mr-tee-admin-wrap select, .mr-tee-admin-wrap textarea', function(e) {
+				const el = e.target;
+				if (!el || el.id === 'mr_tee_font_lib_search' || el.hasAttribute('data-no-dirty')) return;
+				if (el.type === 'file') return;
+				self.markDirty();
+			});
+			$('form#post').on('submit.mrTeeDirty', function() {
+				self.clearDirty();
+			});
+		}
+
+		snapshotGeometry() {
+			const count = $('.mr-tee-field-box').length;
+			const fields = [];
+			for (let i = 0; i < count; i++) {
+				fields.push(this.getFieldCurrentCoords(i));
+			}
+			return { viewId: this.activeViewId, fields };
+		}
+
+		sameSnapshot(a, b) {
+			return Boolean(a && b) && JSON.stringify(a) === JSON.stringify(b);
+		}
+
+		resetHistory() {
+			this._history = [];
+			this._historyIdx = -1;
+			if (this._histTimer) { clearTimeout(this._histTimer); this._histTimer = null; }
+			this.updateHistoryButtons();
+		}
+
+		ensureHistoryBase() {
+			if (!this._history || !this._history.length) {
+				this._history = [this.snapshotGeometry()];
+				this._historyIdx = 0;
+			}
+		}
+
+		scheduleHistoryCommit() {
+			if (this._restoringHistory || this._bootstrapping) return;
+			if (this._histTimer) clearTimeout(this._histTimer);
+			this._histTimer = setTimeout(() => {
+				this._histTimer = null;
+				this.commitHistory();
+			}, 180);
+		}
+
+		commitHistory() {
+			if (this._restoringHistory) return;
+			const snap = this.snapshotGeometry();
+			if (!this._history || !this._history.length) {
+				this._history = [snap];
+				this._historyIdx = 0;
+				this.updateHistoryButtons();
+				return;
+			}
+			const top = this._history[this._historyIdx];
+			if (this.sameSnapshot(top, snap)) return;
+			this._history = this._history.slice(0, this._historyIdx + 1);
+			this._history.push(snap);
+			if (this._history.length > 40) this._history.shift();
+			this._historyIdx = this._history.length - 1;
+			this.markDirty();
+			this.updateHistoryButtons();
+		}
+
+		updateHistoryButtons() {
+			const canUndo = Boolean(this._history) && this._historyIdx > 0;
+			const canRedo = Boolean(this._history) && this._historyIdx >= 0 && this._historyIdx < this._history.length - 1;
+			$('.mr-tee-canvas-tool-btn[data-action="undo"]').prop('disabled', !canUndo);
+			$('.mr-tee-canvas-tool-btn[data-action="redo"]').prop('disabled', !canRedo);
+		}
+
+		restoreSnapshot(snap) {
+			if (!snap || snap.viewId !== this.activeViewId) return false;
+			const count = $('.mr-tee-field-box').length;
+			if (snap.fields.length !== count) return false;
+			this._restoringHistory = true;
+			try {
+				for (let i = 0; i < count; i++) {
+					this.applyFieldCoordsToDom(i, snap.fields[i]);
+					this.saveFieldPlacementForActiveView(i);
+				}
+				this.recalculateDimensions();
+				this._cachedStageRatio = 0;
+				this.renderAllBoxesPreviews();
+			} finally {
+				this._restoringHistory = false;
+			}
+			this.markDirty();
+			return true;
+		}
+
+		undo() {
+			if (this._histTimer) { clearTimeout(this._histTimer); this._histTimer = null; this.commitHistory(); }
+			if (!this._history || this._historyIdx <= 0) return;
+			if (this.restoreSnapshot(this._history[this._historyIdx - 1])) {
+				this._historyIdx--;
+			}
+			this.updateHistoryButtons();
+		}
+
+		redo() {
+			if (!this._history || this._historyIdx < 0 || this._historyIdx >= this._history.length - 1) return;
+			if (this.restoreSnapshot(this._history[this._historyIdx + 1])) {
+				this._historyIdx++;
+			}
+			this.updateHistoryButtons();
+		}
+
+		/* ---- Live transform feedback (snap guides + HUD chip) ---- */
+
+		showSnapGuides(showV, showH) {
+			const v = document.getElementById('mr-tee-snap-guide-v');
+			const h = document.getElementById('mr-tee-snap-guide-h');
+			if (v) v.classList.toggle('is-visible', Boolean(showV));
+			if (h) h.classList.toggle('is-visible', Boolean(showH));
+		}
+
+		showTransformHud(text) {
+			const hud = document.getElementById('mr-tee-transform-hud');
+			if (!hud) return;
+			hud.textContent = text;
+			hud.classList.add('is-visible');
+		}
+
+		hideTransformUi() {
+			this.showSnapGuides(false, false);
+			const hud = document.getElementById('mr-tee-transform-hud');
+			if (hud) hud.classList.remove('is-visible');
+		}
+
+		/**
+		 * Library catalog (Tab 2): search + type filters + card activation state.
+		 */
+		syncFontLibraryCards() {
+			const allowed = new Set(this.allowedFonts || []);
+			document.querySelectorAll('#mr-tee-fonts-library-grid .mr-tee-font-lib-card').forEach(card => {
+				const on = allowed.has(card.getAttribute('data-font-id'));
+				card.classList.toggle('is-allowed', on);
+				card.setAttribute('data-is-allowed', on ? '1' : '0');
+				const btn = card.querySelector('.mr-tee-font-lib-toggle');
+				if (btn) btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+				const st = card.querySelector('.mr-tee-font-lib-state');
+				if (st) st.textContent = on ? '✓ Active' : '+ Activer';
+			});
+			this.applyFontLibraryFilter();
+		}
+
+		applyFontLibraryFilter() {
+			const cards = document.querySelectorAll('#mr-tee-fonts-library-grid .mr-tee-font-lib-card');
+			if (!cards.length) return;
+			const searchEl = document.getElementById('mr_tee_font_lib_search');
+			const q = searchEl ? String(searchEl.value || '').trim().toLowerCase() : '';
+			const activePill = document.querySelector('.mr-tee-filter-pill.is-active');
+			const filter = activePill ? (activePill.getAttribute('data-filter') || 'all') : 'all';
+			let visible = 0;
+			cards.forEach(card => {
+				const hay = card.getAttribute('data-search') || '';
+				let show = !q || hay.indexOf(q) !== -1;
+				if (show) {
+					if (filter === 'svg') show = card.getAttribute('data-font-type') === 'svg';
+					else if (filter === 'ttf') show = card.getAttribute('data-font-type') === 'ttf';
+					else if (filter === 'active') show = card.getAttribute('data-is-allowed') === '1';
+					else if (filter === 'custom') show = card.getAttribute('data-is-custom') === '1';
+				}
+				card.style.display = show ? '' : 'none';
+				if (show) visible++;
+			});
+			const countEl = document.getElementById('mr-tee-library-visible-count');
+			if (countEl) countEl.textContent = String(visible);
+			const emptyEl = document.getElementById('mr-tee-library-empty');
+			if (emptyEl) emptyEl.hidden = visible > 0;
+		}
+
+		bindFontLibraryCatalog() {
+			const self = this;
+			$(document).on('input', '#mr_tee_font_lib_search', function() {
+				self.applyFontLibraryFilter();
+			});
+			$(document).on('click', '.mr-tee-filter-pill', function(e) {
+				e.preventDefault();
+				$('.mr-tee-filter-pill').removeClass('is-active').attr('aria-pressed', 'false');
+				$(this).addClass('is-active').attr('aria-pressed', 'true');
+				self.applyFontLibraryFilter();
+			});
+			$(document).on('click', '.mr-tee-font-lib-toggle', function(e) {
+				e.preventDefault();
+				const id = $(this).attr('data-font-id');
+				if (!id) return;
+				if (self.allowedFonts.includes(id)) {
+					if (self.allowedFonts.length <= 1) {
+						const $card = $(this).closest('.mr-tee-font-lib-card');
+						$card.addClass('is-shaking');
+						setTimeout(() => $card.removeClass('is-shaking'), 450);
+						return;
+					}
+					self.allowedFonts = self.allowedFonts.filter(x => x !== id);
+				} else {
+					self.allowedFonts.push(id);
+					self.ensureTtfFontLoaded(id);
+				}
+				if (typeof self.renderAllowedFontsList === 'function') {
+					self.renderAllowedFontsList();
+				}
+			});
+		}
+
 		bindStagePreviewRefreshes() {
 			const self = this;
-			$('#mr-tee-stage-garment-img').on('load', function() {
-				self._cachedStageRatio = 0;
-				self.recalculateDimensions();
-				self.renderAllBoxesPreviews();
-			});
+			$('#mr-tee-stage-garment-img')
+				.on('load', function() {
+					self._cachedStageRatio = 0;
+					self.recalculateDimensions();
+					self.renderAllBoxesPreviews();
+				})
+				.on('error', function() {
+					const src = $(this).attr('src');
+					if (src && src.trim() !== '') {
+						$(this).hide();
+						$('#mr-tee-stage-empty-overlay').show();
+						if (self.$canvasWrap.length) {
+							self.$canvasWrap.addClass('is-no-image');
+						}
+					}
+				});
 
 			let resizeTimer = null;
 			$(window).on('resize.mrTeeAdmin', function() {
@@ -288,6 +566,7 @@
 						prevH = h;
 						self._cachedStageRatio = w / h;
 						self.renderAllBoxesPreviews();
+						self.updateFieldToolbarState();
 					}
 				});
 				ro.observe(this.$canvasWrap[0]);
@@ -311,10 +590,12 @@
 					$('#mr-tee-settings-panel').slideDown(180, function() {
 						self._cachedStageRatio = 0;
 						self.renderAllBoxesPreviews();
+						self.updateFieldToolbarState();
 					});
 				} else {
 					$('#mr-tee-settings-panel').slideUp(180);
 				}
+				self.markDirty();
 			});
 		}
 
@@ -335,10 +616,33 @@
 				if (tabId === 'tab-stage') {
 					self._cachedStageRatio = 0;
 					self.renderAllBoxesPreviews();
+					self.updateFieldToolbarState();
 				} else if (tabId === 'tab-export') {
 					self.renderExportSummary();
+				} else if (tabId === 'tab-fonts') {
+					self.ensureAllLibraryTtfFontsLoaded();
 				}
 			};
+			self.switchTab = switchTab;
+
+			$(document).on('click', '.mr-tee-btn-edit-side-dims', function(e) {
+				e.preventDefault();
+				const sideId = $(this).attr('data-side-id');
+				switchTab('tab-stage');
+				const view = sideId ? self.getPrimaryViewForSide(sideId, true) : null;
+				if (view && typeof self.setActiveView === 'function') {
+					self.setActiveView(view.id);
+				}
+				const $drawer = $('#mr-tee-dimension-toolbar');
+				if (!$drawer.is(':visible')) {
+					$('#mr-tee-toggle-dim-drawer').addClass('is-open').attr('aria-expanded', 'true');
+					$drawer.slideDown(150);
+				}
+				const drawerEl = $drawer[0];
+				if (drawerEl && typeof drawerEl.scrollIntoView === 'function') {
+					drawerEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+				}
+			});
 
 			$('.mr-tee-tab-btn').on('click', function() {
 				switchTab($(this).data('tab'));
@@ -369,9 +673,22 @@
 		 * Advanced Module (2-Row Avatar Repeater) Visibility Toggle in Tab 3.
 		 */
 		bindRepeaterToggle() {
+			const self = this;
 			$(document).on('change', '#mr_tee_repeater_enabled', function() {
 				const enabled = $(this).is(':checked');
+				if (enabled) {
+					const $max = $('#mr_tee_rep_max_items');
+					const $def = $('#mr_tee_rep_default_count');
+					if ($max.length && (parseInt($max.val(), 10) || 0) === 0) {
+						$max.val(6);
+						if ($def.length && (parseInt($def.val(), 10) || 0) === 0) {
+							$def.val(2);
+						}
+					}
+				}
 				$('#mr-tee-repeater-body').stop(true, true)[enabled ? 'slideDown' : 'slideUp'](150);
+				self.recalculateDimensions();
+				self.renderExportSummary();
 			});
 		}
 
@@ -417,7 +734,7 @@
 		hasActiveVisibleField() {
 			if (this.activeFieldIndex < 0) return false;
 			const $box = $(`#mr-tee-field-box-${this.activeFieldIndex}`);
-			return Boolean($box.length && !$box.hasClass('is-other-side') && $box.is(':visible'));
+			return Boolean($box.length && !$box.hasClass('is-other-side') && $box.css('display') !== 'none');
 		}
 
 		updateFieldToolbarState() {
@@ -427,7 +744,8 @@
 
 			$('#mr-tee-btn-field-move-left').prop('disabled', total <= 1 || idx <= 0);
 			$('#mr-tee-btn-field-move-right').prop('disabled', total <= 1 || idx < 0 || idx >= total - 1);
-			$('.mr-tee-canvas-tool-btn').prop('disabled', !hasVisible);
+			$('.mr-tee-canvas-tool-btn').not('[data-action="undo"], [data-action="redo"]').prop('disabled', !hasVisible);
+			this.updateHistoryButtons();
 		}
 
 		/**
@@ -476,8 +794,13 @@
 				let didMove = false;
 				let latestLeft = startLeft;
 				let latestTop = startTop;
+				let pendingAlt = false;
+				$(document).off('.mrTeeDrag');
+				self.ensureHistoryBase();
 				boxEl.classList.add('is-interacting');
+				try { self.$canvasWrap[0].focus({ preventScroll: true }); } catch (focusErr) { /* noop */ }
 
+				const SNAP_PCT = 1.2;
 				const applyDragDelta = (clientX, clientY) => {
 					if (Math.abs(clientX - startX) > 1 || Math.abs(clientY - startY) > 1) {
 						didMove = true;
@@ -485,8 +808,23 @@
 					const dx = ((clientX - startX) / wrapRect.width) * 100;
 					const dy = ((clientY - startY) / wrapRect.height) * 100;
 
-					const newLeft = self.round1(Math.max(0, Math.min(100 - curW, startLeft + dx)));
-					const newTop = self.round1(Math.max(0, Math.min(100 - curH, startTop + dy)));
+					let newLeft = Math.max(0, Math.min(100 - curW, startLeft + dx));
+					let newTop = Math.max(0, Math.min(100 - curH, startTop + dy));
+
+					let snapV = false;
+					let snapH = false;
+					if (!pendingAlt) {
+						if (Math.abs((newLeft + curW / 2) - 50) <= SNAP_PCT) {
+							newLeft = Math.max(0, Math.min(100 - curW, 50 - curW / 2));
+							snapV = true;
+						}
+						if (Math.abs((newTop + curH / 2) - 50) <= SNAP_PCT) {
+							newTop = Math.max(0, Math.min(100 - curH, 50 - curH / 2));
+							snapH = true;
+						}
+					}
+					newLeft = self.round1(newLeft);
+					newTop = self.round1(newTop);
 
 					latestLeft = newLeft;
 					latestTop = newTop;
@@ -498,7 +836,26 @@
 					if (leftInput) leftInput.value = newLeft;
 					if (topInput) topInput.value = newTop;
 					self.syncBoxBadgePosition(currentIdx, newTop, curH);
+					self.showSnapGuides(snapV, snapH);
+					if (didMove) self.showTransformHud(`X : ${newLeft.toFixed(1)}%  ·  Y : ${newTop.toFixed(1)}%`);
 				};
+
+				const cancelDrag = () => {
+					if (!isDragging) return;
+					isDragging = false;
+					if (dragRaf) { cancelAnimationFrame(dragRaf); dragRaf = null; }
+					$(document).off('.mrTeeDrag');
+					self._cancelTransform = null;
+					boxEl.classList.remove('is-interacting');
+					boxEl.style.left = `${startLeft}%`;
+					boxEl.style.top = `${startTop}%`;
+					boxEl.style.transform = `rotate(${startRotDeg}deg)`;
+					if (leftInput) leftInput.value = startLeft;
+					if (topInput) topInput.value = startTop;
+					self.syncBoxBadgePosition(currentIdx, startTop, curH);
+					self.hideTransformUi();
+				};
+				self._cancelTransform = cancelDrag;
 
 				let dragRaf = null;
 				let pendingX = startX;
@@ -509,6 +866,7 @@
 					if (pointerId !== undefined && moveEvent.pointerId !== undefined && moveEvent.pointerId !== pointerId) return;
 					pendingX = moveEvent.clientX;
 					pendingY = moveEvent.clientY;
+					pendingAlt = Boolean(moveEvent.altKey);
 					if (dragRaf) return;
 					dragRaf = requestAnimationFrame(() => {
 						dragRaf = null;
@@ -520,7 +878,12 @@
 				$(document).on('pointerup.mrTeeDrag pointercancel.mrTeeDrag', function(upEvent) {
 					if (!isDragging) return;
 					if (pointerId !== undefined && upEvent.pointerId !== undefined && upEvent.pointerId !== pointerId) return;
+					if (upEvent.type === 'pointercancel') {
+						cancelDrag();
+						return;
+					}
 					isDragging = false;
+					self._cancelTransform = null;
 					if (dragRaf) {
 						cancelAnimationFrame(dragRaf);
 						dragRaf = null;
@@ -530,6 +893,7 @@
 						);
 					}
 					$(document).off('.mrTeeDrag');
+					self.hideTransformUi();
 
 					boxEl.classList.remove('is-interacting');
 					boxEl.style.left = `${latestLeft}%`;
@@ -541,6 +905,7 @@
 
 					if (didMove) {
 						self.saveFieldPlacementForActiveView(currentIdx);
+						self.commitHistory();
 						self.recalculateDimensions();
 					}
 				});
@@ -590,14 +955,20 @@
 				const startHPx = (startHeight / 100) * wrapRect.height;
 				const startCxPx = ((startLeft + startWidth / 2) / 100) * wrapRect.width;
 				const startCyPx = ((startTop + startHeight / 2) / 100) * wrapRect.height;
-				const minWPx = 0.05 * wrapRect.width;
-				const minHPx = 0.03 * wrapRect.height;
+				const minWPx = 0.02 * wrapRect.width;
+				const minHPx = 0.02 * wrapRect.height;
 
 				let isResizing = true;
 				let latestW = startWidth;
 				let latestH = startHeight;
+				$(document).off('.mrTeeResize');
+				self.ensureHistoryBase();
 				boxEl.classList.add('is-interacting');
+				try { self.$canvasWrap[0].focus({ preventScroll: true }); } catch (focusErr) { /* noop */ }
 
+				const MIN_PCT = 2;
+				let lastValid = { l: startLeft, t: startTop, w: startWidth, h: startHeight };
+				let didResize = false;
 				const applyResizeDelta = (clientX, clientY) => {
 					const dxPx = clientX - startX;
 					const dyPx = clientY - startY;
@@ -614,18 +985,18 @@
 						const bottomEdge = startTop + startHeight;
 
 						if (currentHandle.includes('e')) {
-							newW = Math.max(5, Math.min(100 - startLeft, startWidth + dx));
+							newW = Math.max(MIN_PCT, Math.min(100 - startLeft, startWidth + dx));
 						}
 						if (currentHandle.includes('s')) {
-							newH = Math.max(3, Math.min(100 - startTop, startHeight + dy));
+							newH = Math.max(MIN_PCT, Math.min(100 - startTop, startHeight + dy));
 						}
 						if (currentHandle.includes('w')) {
-							newL = Math.max(0, Math.min(Math.max(0, rightEdge - 5), startLeft + dx));
-							newW = Math.max(5, rightEdge - newL);
+							newL = Math.max(0, Math.min(Math.max(0, rightEdge - MIN_PCT), startLeft + dx));
+							newW = Math.max(MIN_PCT, rightEdge - newL);
 						}
 						if (currentHandle.includes('n')) {
-							newT = Math.max(0, Math.min(Math.max(0, bottomEdge - 3), startTop + dy));
-							newH = Math.max(3, bottomEdge - newT);
+							newT = Math.max(0, Math.min(Math.max(0, bottomEdge - MIN_PCT), startTop + dy));
+							newH = Math.max(MIN_PCT, bottomEdge - newT);
 						}
 					} else {
 						// Transform screen pixel delta into local unrotated box axes by -rotRad
@@ -664,10 +1035,17 @@
 						newL = ((nextCxPx - nextWPx / 2) / wrapRect.width) * 100;
 						newT = ((nextCyPx - nextHPx / 2) / wrapRect.height) * 100;
 
-						newW = Math.max(5, Math.min(100, newW));
-						newH = Math.max(3, Math.min(100, newH));
-						newL = Math.max(0, Math.min(100 - newW, newL));
-						newT = Math.max(0, Math.min(100 - newH, newT));
+						newW = Math.max(MIN_PCT, Math.min(100, newW));
+						newH = Math.max(MIN_PCT, Math.min(100, newH));
+						// Out of the platen: keep the last valid geometry so the anchored edge never drifts.
+						if (newL < -0.05 || newT < -0.05 || (newL + newW) > 100.05 || (newT + newH) > 100.05) {
+							if (lastValid) {
+								newL = lastValid.l; newT = lastValid.t; newW = lastValid.w; newH = lastValid.h;
+							} else {
+								newL = Math.max(0, Math.min(100 - newW, newL));
+								newT = Math.max(0, Math.min(100 - newH, newT));
+							}
+						}
 					}
 
 					newW = self.round1(newW);
@@ -675,8 +1053,11 @@
 					newL = self.round1(newL);
 					newT = self.round1(newT);
 
-					if (newL + newW > 100) newW = Math.max(5, self.round1(100 - newL));
-					if (newT + newH > 100) newH = Math.max(3, self.round1(100 - newT));
+					if (newL + newW > 100) newW = Math.max(MIN_PCT, self.round1(100 - newL));
+					if (newT + newH > 100) newH = Math.max(MIN_PCT, self.round1(100 - newT));
+					lastValid = { l: newL, t: newT, w: newW, h: newH };
+					didResize = true;
+					self.showTransformHud(`${newW.toFixed(1)} × ${newH.toFixed(1)}%`);
 
 					latestW = newW;
 					latestH = newH;
@@ -713,10 +1094,37 @@
 					});
 				});
 
+				const cancelResize = () => {
+					if (!isResizing) return;
+					isResizing = false;
+					if (resizeRaf) { cancelAnimationFrame(resizeRaf); resizeRaf = null; }
+					$(document).off('.mrTeeResize');
+					self._cancelTransform = null;
+					boxEl.classList.remove('is-interacting');
+					boxEl.style.left = `${startLeft}%`;
+					boxEl.style.top = `${startTop}%`;
+					boxEl.style.width = `${startWidth}%`;
+					boxEl.style.height = `${startHeight}%`;
+					if (leftInput) leftInput.value = startLeft;
+					if (topInput) topInput.value = startTop;
+					if (widthInput) widthInput.value = startWidth;
+					if (heightInput) heightInput.value = startHeight;
+					if (pillDimsEl) pillDimsEl.textContent = `${startWidth}×${startHeight}%${rotTxt}`;
+					self.syncBoxBadgePosition(currentIdx, startTop, startHeight);
+					self.renderBoxPreview(currentIdx, { bw: startWidth, bh: startHeight, stageRatio });
+					self.hideTransformUi();
+				};
+				self._cancelTransform = cancelResize;
+
 				$(document).on('pointerup.mrTeeResize pointercancel.mrTeeResize', function(upEvent) {
 					if (!isResizing) return;
 					if (pointerId !== undefined && upEvent.pointerId !== undefined && upEvent.pointerId !== pointerId) return;
+					if (upEvent.type === 'pointercancel') {
+						cancelResize();
+						return;
+					}
 					isResizing = false;
+					self._cancelTransform = null;
 					if (resizeRaf) {
 						cancelAnimationFrame(resizeRaf);
 						resizeRaf = null;
@@ -726,11 +1134,15 @@
 						);
 					}
 					$(document).off('.mrTeeResize');
+					self.hideTransformUi();
 
 					boxEl.classList.remove('is-interacting');
-					self.saveFieldPlacementForActiveView(currentIdx);
-					self.renderBoxPreview(currentIdx, { bw: latestW, bh: latestH, stageRatio });
-					self.recalculateDimensions();
+					if (didResize) {
+						self.saveFieldPlacementForActiveView(currentIdx);
+						self.commitHistory();
+						self.renderBoxPreview(currentIdx, { bw: latestW, bh: latestH, stageRatio });
+						self.recalculateDimensions();
+					}
 				});
 			});
 
@@ -747,8 +1159,11 @@
 
 				const currentIdx = parseInt(boxEl.getAttribute('data-field-index'), 10);
 				const pointerId = e.pointerId;
+				$(document).off('.mrTeeRot');
+				self.ensureHistoryBase();
 				$handle.addClass('is-rotating');
 				boxEl.classList.add('is-interacting');
+				try { self.$canvasWrap[0].focus({ preventScroll: true }); } catch (focusErr) { /* noop */ }
 
 				const rotInput = document.getElementById(`mr_tee_field_rotate_${currentIdx}`);
 				const widthInput = document.getElementById(`mr_tee_field_width_${currentIdx}`);
@@ -756,10 +1171,22 @@
 				const pillDimsEl = document.querySelector(`.mr-tee-field-pill[data-field-index="${currentIdx}"] .mr-tee-pill-dims`);
 				const curW = widthInput ? (parseFloat(widthInput.value) || 40.0) : 40.0;
 				const curH = heightInput ? (parseFloat(heightInput.value) || 8.5) : 8.5;
+				const startRot = rotInput ? (parseFloat(rotInput.value) || 0) : 0;
+				let didRotate = false;
 
 				const boxRect = boxEl.getBoundingClientRect();
 				const centerX = (boxRect.left + boxRect.right) / 2;
 				const centerY = (boxRect.top + boxRect.bottom) / 2;
+
+				const paintRotation = (deg) => {
+					if (rotInput) rotInput.value = deg;
+					boxEl.style.transform = `rotate(${deg}deg)`;
+					boxEl.style.transformOrigin = 'center center';
+					if (pillDimsEl) {
+						const rotTxt = deg !== 0 ? ` (${deg}°)` : '';
+						pillDimsEl.textContent = `${curW}×${curH}%${rotTxt}`;
+					}
+				};
 
 				const applyRotateDelta = (clientX, clientY) => {
 					const dx = clientX - centerX;
@@ -779,19 +1206,28 @@
 					}
 
 					deg = Math.round(deg);
-					if (rotInput) rotInput.value = deg;
-					boxEl.style.transform = `rotate(${deg}deg)`;
-					boxEl.style.transformOrigin = 'center center';
-					if (pillDimsEl) {
-						const rotTxt = deg !== 0 ? ` (${deg}°)` : '';
-						pillDimsEl.textContent = `${curW}×${curH}%${rotTxt}`;
-					}
+					didRotate = true;
+					paintRotation(deg);
+					self.showTransformHud(`${deg}°`);
 				};
 
 				let rotRaf = null;
 				let pendingX = e.clientX;
 				let pendingY = e.clientY;
 				let isRotating = true;
+
+				const cancelRotate = () => {
+					if (!isRotating) return;
+					isRotating = false;
+					if (rotRaf) { cancelAnimationFrame(rotRaf); rotRaf = null; }
+					$(document).off('.mrTeeRot');
+					self._cancelTransform = null;
+					$handle.removeClass('is-rotating');
+					boxEl.classList.remove('is-interacting');
+					paintRotation(startRot);
+					self.hideTransformUi();
+				};
+				self._cancelTransform = cancelRotate;
 
 				$(document).on('pointermove.mrTeeRot', function(moveEvent) {
 					if (!isRotating) return;
@@ -809,7 +1245,12 @@
 				$(document).on('pointerup.mrTeeRot pointercancel.mrTeeRot', function(upEvent) {
 					if (!isRotating) return;
 					if (pointerId !== undefined && upEvent.pointerId !== undefined && upEvent.pointerId !== pointerId) return;
+					if (upEvent.type === 'pointercancel') {
+						cancelRotate();
+						return;
+					}
 					isRotating = false;
+					self._cancelTransform = null;
 					if (rotRaf) {
 						cancelAnimationFrame(rotRaf);
 						rotRaf = null;
@@ -821,9 +1262,13 @@
 					$handle.removeClass('is-rotating');
 					boxEl.classList.remove('is-interacting');
 					$(document).off('.mrTeeRot');
+					self.hideTransformUi();
 
-					self.saveFieldPlacementForActiveView(currentIdx);
-					self.recalculateDimensions();
+					if (didRotate) {
+						self.saveFieldPlacementForActiveView(currentIdx);
+						self.commitHistory();
+						self.recalculateDimensions();
+					}
 				});
 			});
 		}
@@ -833,18 +1278,38 @@
 		 */
 		bindKeyboardNudge() {
 			const self = this;
-			$(document).on('keydown.mrTeeAdmin', function(e) {
-				if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
-				if (!$('#tab-stage').hasClass('is-active') || !$('#mr-tee-settings-panel').is(':visible')) return;
-				if (!self.hasActiveVisibleField()) return;
+			const isTypingTarget = (el) => {
+				if (!el) return false;
+				const tag = (el.tagName || '').toUpperCase();
+				return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || Boolean(el.isContentEditable);
+			};
 
-				const activeEl = document.activeElement;
-				if (activeEl) {
-					const tag = (activeEl.tagName || '').toUpperCase();
-					if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || activeEl.isContentEditable) {
-						return;
-					}
+			$(document).on('keydown.mrTeeAdmin', function(e) {
+				// Escape aborts an in-progress drag / resize / rotate.
+				if (e.key === 'Escape' && typeof self._cancelTransform === 'function') {
+					e.preventDefault();
+					self._cancelTransform();
+					return;
 				}
+
+				if (!$('#tab-stage').hasClass('is-active') || !$('#mr-tee-settings-panel').is(':visible')) return;
+				if ($('.media-modal:visible').length) return;
+				const activeEl = document.activeElement;
+				if (isTypingTarget(activeEl)) return;
+
+				// Undo / Redo (Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z, Ctrl+Y)
+				if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+					const k = String(e.key || '').toLowerCase();
+					if (k === 'z' && !e.shiftKey) { e.preventDefault(); self.undo(); return; }
+					if ((k === 'z' && e.shiftKey) || k === 'y') { e.preventDefault(); self.redo(); return; }
+					return;
+				}
+
+				if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+				if (e.altKey || e.ctrlKey || e.metaKey) return;
+				// Only nudge while the stage itself (or a box inside it) owns the focus — never hijack page scroll.
+				if (!activeEl || !$(activeEl).closest('#mr-tee-stage-canvas-wrap').length) return;
+				if (!self.hasActiveVisibleField()) return;
 
 				e.preventDefault();
 				const idx = self.activeFieldIndex;
@@ -863,6 +1328,7 @@
 
 				nextL = self.round1(Math.max(0, Math.min(100 - curW, nextL)));
 				nextT = self.round1(Math.max(0, Math.min(100 - curH, nextT)));
+				self.ensureHistoryBase();
 				self.updateBoxPosition(idx, nextL, nextT);
 			});
 		}
@@ -874,9 +1340,12 @@
 			const self = this;
 			$(document).on('click', '.mr-tee-canvas-tool-btn', function(e) {
 				e.preventDefault();
-				if (!self.hasActiveVisibleField()) return;
-				const idx = self.activeFieldIndex;
 				const action = $(this).data('action');
+				if (action === 'undo') { self.undo(); return; }
+				if (action === 'redo') { self.redo(); return; }
+				if (!self.hasActiveVisibleField()) return;
+				self.ensureHistoryBase();
+				const idx = self.activeFieldIndex;
 
 				const curL = parseFloat($(`#mr_tee_field_left_${idx}`).val()) || 0;
 				const curT = parseFloat($(`#mr_tee_field_top_${idx}`).val()) || 0;
@@ -1019,7 +1488,12 @@
 				self.syncBoxBadgePosition(idx, clamped.t, clamped.h);
 
 				$(`.mr-tee-field-pill[data-field-index="${idx}"] .mr-tee-pill-dims`).text(`${clamped.w}×${clamped.h}%${rotTxt}`);
-				self.saveFieldPlacementForActiveView(idx);
+				const rawMatchesClamped = Number.isFinite(rawL) && Number.isFinite(rawT) && Number.isFinite(rawW) && Number.isFinite(rawH)
+					&& rawL === clamped.l && rawT === clamped.t && rawW === clamped.w && rawH === clamped.h;
+				if (e.type === 'change' || rawMatchesClamped) {
+					self.ensureHistoryBase();
+					self.saveFieldPlacementForActiveView(idx);
+				}
 				self.renderBoxPreview(idx, { bw: clamped.w, bh: clamped.h });
 				self.recalculateDimensions();
 			});
@@ -1077,10 +1551,11 @@
 
 				// Give image fields a practical initial height, clamping curTop cleanly when curTop > 85
 				if (isImage) {
-					const curL = parseFloat($(`#mr_tee_field_left_${idx}`).val()) || 30.0;
-					const curTop = parseFloat($(`#mr_tee_field_top_${idx}`).val()) || 25.0;
-					const curW = parseFloat($(`#mr_tee_field_width_${idx}`).val()) || 35.0;
-					const curH = parseFloat($(`#mr_tee_field_height_${idx}`).val()) || 8.5;
+					const numOr = (sel, fb) => { const n = parseFloat($(sel).val()); return Number.isFinite(n) ? n : fb; };
+					const curL = numOr(`#mr_tee_field_left_${idx}`, 30.0);
+					const curTop = numOr(`#mr_tee_field_top_${idx}`, 25.0);
+					const curW = numOr(`#mr_tee_field_width_${idx}`, 35.0);
+					const curH = numOr(`#mr_tee_field_height_${idx}`, 8.5);
 					if (curH < 15.0) {
 						const nextH = self.round1(Math.min(30.0, Math.max(15.0, curH)));
 						const nextTop = self.round1(Math.max(0, Math.min(curTop, 100 - nextH)));
@@ -1137,10 +1612,13 @@
 					const att = frame.state().get('selection').first().toJSON();
 					const url = (att && att.url) ? att.url : '';
 					const attId = (att && att.id) ? att.id : 0;
+					const liveIdx = parseInt($panel.attr('data-field-index'), 10);
+					if (Number.isNaN(liveIdx) || !document.contains($panel[0])) return;
 					$panel.find('.mr-tee-field-default-image-id').val(attId);
 					$panel.find('.mr-tee-field-default-image-input').val(url);
-					self.syncDefaultImagePreviewUi(idx, url);
-					self.renderBoxPreview(idx);
+					self.syncDefaultImagePreviewUi(liveIdx, url);
+					self.renderBoxPreview(liveIdx);
+					self.markDirty();
 				});
 				frame.open();
 			});
@@ -1153,7 +1631,7 @@
 				const idx = getFieldIdx($(this));
 				const $panel = $(`#mr-tee-field-panel-${idx}`);
 				const $status = $panel.find('.mr-tee-img-upload-status');
-				$status.text('⏳ Envoi de l\'image...').css('color', '#2563eb');
+				$status.text('⏳ Envoi de l\'image...').removeClass('is-success is-error is-muted').addClass('is-info');
 
 				const formData = new FormData();
 				formData.append('action', 'mr_tee_upload_default_image');
@@ -1170,20 +1648,23 @@
 					contentType: false,
 					success: function(resp) {
 						inputEl.value = '';
-						if (resp && resp.success && resp.data && resp.data.url) {
+						if (!document.contains($panel[0])) return;
+						const liveIdx = parseInt($panel.attr('data-field-index'), 10);
+						if (resp && resp.success && resp.data && resp.data.url && !Number.isNaN(liveIdx)) {
 							$panel.find('.mr-tee-field-default-image-id').val(resp.data.id || 0);
 							$panel.find('.mr-tee-field-default-image-input').val(resp.data.url);
-							self.syncDefaultImagePreviewUi(idx, resp.data.url);
-							self.renderBoxPreview(idx);
-							$status.text('✅ Image définie !').css('color', '#059669');
+							self.syncDefaultImagePreviewUi(liveIdx, resp.data.url);
+							self.renderBoxPreview(liveIdx);
+							self.markDirty();
+							$status.text('✅ Image définie !').removeClass('is-info is-error is-muted').addClass('is-success');
 						} else {
 							const msg = (resp && resp.data && resp.data.message) ? resp.data.message : 'Erreur lors de l\'import.';
-							$status.text(`❌ ${msg}`).css('color', '#dc2626');
+							$status.text(`❌ ${msg}`).removeClass('is-info is-success is-muted').addClass('is-error');
 						}
 					},
 					error: function(xhr, status, err) {
 						inputEl.value = '';
-						$status.text(`❌ Erreur réseau : ${err}`).css('color', '#dc2626');
+						$status.text(`❌ Erreur réseau : ${err}`).removeClass('is-info is-success is-muted').addClass('is-error');
 					}
 				});
 			});
@@ -1224,8 +1705,10 @@
 				if (!$field.length) return;
 
 				const currentVal = $field.val() || '';
+				const fieldDomId = `mr_tee_field_text_${idx}`;
 				if (isMulti && !$field.is('textarea')) {
 					const $ta = $('<textarea rows="2" class="regular-text mr-tee-field-text-input"></textarea>')
+						.attr('id', fieldDomId)
 						.attr('name', $field.attr('name'))
 						.attr('data-field-index', idx)
 						.val(currentVal);
@@ -1233,6 +1716,7 @@
 				} else if (!isMulti && $field.is('textarea')) {
 					const singleVal = currentVal.replace(/\r?\n/g, ' ');
 					const $inp = $('<input type="text" class="regular-text mr-tee-field-text-input" />')
+						.attr('id', fieldDomId)
 						.attr('name', $field.attr('name'))
 						.attr('data-field-index', idx)
 						.val(singleVal);
@@ -1380,8 +1864,10 @@
 				}
 				const maxTop = isImage ? Math.max(5.0, 96.0 - newHeight) : 88.0;
 				if (lastSameSideIdx >= 0) {
-					const prevTop = parseFloat($(`#mr_tee_field_top_${lastSameSideIdx}`).val()) || 25.0;
-					const prevHeight = parseFloat($(`#mr_tee_field_height_${lastSameSideIdx}`).val()) || 8.5;
+					const rawPrevTop = parseFloat($(`#mr_tee_field_top_${lastSameSideIdx}`).val());
+					const rawPrevH = parseFloat($(`#mr_tee_field_height_${lastSameSideIdx}`).val());
+					const prevTop = Number.isFinite(rawPrevTop) ? rawPrevTop : 25.0;
+					const prevHeight = Number.isFinite(rawPrevH) ? rawPrevH : 8.5;
 					newTop = Math.min(maxTop, this.round1(prevTop + prevHeight + 2.0));
 				}
 			}
@@ -1486,8 +1972,8 @@
 
 			// 3. Add Inspector Panel (100% DOM parity with VisualPlacementStage.php)
 			const textInputHtml = multiline
-				? `<textarea rows="2" name="mr_tee_config[text_lines][${newIdx}][default_text]" class="regular-text mr-tee-field-text-input" data-field-index="${newIdx}">${safeDefaultText}</textarea>`
-				: `<input type="text" name="mr_tee_config[text_lines][${newIdx}][default_text]" value="${safeDefaultText}" class="regular-text mr-tee-field-text-input" data-field-index="${newIdx}" />`;
+				? `<textarea rows="2" id="mr_tee_field_text_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][default_text]" class="regular-text mr-tee-field-text-input" data-field-index="${newIdx}">${safeDefaultText}</textarea>`
+				: `<input type="text" id="mr_tee_field_text_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][default_text]" value="${safeDefaultText}" class="regular-text mr-tee-field-text-input" data-field-index="${newIdx}" />`;
 
 			const imgPreviewHtml = defaultImage
 				? `<img src="${safeDefaultImage}" alt="" loading="lazy" decoding="async" class="mr-tee-default-img-preview" />`
@@ -1511,88 +1997,79 @@
 					</div>
 					<table class="form-table mr-tee-coords-table">
 						<tr>
-							<th><label>Nom</label></th>
+							<th><label for="mr_tee_field_label_${newIdx}" class="mr-tee-lbl-label">Nom</label></th>
 							<td>
-								<input type="text" name="mr_tee_config[text_lines][${newIdx}][label]" value="${safeLabel}" class="regular-text mr-tee-field-label-input" data-field-index="${newIdx}" />
+								<input type="text" id="mr_tee_field_label_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][label]" value="${safeLabel}" class="regular-text mr-tee-field-label-input" data-field-index="${newIdx}" />
 							</td>
 						</tr>
 						<tr>
-							<th><label>Type</label></th>
+							<th><label for="mr_tee_field_type_${newIdx}" class="mr-tee-lbl-type">Type</label></th>
 							<td>
-								<select name="mr_tee_config[text_lines][${newIdx}][field_type]" class="mr-tee-field-type-select" data-field-index="${newIdx}">
+								<select id="mr_tee_field_type_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][field_type]" class="mr-tee-field-type-select" data-field-index="${newIdx}">
 									<option value="text" ${!isImage ? 'selected' : ''}>📝 Champ Texte</option>
 									<option value="image" ${isImage ? 'selected' : ''}>🖼️ Champ Image</option>
 								</select>
 							</td>
 						</tr>
 						<tr>
-							<th><label>Face</label></th>
+							<th><label for="mr_tee_field_side_${newIdx}" class="mr-tee-lbl-side">Face</label></th>
 							<td>
-								<select name="mr_tee_config[text_lines][${newIdx}][side_id]" class="mr-tee-field-side-select" data-field-index="${newIdx}">
+								<select id="mr_tee_field_side_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][side_id]" class="mr-tee-field-side-select" data-field-index="${newIdx}">
 									${sideSelectOptions}
 								</select>
 							</td>
 						</tr>
 						<tr class="mr-tee-row-image-only" ${isImage ? '' : 'style="display:none;"'}>
-							<th><label>Image</label></th>
+							<th><label for="mr_tee_field_default_image_${newIdx}" class="mr-tee-lbl-default-image">Image</label></th>
 							<td>
 								<div class="mr-tee-default-img-picker" data-field-index="${newIdx}">
 									<div class="mr-tee-default-img-preview-wrap">${imgPreviewHtml}</div>
 									<input type="hidden" name="mr_tee_config[text_lines][${newIdx}][default_image_id]" value="${defaultImageId}" class="mr-tee-field-default-image-id" data-field-index="${newIdx}" />
-									<input type="text" name="mr_tee_config[text_lines][${newIdx}][default_image]" value="${safeDefaultImage}" placeholder="https://..." class="regular-text mr-tee-field-default-image-input" data-field-index="${newIdx}" />
+									<input type="text" id="mr_tee_field_default_image_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][default_image]" value="${safeDefaultImage}" placeholder="https://..." class="regular-text mr-tee-field-default-image-input" data-field-index="${newIdx}" />
 									<div class="mr-tee-default-img-actions">
-										<button type="button" class="button button-secondary button-small mr-tee-btn-select-default-image" data-field-index="${newIdx}">📁 Médiathèque</button>
+										<button type="button" class="button button-secondary button-small mr-tee-btn-select-default-image" data-field-index="${newIdx}"><span aria-hidden="true">📁</span> Médiathèque</button>
 										<label class="button button-small mr-tee-upload-btn-label">
-											<span>⬆️ Importer</span>
-											<input type="file" accept="image/*" class="mr-tee-quick-image-file" style="display:none;" data-field-index="${newIdx}" />
+											<span><span aria-hidden="true">⬆️</span> Importer</span>
+											<input type="file" accept="image/*" class="screen-reader-text mr-tee-quick-image-file" data-field-index="${newIdx}" />
 										</label>
-										<button type="button" class="button button-small mr-tee-btn-clear-default-image" data-field-index="${newIdx}" ${defaultImage ? '' : 'style="display:none;"'}>✕</button>
+										<button type="button" class="button button-small mr-tee-btn-clear-default-image" data-field-index="${newIdx}" aria-label="Retirer l'image" ${defaultImage ? '' : 'style="display:none;"'}>✕</button>
 									</div>
-									<span class="mr-tee-img-upload-status"></span>
+									<span class="mr-tee-img-upload-status" aria-live="polite"></span>
 								</div>
 							</td>
 						</tr>
 						<tr class="mr-tee-row-image-only" ${isImage ? '' : 'style="display:none;"'}>
-							<th><label>Ajustement</label></th>
+							<th><label for="mr_tee_field_image_fit_${newIdx}" class="mr-tee-lbl-image-fit">Ajustement</label></th>
 							<td>
-								<select name="mr_tee_config[text_lines][${newIdx}][image_fit]" class="mr-tee-field-image-fit" data-field-index="${newIdx}">
+								<select id="mr_tee_field_image_fit_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][image_fit]" class="mr-tee-field-image-fit" data-field-index="${newIdx}">
 									<option value="contain" ${imageFit === 'contain' ? 'selected' : ''}>Entier (Contain — sans rogner)</option>
 									<option value="cover" ${imageFit === 'cover' ? 'selected' : ''}>Remplir (Cover — recadré)</option>
 								</select>
 							</td>
 						</tr>
 						<tr class="mr-tee-row-text-only" ${isImage ? 'style="display:none;"' : ''}>
-							<th><label>Texte</label></th>
+							<th><label for="mr_tee_field_text_${newIdx}" class="mr-tee-lbl-text">Texte</label></th>
 							<td>${textInputHtml}</td>
 						</tr>
 						<tr class="mr-tee-row-text-only" ${isImage ? 'style="display:none;"' : ''}>
-							<th><label>Police</label></th>
+							<th><label for="mr_tee_field_font_${newIdx}" class="mr-tee-lbl-font">Police</label></th>
 							<td>
-								<select name="mr_tee_config[text_lines][${newIdx}][font]" class="mr-tee-field-font-select" data-field-index="${newIdx}">
+								<select id="mr_tee_field_font_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][font]" class="mr-tee-field-font-select" data-field-index="${newIdx}">
 									${fontSelectOptions}
 								</select>
 							</td>
 						</tr>
 						<tr class="mr-tee-row-text-only mr-tee-row-svg-color-notice" ${!isImage && isSvg ? '' : 'style="display:none;"'}>
-							<th><label>Couleur</label></th>
-							<td><span class="mr-tee-svg-color-notice">✨ Couleurs intégrées à la police SVG</span></td>
+							<th><span>Couleur</span></th>
+							<td><span class="mr-tee-svg-color-notice"><span aria-hidden="true">✨</span> Couleurs intégrées à la police SVG</span></td>
 						</tr>
 						<tr class="mr-tee-row-text-only mr-tee-row-color-mode" ${!isImage && !isSvg ? '' : 'style="display:none;"'}>
-							<th><label>Mode Couleur</label></th>
+							<th><label for="mr_tee_field_color_mode_${newIdx}" class="mr-tee-lbl-color-mode">Mode Couleur</label></th>
 							<td>
-								<select name="mr_tee_config[text_lines][${newIdx}][color_mode]" class="mr-tee-field-color-mode" data-field-index="${newIdx}">
+								<select id="mr_tee_field_color_mode_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][color_mode]" class="mr-tee-field-color-mode" data-field-index="${newIdx}">
 									<option value="multi" ${colorMode === 'multi' ? 'selected' : ''}>Multicolore (Palette)</option>
 									<option value="solid" ${colorMode === 'solid' ? 'selected' : ''}>Couleur Unie</option>
 								</select>
-							</td>
-						</tr>
-						<tr class="mr-tee-row-text-only mr-tee-row-solid-color" ${!isImage && !isSvg && colorMode === 'solid' ? '' : 'style="display:none;"'}>
-							<th><label>Couleur du texte</label></th>
-							<td>
-								<div class="mr-tee-color-picker-row">
-									<input type="color" name="mr_tee_config[text_lines][${newIdx}][color_hex]" value="${this.escapeXml(colorHex)}" class="mr-tee-field-color-hex" data-field-index="${newIdx}" />
-									<span class="mr-tee-color-hex-readout">${this.escapeXml(colorHex.toUpperCase())}</span>
-								</div>
 								<label class="mr-tee-inline-check">
 									<input type="hidden" name="mr_tee_config[text_lines][${newIdx}][allow_color_pick]" value="0" />
 									<input type="checkbox" name="mr_tee_config[text_lines][${newIdx}][allow_color_pick]" value="1" class="mr-tee-field-allow-color-pick" data-field-index="${newIdx}" ${allowColorPick ? 'checked' : ''} />
@@ -1600,14 +2077,23 @@
 								</label>
 							</td>
 						</tr>
-						<tr class="mr-tee-row-text-only" ${isImage ? 'style="display:none;"' : ''}>
-							<th><label>Max Caract.</label></th>
+						<tr class="mr-tee-row-text-only mr-tee-row-solid-color" ${!isImage && !isSvg && colorMode === 'solid' ? '' : 'style="display:none;"'}>
+							<th><label for="mr_tee_field_color_hex_${newIdx}" class="mr-tee-lbl-color-hex">Couleur du texte</label></th>
 							<td>
-								<input type="number" step="1" min="1" max="500" name="mr_tee_config[text_lines][${newIdx}][max_chars]" value="${maxChars}" class="small-text mr-tee-field-max-chars" data-field-index="${newIdx}" />
+								<div class="mr-tee-color-picker-row">
+									<input type="color" id="mr_tee_field_color_hex_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][color_hex]" value="${this.escapeXml(colorHex)}" class="mr-tee-field-color-hex" data-field-index="${newIdx}" />
+									<span class="mr-tee-color-hex-readout">${this.escapeXml(colorHex.toUpperCase())}</span>
+								</div>
+							</td>
+						</tr>
+						<tr class="mr-tee-row-text-only" ${isImage ? 'style="display:none;"' : ''}>
+							<th><label for="mr_tee_field_max_chars_${newIdx}" class="mr-tee-lbl-max-chars">Max Caract.</label></th>
+							<td>
+								<input type="number" step="1" min="1" max="500" id="mr_tee_field_max_chars_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][max_chars]" value="${maxChars}" class="small-text mr-tee-field-max-chars" data-field-index="${newIdx}" />
 							</td>
 						</tr>
 						<tr>
-							<th><label>Options</label></th>
+							<th><span>Options</span></th>
 							<td class="mr-tee-options-cell">
 								<span class="mr-tee-opt-text-only" ${isImage ? 'style="display:none;"' : ''}>
 									<label>
@@ -1666,8 +2152,8 @@
 						</div>
 					</div>
 					<div class="mr-tee-field-actions">
-						<button type="button" class="button button-small mr-tee-btn-duplicate-field" data-field-index="${newIdx}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Dupliquer</button>
-						<button type="button" class="button button-link-delete mr-tee-btn-delete-field" data-field-index="${newIdx}">Supprimer</button>
+						<button type="button" class="button button-small mr-tee-btn-duplicate-field" data-field-index="${newIdx}"><svg class="mr-tee-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Dupliquer</button>
+						<button type="button" class="button button-small button-link-delete mr-tee-btn-delete-field" data-field-index="${newIdx}">Supprimer</button>
 					</div>
 				</div>
 			`;
@@ -1680,6 +2166,9 @@
 			this.setActiveField(newIdx);
 			this.renderBoxPreview(newIdx);
 			this.recalculateDimensions();
+			this.resetHistory();
+			this.ensureHistoryBase();
+			this.markDirty();
 		}
 
 		/**
@@ -1710,6 +2199,9 @@
 				self.setActiveField(targetIdx);
 				self.renderAllBoxesPreviews();
 				self.recalculateDimensions();
+				self.resetHistory();
+				self.ensureHistoryBase();
+				self.markDirty();
 			};
 
 			$(document).on('click', '#mr-tee-btn-field-move-left', function(e) {
@@ -1761,6 +2253,9 @@
 				}
 				self.renderAllBoxesPreviews();
 				self.recalculateDimensions();
+				self.resetHistory();
+				self.ensureHistoryBase();
+				self.markDirty();
 			});
 		}
 
@@ -1787,24 +2282,35 @@
 					.attr('name', `mr_tee_config[text_lines][${i}][placements]`)
 					.attr('data-field-index', i);
 				$(this).find('.mr-tee-field-side-select')
+					.attr('id', `mr_tee_field_side_${i}`)
 					.attr('name', `mr_tee_config[text_lines][${i}][side_id]`)
 					.attr('data-field-index', i);
+				$(this).find('.mr-tee-lbl-side').attr('for', `mr_tee_field_side_${i}`);
 				$(this).find('.mr-tee-panel-indicator').css('background', color);
 				$(this).find('.mr-tee-panel-title').text(`Champ #${i + 1} : ${labelVal}`);
-				$(this).find('.mr-tee-field-label-input').attr('name', `mr_tee_config[text_lines][${i}][label]`).attr('data-field-index', i);
-				$(this).find('.mr-tee-field-type-select').attr('name', `mr_tee_config[text_lines][${i}][field_type]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-label-input').attr('id', `mr_tee_field_label_${i}`).attr('name', `mr_tee_config[text_lines][${i}][label]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-lbl-label').attr('for', `mr_tee_field_label_${i}`);
+				$(this).find('.mr-tee-field-type-select').attr('id', `mr_tee_field_type_${i}`).attr('name', `mr_tee_config[text_lines][${i}][field_type]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-lbl-type').attr('for', `mr_tee_field_type_${i}`);
 				$(this).find('.mr-tee-default-img-picker').attr('data-field-index', i);
 				$(this).find('.mr-tee-field-default-image-id').attr('name', `mr_tee_config[text_lines][${i}][default_image_id]`).attr('data-field-index', i);
-				$(this).find('.mr-tee-field-default-image-input').attr('name', `mr_tee_config[text_lines][${i}][default_image]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-default-image-input').attr('id', `mr_tee_field_default_image_${i}`).attr('name', `mr_tee_config[text_lines][${i}][default_image]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-lbl-default-image').attr('for', `mr_tee_field_default_image_${i}`);
 				$(this).find('.mr-tee-btn-select-default-image, .mr-tee-quick-image-file, .mr-tee-btn-clear-default-image').attr('data-field-index', i);
-				$(this).find('.mr-tee-field-image-fit').attr('name', `mr_tee_config[text_lines][${i}][image_fit]`).attr('data-field-index', i);
-				$(this).find('.mr-tee-field-text-input').attr('name', `mr_tee_config[text_lines][${i}][default_text]`).attr('data-field-index', i);
-				$(this).find('.mr-tee-field-font-select').attr('name', `mr_tee_config[text_lines][${i}][font]`).attr('data-field-index', i);
-				$(this).find('.mr-tee-field-color-mode').attr('name', `mr_tee_config[text_lines][${i}][color_mode]`).attr('data-field-index', i);
-				$(this).find('.mr-tee-field-color-hex').attr('name', `mr_tee_config[text_lines][${i}][color_hex]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-image-fit').attr('id', `mr_tee_field_image_fit_${i}`).attr('name', `mr_tee_config[text_lines][${i}][image_fit]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-lbl-image-fit').attr('for', `mr_tee_field_image_fit_${i}`);
+				$(this).find('.mr-tee-field-text-input').attr('id', `mr_tee_field_text_${i}`).attr('name', `mr_tee_config[text_lines][${i}][default_text]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-lbl-text').attr('for', `mr_tee_field_text_${i}`);
+				$(this).find('.mr-tee-field-font-select').attr('id', `mr_tee_field_font_${i}`).attr('name', `mr_tee_config[text_lines][${i}][font]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-lbl-font').attr('for', `mr_tee_field_font_${i}`);
+				$(this).find('.mr-tee-field-color-mode').attr('id', `mr_tee_field_color_mode_${i}`).attr('name', `mr_tee_config[text_lines][${i}][color_mode]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-lbl-color-mode').attr('for', `mr_tee_field_color_mode_${i}`);
+				$(this).find('.mr-tee-field-color-hex').attr('id', `mr_tee_field_color_hex_${i}`).attr('name', `mr_tee_config[text_lines][${i}][color_hex]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-lbl-color-hex').attr('for', `mr_tee_field_color_hex_${i}`);
 				$(this).find('input[type="hidden"][name*="[allow_color_pick]"]').attr('name', `mr_tee_config[text_lines][${i}][allow_color_pick]`);
 				$(this).find('.mr-tee-field-allow-color-pick').attr('name', `mr_tee_config[text_lines][${i}][allow_color_pick]`).attr('data-field-index', i);
-				$(this).find('.mr-tee-field-max-chars').attr('name', `mr_tee_config[text_lines][${i}][max_chars]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-max-chars').attr('id', `mr_tee_field_max_chars_${i}`).attr('name', `mr_tee_config[text_lines][${i}][max_chars]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-lbl-max-chars').attr('for', `mr_tee_field_max_chars_${i}`);
 				$(this).find('input[type="hidden"][name*="[allow_font_pick]"]').attr('name', `mr_tee_config[text_lines][${i}][allow_font_pick]`);
 				$(this).find('.mr-tee-field-font-pick').attr('name', `mr_tee_config[text_lines][${i}][allow_font_pick]`).attr('data-field-index', i);
 				$(this).find('input[type="hidden"][name*="[multiline]"]').attr('name', `mr_tee_config[text_lines][${i}][multiline]`);
@@ -2125,9 +2631,12 @@
 				}
 
 				this.fetchSvgFontData(fontId, () => {
-					const activeVal = $(`select[name="mr_tee_config[text_lines][${idx}][font]"]`).val() || fallbackKey;
-					if (activeVal === fontId) {
-						this.renderBoxPreview(idx);
+					const total = $('.mr-tee-field-box').length;
+					for (let bi = 0; bi < total; bi++) {
+						const activeVal = $(`select[name="mr_tee_config[text_lines][${bi}][font]"]`).val() || fallbackKey;
+						if (activeVal === fontId) {
+							this.renderBoxPreview(bi);
+						}
 					}
 				});
 			}
@@ -2395,6 +2904,10 @@
 				return;
 			}
 
+			if (this._failedSvgFetches && this._failedSvgFetches.has(fontId)) {
+				return;
+			}
+
 			if (this._pendingSvgFetches[fontId]) {
 				this._pendingSvgFetches[fontId].then((data) => {
 					if (data && callback) callback(data);
@@ -2461,6 +2974,8 @@
 				.then(data => {
 					if (data) {
 						window.mrTeeAdminData.svgFonts[fontId] = data;
+					} else if (this._failedSvgFetches) {
+						this._failedSvgFetches.add(fontId);
 					}
 					return data;
 				})
@@ -2489,7 +3004,7 @@
 				if (file) {
 					$('#mr_tee_tab2_file_name').text(file.name);
 					$('#mr_tee_tab2_btn_upload').show();
-					$('#mr_tee_tab2_upload_status').text('').css('color', '#334155');
+					$('#mr_tee_tab2_upload_status').text('').removeClass('is-info is-success is-error is-muted');
 				}
 			});
 
@@ -2505,31 +3020,44 @@
 				if (!file) return;
 
 				const $status = $('#mr_tee_tab2_upload_status');
-				$status.text('⏳ Analyse et enregistrement de la police...').css('color', '#2563eb');
+				$status.text('⏳ Analyse et enregistrement de la police...').removeClass('is-success is-error is-muted').addClass('is-info');
 				self.uploadFontFile(file, $status, handleUploadDone);
 			});
 
-			// Drag & Drop
+			// Drag & Drop with dragDepth counter so child elements don't cause flicker
 			const $dropZone = $('.mr-tee-font-upload-card');
 			if ($dropZone.length) {
-				$dropZone.on('dragover dragenter', function(e) {
+				let dragDepth = 0;
+				$dropZone.on('dragenter', function(e) {
 					e.preventDefault();
 					e.stopPropagation();
-					$(this).css({ background: '#eff6ff', 'border-color': '#2563eb' });
+					dragDepth++;
+					$(this).addClass('is-dragover');
 				});
-				$dropZone.on('dragleave drop', function(e) {
+				$dropZone.on('dragover', function(e) {
 					e.preventDefault();
 					e.stopPropagation();
-					$(this).css({ background: '#f8fafc', 'border-color': '#94a3b8' });
+				});
+				$dropZone.on('dragleave', function(e) {
+					e.preventDefault();
+					e.stopPropagation();
+					dragDepth = Math.max(0, dragDepth - 1);
+					if (dragDepth === 0) {
+						$(this).removeClass('is-dragover');
+					}
 				});
 				$dropZone.on('drop', function(e) {
+					e.preventDefault();
+					e.stopPropagation();
+					dragDepth = 0;
+					$(this).removeClass('is-dragover');
 					const dt = e.originalEvent.dataTransfer;
 					if (dt && dt.files && dt.files.length) {
 						const file = dt.files[0];
 						$('#mr_tee_tab2_file_name').text(file.name);
 						$('#mr_tee_tab2_btn_upload').show();
 						const $status = $('#mr_tee_tab2_upload_status');
-						$status.text('⏳ Analyse et enregistrement de la police...').css('color', '#2563eb');
+						$status.text('⏳ Analyse et enregistrement de la police...').removeClass('is-success is-error is-muted').addClass('is-info');
 						self.uploadFontFile(file, $status, handleUploadDone);
 					}
 				});
@@ -2563,6 +3091,10 @@
 			const updateHiddenAndSync = (opts = {}) => {
 				$input.val(JSON.stringify(self.allowedFonts));
 				self.updateFontCountersUi();
+				self.syncFontLibraryCards();
+				if (!opts.isInitial) {
+					self.markDirty();
+				}
 
 				if (!opts.skipBoxSelectSync && !opts.isInitial) {
 					self.refreshAllFontSelects();
@@ -2744,9 +3276,10 @@
 							}
 							if (typeof self.renderAllowedFontsList === 'function') {
 								self.renderAllowedFontsList();
+							} else {
+								self.refreshAllFontSelects();
+								self.renderAllBoxesPreviews();
 							}
-							self.refreshAllFontSelects();
-							self.renderAllBoxesPreviews();
 						} else {
 							$btn.prop('disabled', false);
 							const msg = (resp && resp.data && resp.data.message) ? resp.data.message : 'Impossible de supprimer cette police.';
@@ -2771,9 +3304,11 @@
 			uploadedFonts.forEach(f => {
 				if (!f || !f.id) return;
 				const isSvg = this.isSvgFont(f);
+				const isCustom = f.is_custom !== false;
 				const safeId = this.escapeXml(f.id);
 				const safeName = this.escapeXml(f.name || f.id);
 				const safeFile = this.escapeXml(f.file || f.id);
+				const searchHay = this.escapeXml(`${f.name || ''} ${f.file || ''} ${f.id}`.toLowerCase());
 
 				if ($picker.length && !$picker.find(`option[value="${f.id}"]`).length) {
 					const optHtml = `<option value="${safeId}">${safeName}</option>`;
@@ -2786,35 +3321,38 @@
 					}
 				}
 
-				// Display BOTH TTF and OpenType-SVG fonts in the library grid with delete button for custom fonts
-				if ($grid.length && !$grid.find(`[data-font-id="${f.id}"]`).length) {
-					const thumbUrl = f.thumb_url ? this.toSameOriginPath(f.thumb_url) : '';
-					const family = this.escapeXml(f.family || 'sans-serif');
-					const previewHtml = thumbUrl
-						? `<img src="${this.escapeXml(thumbUrl)}" alt="" loading="lazy" decoding="async" />`
-						: `<span class="mr-tee-font-lib-sample" style="font-family: '${family}', sans-serif;">Aa</span>`;
-					const deleteBtnHtml = (f.is_custom !== false)
-						? `<button type="button" class="mr-tee-btn-delete-custom-font" data-font-id="${safeId}" data-font-name="${safeName}" title="Supprimer définitivement cette police personnalisée">✕</button>`
-						: '';
-					const cardHtml = `
-						<div class="mr-tee-font-lib-card ${isSvg ? 'is-svg' : 'is-ttf'}" data-font-id="${safeId}">
-							<div class="mr-tee-font-lib-preview">${previewHtml}</div>
-							<div class="mr-tee-font-lib-meta">
-								<strong>${safeName}</strong>
-								<span class="mr-tee-font-lib-file">${safeFile}</span>
-							</div>
-							<div class="mr-tee-font-lib-badges">
-								<span class="mr-tee-font-type-pill ${isSvg ? 'is-svg' : 'is-ttf'}">${isSvg ? 'SVG' : 'TTF'}</span>
-								${deleteBtnHtml}
-							</div>
-						</div>
-					`;
-					$grid.append(cardHtml);
-				}
-
 				// Auto-add newly uploaded font to product allowed_fonts
 				if (!this.allowedFonts.includes(f.id)) {
 					this.allowedFonts.push(f.id);
+				}
+
+				// Display BOTH TTF and OpenType-SVG fonts in the interactive library grid with delete button for custom fonts
+				if ($grid.length && !$grid.find(`[data-font-id="${f.id}"]`).length) {
+					const thumbUrl = f.thumb_url ? this.toSameOriginPath(f.thumb_url) : '';
+					const family = this.escapeXml(String(f.family || 'sans-serif').replace(/['"]/g, ''));
+					const previewHtml = thumbUrl
+						? `<img src="${this.escapeXml(thumbUrl)}" alt="" loading="lazy" decoding="async" />`
+						: `<span class="mr-tee-font-lib-sample" style="font-family: '${family}', sans-serif;">Aa</span>`;
+					const deleteBtnHtml = isCustom
+						? `<button type="button" class="mr-tee-btn-delete-custom-font" data-font-id="${safeId}" data-font-name="${safeName}" title="Supprimer définitivement cette police personnalisée" aria-label="Supprimer définitivement ${safeName}">✕</button>`
+						: '';
+					const cardHtml = `
+						<div class="mr-tee-font-lib-card ${isSvg ? 'is-svg' : 'is-ttf'} is-allowed" data-font-id="${safeId}" data-font-type="${isSvg ? 'svg' : 'ttf'}" data-is-custom="${isCustom ? '1' : '0'}" data-is-allowed="1" data-search="${searchHay}">
+							<button type="button" class="mr-tee-font-lib-toggle" data-font-id="${safeId}" aria-pressed="true">
+								<span class="mr-tee-font-lib-preview">${previewHtml}</span>
+								<span class="mr-tee-font-lib-meta">
+									<strong>${safeName}</strong>
+									<span class="mr-tee-font-lib-file">${safeFile}</span>
+								</span>
+								<span class="mr-tee-font-lib-badges">
+									<span class="mr-tee-font-type-pill ${isSvg ? 'is-svg' : 'is-ttf'}">${isSvg ? 'SVG' : 'TTF'}</span>
+									<span class="mr-tee-font-lib-state">✓ Active</span>
+								</span>
+							</button>
+							${deleteBtnHtml}
+						</div>
+					`;
+					$grid.append(cardHtml);
 				}
 			});
 		}
@@ -2837,7 +3375,7 @@
 				success: function(resp) {
 					if (resp && resp.success && resp.data && resp.data.fonts) {
 						const fonts = resp.data.fonts;
-						$statusElem.text(`✅ ${resp.data.message || 'Police importée et ajoutée au produit !'}`).css('color', '#059669');
+						$statusElem.text(`✅ ${resp.data.message || 'Police importée et ajoutée au produit !'}`).removeClass('is-info is-error is-muted').addClass('is-success');
 
 						window.mrTeeAdminData = window.mrTeeAdminData || {};
 						window.mrTeeAdminData.fonts = window.mrTeeAdminData.fonts || {};
@@ -2852,18 +3390,19 @@
 						self.registerUploadedFontsInUi(fonts);
 						if (typeof self.renderAllowedFontsList === 'function') {
 							self.renderAllowedFontsList();
+						} else {
+							self.refreshAllFontSelects();
+							self.renderAllBoxesPreviews();
 						}
-						self.refreshAllFontSelects();
-						self.renderAllBoxesPreviews();
 
 						if (onSuccess) onSuccess(fonts);
 					} else {
 						const errMsg = (resp && resp.data && resp.data.message) ? resp.data.message : 'Erreur lors de l\'importation de la police.';
-						$statusElem.text(`❌ ${errMsg}`).css('color', '#dc2626');
+						$statusElem.text(`❌ ${errMsg}`).removeClass('is-info is-success is-muted').addClass('is-error');
 					}
 				},
 				error: function(xhr, status, error) {
-					$statusElem.text(`❌ Erreur réseau / serveur : ${error}`).css('color', '#dc2626');
+					$statusElem.text(`❌ Erreur réseau / serveur : ${error}`).removeClass('is-info is-success is-muted').addClass('is-error');
 				}
 			});
 		}
@@ -2918,7 +3457,7 @@
 		}
 
 		/**
-		 * Explicit Preset Apply Button (sets mr_tee_apply_preset=1 and submits WP product form).
+		 * Explicit Preset Apply Button (sets mr_tee_apply_preset=1 and saves without publishing drafts).
 		 */
 		bindPresetApply() {
 			$(document).on('click', '#mr_tee_btn_apply_preset', function(e) {
@@ -2928,8 +3467,16 @@
 					return;
 				}
 				$('#mr_tee_apply_preset').val('1');
+				setTimeout(() => {
+					$('#mr_tee_apply_preset').val('0');
+				}, 2500);
+
+				const origStatus = String($('#original_post_status').val() || '');
+				const $saveDraftBtn = $('#save-post');
 				const $publishBtn = $('#publish');
-				if ($publishBtn.length) {
+				if (origStatus && origStatus !== 'publish' && $saveDraftBtn.length && $saveDraftBtn.is(':visible')) {
+					$saveDraftBtn.trigger('click');
+				} else if ($publishBtn.length) {
 					$publishBtn.trigger('click');
 				} else {
 					$('form#post').trigger('submit');
@@ -2943,13 +3490,20 @@
 		bindDimensionControls() {
 			const self = this;
 
-			$(document).on('input change', '#mr_tee_real_width, #mr_tee_real_height, #mr_tee_print_unit, #mr_tee_dpi, #mr_tee_product_type, #mr_tee_lock_aspect_ratio', function() {
+			$(document).on('input change', '#mr_tee_real_width, #mr_tee_real_height, #mr_tee_print_unit, #mr_tee_dpi, #mr_tee_product_type, #mr_tee_lock_aspect_ratio', function(e) {
 				if (self._syncingSideDims) return;
 				self._cachedStageRatio = 0;
 
 				// Visually check lock_aspect_ratio when flat_object is chosen
 				if (this.id === 'mr_tee_product_type' && $(this).val() === 'flat_object') {
 					$('#mr_tee_lock_aspect_ratio').prop('checked', true);
+				}
+
+				// Clamp DPI cleanly on change so 72..1200 matches server limits
+				if (this.id === 'mr_tee_dpi' && e.type === 'change') {
+					const rawDpi = parseInt($(this).val(), 10);
+					const clampedDpi = Number.isFinite(rawDpi) ? Math.max(72, Math.min(1200, rawDpi)) : 300;
+					$(this).val(clampedDpi);
 				}
 
 				self.updateActiveSideDimensionsFromToolbar();
@@ -2976,6 +3530,7 @@
 				self.updateActiveSideDimensionsFromToolbar();
 				self.recalculateDimensions();
 				self.renderAllBoxesPreviews();
+				self.markDirty();
 			});
 		}
 
@@ -3000,7 +3555,8 @@
 				if (this.getFieldSideId(idx) !== side.id) continue;
 
 				let coords;
-				if (side.id === activeSideId) {
+				const isLiveOnRefView = (side.id === activeSideId) && (!refViewId || this.activeViewId === refViewId);
+				if (isLiveOnRefView) {
 					coords = this.getFieldCurrentCoords(idx);
 				} else {
 					const placements = this.getFieldPlacements(idx);
@@ -3035,9 +3591,19 @@
 				boxCount++;
 			}
 
-			if (boxCount === 0 || pType === 'flat_object') {
+			const sideIdx = this.printSides.findIndex(s => s.id === side.id);
+			const hasClipart = Boolean(this.config.vector_clipart && this.config.vector_clipart.path);
+			const repeaterOn = $('#mr_tee_repeater_enabled').is(':checked');
+			const isFullPlaten = (sideIdx <= 0) && (repeaterOn || hasClipart);
+
+			if (boxCount === 0 || pType === 'flat_object' || isFullPlaten) {
 				xMin = 0; yMin = 0; xMax = 100; yMax = 100;
 			}
+
+			xMin = Math.max(0, Math.min(100, xMin));
+			yMin = Math.max(0, Math.min(100, yMin));
+			xMax = Math.max(0, Math.min(100, xMax));
+			yMax = Math.max(0, Math.min(100, yMax));
 
 			const spanW = Math.max(1, xMax - xMin);
 			const spanH = Math.max(1, yMax - yMin);
@@ -3079,11 +3645,12 @@
 							<span class="mr-tee-export-type-tag">${typeLabel}</span>
 						</div>
 						<div class="mr-tee-export-side-specs">
-							<span>${m.w} × ${m.h} ${this.escapeXml(m.unit)}</span>
-							<span>·</span>
+							<span>Surface : ${m.w} × ${m.h} ${this.escapeXml(m.unit)}</span>
+							<span aria-hidden="true">·</span>
 							<span>${m.dpi} DPI</span>
-							<span>·</span>
-							<strong class="mr-tee-export-px">${m.cumRealW} × ${m.cumRealH} ${this.escapeXml(m.unit)} (${m.pxW} × ${m.pxH} px)</strong>
+							<span aria-hidden="true">·</span>
+							<strong class="mr-tee-export-px">Export : ${m.cumRealW} × ${m.cumRealH} ${this.escapeXml(m.unit)} (${m.pxW} × ${m.pxH} px)</strong>
+							<button type="button" class="button button-small mr-tee-btn-edit-side-dims" data-side-id="${this.escapeXml(side.id)}">Modifier →</button>
 						</div>
 					</div>
 				`;
@@ -3100,24 +3667,28 @@
 			const pTypeEl = document.getElementById('mr_tee_product_type');
 			const lockEl = document.getElementById('mr_tee_lock_aspect_ratio');
 
-			const w = rwEl ? (parseFloat(rwEl.value) || 30.0) : 30.0;
-			const h = rhEl ? (parseFloat(rhEl.value) || 40.0) : 40.0;
+			const activeSide = this.getSideById(this.getActiveSideId()) || {
+				id: this.getActiveSideId(),
+				print_real_width: 30.0,
+				print_real_height: 40.0,
+				print_unit: 'cm',
+				dpi: 300,
+				product_type: 'garment',
+			};
+			const rawW = rwEl ? parseFloat(rwEl.value) : NaN;
+			const rawH = rhEl ? parseFloat(rhEl.value) : NaN;
+			const rawDpi = dpiEl ? parseInt(dpiEl.value, 10) : NaN;
+
+			const w = (Number.isFinite(rawW) && rawW > 0) ? rawW : (parseFloat(activeSide.print_real_width) || 30.0);
+			const h = (Number.isFinite(rawH) && rawH > 0) ? rawH : (parseFloat(activeSide.print_real_height) || 40.0);
 			const unit = unitEl ? (unitEl.value || 'cm') : 'cm';
-			const dpi = dpiEl ? (Math.max(72, parseInt(dpiEl.value, 10) || 300)) : 300;
+			const dpi = Number.isFinite(rawDpi) ? Math.max(72, Math.min(1200, rawDpi)) : (parseInt(activeSide.dpi, 10) || 300);
 			const pType = pTypeEl ? (pTypeEl.value || 'garment') : 'garment';
 			if (pType === 'flat_object' && lockEl && !lockEl.checked) {
 				lockEl.checked = true;
 			}
 			const isLocked = Boolean(lockEl && lockEl.checked) || pType === 'flat_object';
 
-			const activeSide = this.getSideById(this.getActiveSideId()) || {
-				id: this.getActiveSideId(),
-				print_real_width: w,
-				print_real_height: h,
-				print_unit: unit,
-				dpi,
-				product_type: pType,
-			};
 			const m = this.computeSideExportData({
 				...activeSide,
 				print_real_width: w,
@@ -3454,6 +4025,7 @@
 			const placements = this.getFieldPlacements(idx);
 			placements[activeView.id] = this.getFieldCurrentCoords(idx);
 			this.setFieldPlacements(idx, placements);
+			this.scheduleHistoryCommit();
 		}
 
 		flushActiveViewPlacements() {
@@ -3598,6 +4170,14 @@
 			}
 		}
 
+		isDefaultSideFirstView(view) {
+			if (!view || !Array.isArray(this.previewViews) || !this.previewViews.length) return false;
+			const defaultSideId = (this.printSides && this.printSides[0]) ? this.printSides[0].id : 'front';
+			if (view.side_id !== defaultSideId) return false;
+			const firstForDefault = this.previewViews.find(v => v && v.side_id === defaultSideId);
+			return Boolean(firstForDefault && firstForDefault.id === view.id);
+		}
+
 		renderSidesBar() {
 			const $list = $('#mr-tee-sides-list');
 			if (!$list.length) return;
@@ -3616,19 +4196,17 @@
 				const fCount = fieldCountBySide[side.id] || 0;
 				const dimsText = `${side.print_real_width}×${side.print_real_height} ${side.print_unit}`;
 				const safeId = this.escapeXml(side.id);
+				const safeLabel = this.escapeXml(side.label || side.id);
 				return `
-					<div
-						role="button"
-						tabindex="0"
-						class="mr-tee-side-pill ${isActive ? 'is-active' : ''}"
-						data-side-id="${safeId}"
-					>
-						<span class="mr-tee-side-pill-dot" aria-hidden="true"></span>
-						<span class="mr-tee-side-pill-label">${this.escapeXml(side.label || side.id)}</span>
-						<span class="mr-tee-side-pill-dims">${this.escapeXml(dimsText)} · ${fCount}</span>
+					<div class="mr-tee-side-pill ${isActive ? 'is-active' : ''}" data-side-id="${safeId}">
+						<button type="button" class="mr-tee-side-pill-main" data-side-id="${safeId}" aria-pressed="${isActive ? 'true' : 'false'}">
+							<span class="mr-tee-side-pill-dot" aria-hidden="true"></span>
+							<span class="mr-tee-side-pill-label">${safeLabel}</span>
+							<span class="mr-tee-side-pill-dims">${this.escapeXml(dimsText)} · ${fCount}</span>
+						</button>
 						<span class="mr-tee-side-pill-controls">
-							<button type="button" class="mr-tee-side-action-btn mr-tee-side-rename-btn" data-side-id="${safeId}" title="Renommer cette face">✎</button>
-							${canDelete ? `<button type="button" class="mr-tee-side-action-btn mr-tee-side-delete-btn" data-side-id="${safeId}" title="Supprimer cette face">✕</button>` : ''}
+							<button type="button" class="mr-tee-side-action-btn mr-tee-side-rename-btn" data-side-id="${safeId}" title="Renommer cette face" aria-label="Renommer ${safeLabel}">✎</button>
+							${canDelete ? `<button type="button" class="mr-tee-side-action-btn mr-tee-side-delete-btn" data-side-id="${safeId}" title="Supprimer cette face" aria-label="Supprimer ${safeLabel}">✕</button>` : ''}
 						</span>
 					</div>
 				`;
@@ -3637,7 +4215,7 @@
 			$list.html(pillsHtml);
 
 			const hasBack = this.printSides.some(s => s.id === 'back');
-			$('#mr-tee-btn-add-back-side').toggleClass('has-back-side', hasBack).toggle(!hasBack);
+			$('#mr-tee-btn-add-back-side').toggle(!hasBack);
 		}
 
 		renderViewsBar() {
@@ -3656,7 +4234,9 @@
 				const sideLabel = side ? (side.label || side.id) : view.side_id;
 				const role = view.view_role || 'full';
 				const roleLabel = roleLabels[role] || role;
-				const thumbUrl = this.normalizeAdminAssetUrl(view.image_url || (idx === 0 ? this.defaultThumbUrl : ''));
+				const thumbUrl = this.normalizeAdminAssetUrl(
+					view.image_url || (this.isDefaultSideFirstView(view) ? this.defaultThumbUrl : '')
+				);
 
 				return `
 					<button
@@ -3665,6 +4245,7 @@
 						data-view-id="${this.escapeXml(view.id)}"
 						data-side-id="${this.escapeXml(view.side_id)}"
 						data-view-role="${this.escapeXml(role)}"
+						aria-pressed="${isActive ? 'true' : 'false'}"
 					>
 						<span class="mr-tee-view-tab-thumb">
 							${thumbUrl
@@ -3676,7 +4257,7 @@
 							<span class="mr-tee-view-tab-badges">
 								<span class="mr-tee-view-side-badge">${this.escapeXml(sideLabel)}</span>
 								<span class="mr-tee-view-role-badge is-role-${this.escapeXml(role)}">${this.escapeXml(roleLabel)}</span>
-								${view.is_cart_preview ? '<span class="mr-tee-view-badge-cart" title="Aperçu panier">🛒</span>' : ''}
+								${view.is_cart_preview ? '<span class="mr-tee-view-badge-cart" title="Aperçu panier" aria-label="Aperçu panier">🛒</span>' : ''}
 							</span>
 						</span>
 					</button>
@@ -3738,16 +4319,14 @@
 			if (!$bar.length) return;
 			let $status = $('#mr-tee-view-upload-status');
 			if (!$status.length) {
-				$status = $('<span id="mr-tee-view-upload-status" class="mr-tee-view-upload-status"></span>');
+				$status = $('<span id="mr-tee-view-upload-status" class="mr-tee-view-upload-status" aria-live="polite"></span>');
 				$bar.append($status);
 			}
-			const colors = {
-				info: '#2563eb',
-				success: '#059669',
-				error: '#dc2626',
-				muted: '#64748b',
-			};
-			$status.text(message || '').css('color', colors[tone] || colors.muted);
+			const safeTone = ['info', 'success', 'error', 'muted'].includes(tone) ? tone : 'muted';
+			$status
+				.text(message || '')
+				.removeClass('is-info is-success is-error is-muted')
+				.addClass(`is-${safeTone}`);
 		}
 
 		highlightViewImagePrompt(message) {
@@ -3770,7 +4349,8 @@
 			const nextView = this.getViewById(viewId);
 			if (!nextView) return;
 
-			if (!opts.isInitial && this._multiviewInitialized && this.activeViewId && this.activeViewId !== nextView.id) {
+			const viewChanged = Boolean(this.activeViewId && this.activeViewId !== nextView.id);
+			if (!opts.isInitial && this._multiviewInitialized && viewChanged) {
 				const prevView = this.previewViews.find(v => v.id === this.activeViewId);
 				if (prevView) {
 					this.flushActiveViewPlacements();
@@ -3782,18 +4362,20 @@
 			const activeSideId = nextView.side_id;
 
 			// 1. Highlight active view tab and printable side pill
-			$('.mr-tee-view-tab').removeClass('is-active').filter(function() {
+			$('.mr-tee-view-tab').removeClass('is-active').attr('aria-pressed', 'false').filter(function() {
 				return $(this).attr('data-view-id') === nextView.id;
-			}).addClass('is-active');
-			$('.mr-tee-side-pill').removeClass('is-active').filter(function() {
-				return $(this).attr('data-side-id') === activeSideId;
-			}).addClass('is-active');
+			}).addClass('is-active').attr('aria-pressed', 'true');
+			$('.mr-tee-side-pill').removeClass('is-active').each(function() {
+				const active = $(this).attr('data-side-id') === activeSideId;
+				$(this).toggleClass('is-active', active);
+				$(this).find('.mr-tee-side-pill-main').attr('aria-pressed', active ? 'true' : 'false');
+			});
 
-			// 2. Swap stage garment mockup image (show empty-state overlay when view has no image yet!)
+			// 2. Swap stage garment mockup image (only default side's primary view falls back to WC featured thumb)
 			const viewIdx = this.previewViews.findIndex(v => v.id === nextView.id);
 			const effectiveImgUrl = nextView.image_url
 				? this.normalizeAdminAssetUrl(nextView.image_url)
-				: (viewIdx === 0 && this.defaultThumbUrl ? this.defaultThumbUrl : '');
+				: (this.isDefaultSideFirstView(nextView) && this.defaultThumbUrl ? this.defaultThumbUrl : '');
 			this.updateStageImageDisplay(effectiveImgUrl);
 
 			// 3. Populate Active View Settings bar
@@ -3888,6 +4470,11 @@
 			this.recalculateDimensions();
 			this.renderAllBoxesPreviews();
 			this.syncHiddenMultiViewJson();
+
+			if (!opts.isInitial && viewChanged) {
+				this.resetHistory();
+				this.ensureHistoryBase();
+			}
 		}
 
 		bindMultiViewManager() {
@@ -3943,17 +4530,9 @@
 				self.setActiveView(targetView.id);
 			};
 
-			$(document).on('click', '.mr-tee-side-pill', function(e) {
-				if ($(e.target).closest('.mr-tee-side-action-btn').length) return;
+			$(document).on('click', '.mr-tee-side-pill-main', function(e) {
 				e.preventDefault();
 				activateSideById($(this).attr('data-side-id'));
-			});
-
-			$(document).on('keydown', '.mr-tee-side-pill', function(e) {
-				if ((e.key === 'Enter' || e.key === ' ') && !$(e.target).closest('.mr-tee-side-action-btn').length) {
-					e.preventDefault();
-					activateSideById($(this).attr('data-side-id'));
-				}
 			});
 
 			// Inline Rename Side (✎)
@@ -3973,6 +4552,7 @@
 				self.refreshAllSideSelects();
 				self.syncHiddenMultiViewJson();
 				self.renderExportSummary();
+				self.markDirty();
 			});
 
 			// Inline Delete Side (✕) — keeps at least 1 side, migrates/removes views & fields cleanly
@@ -4001,6 +4581,11 @@
 						? `• Les ${affectedFieldIndices.length} champ(s) seront déplacés vers la face restante.`
 						: `• ${affectedFieldIndices.length} champ(s) de cette face seront supprimés.`);
 				if (!confirm(msg)) return;
+
+				// Capture active field's stable ID before DOM removal / reindex
+				const prevActiveFieldId = (self.activeFieldIndex >= 0)
+					? ($(`#mr-tee-field-panel-${self.activeFieldIndex} .mr-tee-field-id`).val() || '')
+					: '';
 
 				// 1. Remove side
 				self.printSides.splice(sideIdx, 1);
@@ -4051,7 +4636,11 @@
 
 				// 4. Clean removed view IDs from remaining fields' placements maps
 				const remCount = $('.mr-tee-field-box').length;
+				let preferredFieldIndex = -1;
 				for (let i = 0; i < remCount; i++) {
+					if (prevActiveFieldId && $(`#mr-tee-field-panel-${i} .mr-tee-field-id`).val() === prevActiveFieldId) {
+						preferredFieldIndex = i;
+					}
 					const placements = self.getFieldPlacements(i);
 					let mutated = false;
 					removedViewIds.forEach(vid => {
@@ -4063,15 +4652,23 @@
 					if (mutated) self.setFieldPlacements(i, placements);
 				}
 
+				// Refresh side <select> options BEFORE renderSidesBar() so field counts read updated values!
+				self.activeFieldIndex = -1;
+				self.refreshAllSideSelects();
 				self.renderSidesBar();
 				self.renderViewsBar();
-				self.refreshAllSideSelects();
 				self.syncHiddenMultiViewJson();
 				self.setViewUploadStatus('');
 
 				const activeStillExists = self.previewViews.some(v => v.id === self.activeViewId);
-				self.setActiveView(activeStillExists ? self.activeViewId : fallbackView.id);
+				self.setActiveView(
+					activeStillExists ? self.activeViewId : fallbackView.id,
+					preferredFieldIndex >= 0 ? { preferredFieldIndex } : {}
+				);
 				self.renderExportSummary();
+				self.resetHistory();
+				self.ensureHistoryBase();
+				self.markDirty();
 			});
 
 			// Add New View
@@ -4115,6 +4712,7 @@
 				self.syncMultiViewInputs();
 				self.setActiveView(newView.id);
 				self.highlightViewImagePrompt('👆 Sélectionnez la photo mockup pour cette nouvelle vue.');
+				self.markDirty();
 			});
 
 			// 1-Click Recto/Verso Wizard
@@ -4161,6 +4759,7 @@
 				self.setActiveView(backView.id);
 				self.highlightViewImagePrompt('👆 Face Verso prête ! Choisissez l\'image mockup du dos.');
 				self.renderExportSummary();
+				self.markDirty();
 			});
 
 			// Add Custom Printable Side
@@ -4207,6 +4806,7 @@
 				self.setActiveView(newView.id);
 				self.highlightViewImagePrompt(`👆 Face « ${label} » ajoutée ! Choisissez son image mockup.`);
 				self.renderExportSummary();
+				self.markDirty();
 			});
 
 			// Active View Settings: Label
@@ -4233,6 +4833,7 @@
 				self.renderSidesBar();
 				self.syncHiddenMultiViewJson();
 				self.setActiveView(view.id);
+				self.renderExportSummary();
 			});
 
 			// Active View Settings: View Role
@@ -4243,6 +4844,8 @@
 				view.view_role = ['full', 'closeup', 'detail'].includes(role) ? role : 'full';
 				self.renderViewsBar();
 				self.syncHiddenMultiViewJson();
+				self.recalculateDimensions();
+				self.renderExportSummary();
 			});
 
 			// Active View Settings: Blend Mode
@@ -4287,6 +4890,7 @@
 				});
 
 				frame.on('select', function() {
+					if (!self.previewViews.some(v => v.id === view.id)) return;
 					const att = frame.state().get('selection').first().toJSON();
 					const url = (att && att.url) ? att.url : '';
 					const attId = (att && att.id) ? parseInt(att.id, 10) : 0;
@@ -4295,12 +4899,15 @@
 					const normUrl = self.normalizeAdminAssetUrl(url);
 					view.image_id = attId || 0;
 					view.image_url = normUrl;
-					self.updateStageImageDisplay(normUrl);
+					if (self.activeViewId === view.id) {
+						self.updateStageImageDisplay(normUrl);
+						self.recalculateDimensions();
+						self.renderAllBoxesPreviews();
+					}
 					self.renderViewsBar();
 					self.syncHiddenMultiViewJson();
-					self.recalculateDimensions();
-					self.renderAllBoxesPreviews();
 					self.setViewUploadStatus('✅ Image mockup mise à jour !', 'success');
+					self.markDirty();
 				});
 
 				frame.open();
@@ -4332,6 +4939,7 @@
 					contentType: false,
 					success: function(resp) {
 						inputEl.value = '';
+						if (!self.previewViews.some(v => v.id === view.id)) return;
 						if (resp && resp.success && resp.data && resp.data.url) {
 							const normUrl = self.normalizeAdminAssetUrl(resp.data.url);
 							view.image_id = parseInt(resp.data.id, 10) || 0;
@@ -4345,6 +4953,7 @@
 							self.renderViewsBar();
 							self.syncHiddenMultiViewJson();
 							self.setViewUploadStatus('✅ Image mockup importée !', 'success');
+							self.markDirty();
 						} else {
 							const msg = (resp && resp.data && resp.data.message) ? resp.data.message : 'Erreur lors de l\'import.';
 							self.setViewUploadStatus(`❌ ${msg}`, 'error');
@@ -4358,6 +4967,21 @@
 			});
 
 			// Move Active View Left / Right
+			const refreshAfterViewReorder = (nextIdx) => {
+				const activeView = self.getActiveView();
+				self.renderViewsBar();
+				self.syncHiddenMultiViewJson();
+				if (activeView && !activeView.image_url) {
+					const effUrl = (self.isDefaultSideFirstView(activeView) && self.defaultThumbUrl) ? self.defaultThumbUrl : '';
+					self.updateStageImageDisplay(effUrl);
+				}
+				self.recalculateDimensions();
+				self.renderExportSummary();
+				$('#mr_tee_view_move_left').prop('disabled', nextIdx <= 0);
+				$('#mr_tee_view_move_right').prop('disabled', nextIdx >= self.previewViews.length - 1);
+				self.markDirty();
+			};
+
 			$(document).on('click', '#mr_tee_view_move_left', function(e) {
 				e.preventDefault();
 				const idx = self.previewViews.findIndex(v => v.id === self.activeViewId);
@@ -4365,10 +4989,7 @@
 				const tmp = self.previewViews[idx - 1];
 				self.previewViews[idx - 1] = self.previewViews[idx];
 				self.previewViews[idx] = tmp;
-				self.renderViewsBar();
-				self.syncHiddenMultiViewJson();
-				$('#mr_tee_view_move_left').prop('disabled', idx - 1 <= 0);
-				$('#mr_tee_view_move_right').prop('disabled', false);
+				refreshAfterViewReorder(idx - 1);
 			});
 
 			$(document).on('click', '#mr_tee_view_move_right', function(e) {
@@ -4378,10 +4999,7 @@
 				const tmp = self.previewViews[idx + 1];
 				self.previewViews[idx + 1] = self.previewViews[idx];
 				self.previewViews[idx] = tmp;
-				self.renderViewsBar();
-				self.syncHiddenMultiViewJson();
-				$('#mr_tee_view_move_left').prop('disabled', false);
-				$('#mr_tee_view_move_right').prop('disabled', idx + 1 >= self.previewViews.length - 1);
+				refreshAfterViewReorder(idx + 1);
 			});
 
 			// Delete Active View (never delete last remaining view)
@@ -4415,6 +5033,8 @@
 				if (nextView) {
 					self.setActiveView(nextView.id);
 				}
+				self.renderExportSummary();
+				self.markDirty();
 			});
 
 			// Per-field Side Selector Change
@@ -4431,13 +5051,16 @@
 				$(`#mr-tee-field-panel-${idx}`).attr('data-side-id', newSideId);
 
 				const currentCoords = self.getFieldCurrentCoords(idx);
-				const placements = self.getFieldPlacements(idx);
+				const prevPlacements = self.getFieldPlacements(idx);
+				const nextPlacements = {};
 				self.previewViews.forEach(v => {
-					if (v.side_id === newSideId && !placements[v.id]) {
-						placements[v.id] = { ...currentCoords };
+					if (v.side_id === newSideId) {
+						nextPlacements[v.id] = (prevPlacements[v.id] && prevPlacements[v.id].box_left !== undefined)
+							? prevPlacements[v.id]
+							: { ...currentCoords };
 					}
 				});
-				self.setFieldPlacements(idx, placements);
+				self.setFieldPlacements(idx, nextPlacements);
 				self.renderSidesBar();
 
 				const activeView = self.getActiveView();
@@ -4456,8 +5079,8 @@
 							is_cart_preview: true,
 						};
 						self.previewViews.push(targetView);
-						placements[targetView.id] = { ...currentCoords };
-						self.setFieldPlacements(idx, placements);
+						nextPlacements[targetView.id] = { ...currentCoords };
+						self.setFieldPlacements(idx, nextPlacements);
 						self.renderViewsBar();
 					}
 					self.setActiveView(targetView.id, { preferredFieldIndex: idx });
@@ -4469,6 +5092,7 @@
 					self.renderBoxPreview(idx);
 					self.recalculateDimensions();
 				}
+				self.renderExportSummary();
 			});
 
 			// Flush multi-view JSON right before WordPress post form submit (throttled against 3x back-to-back calls)

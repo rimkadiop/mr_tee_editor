@@ -33,11 +33,11 @@ class VisualPlacementStage {
 	 */
 	public static $field_colors = array(
 		'#2563eb', // Blue
-		'#059669', // Emerald
+		'#047857', // Emerald (WCAG AA)
 		'#7c3aed', // Purple
-		'#d97706', // Amber
+		'#b45309', // Amber (WCAG AA)
 		'#db2777', // Rose
-		'#0891b2', // Cyan
+		'#0e7490', // Cyan (WCAG AA)
 		'#dc2626', // Red
 		'#4f46e5', // Indigo
 	);
@@ -150,14 +150,35 @@ class VisualPlacementStage {
 		$default_side_id = $print_sides[0]['id'];
 		$has_back_side   = isset( $sides_by_id['back'] );
 
+		$field_count_by_side = array();
+		foreach ( $text_lines as $tl ) {
+			$tl_sid = ! empty( $tl['side_id'] ) && isset( $sides_by_id[ $tl['side_id'] ] ) ? $tl['side_id'] : $default_side_id;
+			if ( ! isset( $field_count_by_side[ $tl_sid ] ) ) {
+				$field_count_by_side[ $tl_sid ] = 0;
+			}
+			$field_count_by_side[ $tl_sid ]++;
+		}
+
 		$preview_views = ( ! empty( $config['preview_views'] ) && is_array( $config['preview_views'] ) )
 			? array_values( $config['preview_views'] )
 			: SceneGraphSchema::normalize_preview_views( array(), $print_sides, 0, $thumb_url );
 
+		$first_default_side_view_id = '';
+		foreach ( $preview_views as $pv_idx => $pv ) {
+			$pv_sid = ! empty( $pv['side_id'] ) && isset( $sides_by_id[ $pv['side_id'] ] ) ? $pv['side_id'] : $default_side_id;
+			if ( $pv_sid === $default_side_id ) {
+				$first_default_side_view_id = ! empty( $pv['id'] ) ? $pv['id'] : 'view_' . ( $pv_idx + 1 );
+				break;
+			}
+		}
+
 		$first_view         = $preview_views[0];
 		$first_view_id      = ! empty( $first_view['id'] ) ? $first_view['id'] : 'view_1';
 		$first_view_side_id = ! empty( $first_view['side_id'] ) && isset( $sides_by_id[ $first_view['side_id'] ] ) ? $first_view['side_id'] : $default_side_id;
-		$first_view_img     = SceneGraphSchema::normalize_url_scheme( ! empty( $first_view['image_url'] ) ? $first_view['image_url'] : $thumb_url );
+		$first_view_img_raw = ! empty( $first_view['image_url'] )
+			? $first_view['image_url']
+			: ( $first_view_id === $first_default_side_view_id ? $thumb_url : '' );
+		$first_view_img     = SceneGraphSchema::normalize_url_scheme( $first_view_img_raw );
 		$first_view_blend   = ! empty( $first_view['blend_mode'] ) ? $first_view['blend_mode'] : 'normal';
 
 		// Use the active view's printable side dimensions for the physical summary bar & drawer
@@ -219,10 +240,10 @@ class VisualPlacementStage {
 				</div>
 				<div class="mr-tee-dim-summary-actions">
 					<button type="button" class="button button-small mr-tee-btn-dim-toggle" id="mr-tee-toggle-dim-drawer" aria-expanded="false" aria-controls="mr-tee-dimension-toolbar">
-						⚙ <?php esc_html_e( 'Format & Dimensions', 'mr-tee-editor' ); ?>
+						<span aria-hidden="true">⚙</span> <?php esc_html_e( 'Format & Dimensions', 'mr-tee-editor' ); ?>
 					</button>
 					<button type="button" class="button button-small mr-tee-btn-jump-fonts" id="mr-tee-jump-to-fonts">
-						🔤 <span id="mr-tee-summary-fonts-count"><?php echo esc_html( count( $allowed_fonts ) ); ?></span> <?php esc_html_e( 'polices →', 'mr-tee-editor' ); ?>
+						<span aria-hidden="true">🔤</span> <span id="mr-tee-summary-fonts-count"><?php echo esc_html( count( $allowed_fonts ) ); ?></span> <?php esc_html_e( 'polices →', 'mr-tee-editor' ); ?>
 					</button>
 				</div>
 			</div>
@@ -238,7 +259,7 @@ class VisualPlacementStage {
 						</select>
 					</div>
 
-					<div class="mr-tee-dim-field mr-tee-dim-field-unit">
+					<div class="mr-tee-dim-field">
 						<label for="mr_tee_print_unit"><?php esc_html_e( 'Unité', 'mr-tee-editor' ); ?></label>
 						<select id="mr_tee_print_unit" name="mr_tee_config[print_unit]" class="mr-tee-dim-select">
 							<option value="cm" <?php selected( $unit, 'cm' ); ?>>cm</option>
@@ -263,40 +284,40 @@ class VisualPlacementStage {
 					</div>
 
 					<div class="mr-tee-dim-field mr-tee-dim-field-lock">
-						<label>
+						<label for="mr_tee_lock_aspect_ratio">
 							<input type="hidden" name="mr_tee_config[lock_aspect_ratio]" value="0" />
 							<input type="checkbox" id="mr_tee_lock_aspect_ratio" name="mr_tee_config[lock_aspect_ratio]" value="1" <?php checked( $is_locked ); ?> />
 							<strong><?php esc_html_e( 'Verrouiller le ratio', 'mr-tee-editor' ); ?></strong>
 						</label>
-						<span class="description"><?php esc_html_e( 'Conserve ces proportions exactes sur tous les écrans', 'mr-tee-editor' ); ?></span>
+						<span class="description"><?php esc_html_e( 'Conserve ces proportions exactes sur tous les écrans (automatique pour Objet Plat)', 'mr-tee-editor' ); ?></span>
 					</div>
 				</div>
 
 				<!-- Quick Dimensions Presets (POD Standards) -->
 				<div class="mr-tee-presets-fast-bar">
 					<span class="mr-tee-fast-label"><?php esc_html_e( 'Gabarits POD :', 'mr-tee-editor' ); ?></span>
-					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="8.5" data-h="5.5" data-lock="1" data-ratio="17:11">📇 <?php esc_html_e( 'Carte (8.5 × 5.5 cm)', 'mr-tee-editor' ); ?></button>
-					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="15" data-h="10" data-lock="1" data-ratio="3:2">🖼️ <?php esc_html_e( 'Photo (15 × 10 cm)', 'mr-tee-editor' ); ?></button>
-					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="20" data-h="9.5" data-lock="1" data-ratio="40:19">☕ <?php esc_html_e( 'Mug Wrap (20 × 9.5 cm)', 'mr-tee-editor' ); ?></button>
-					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="21" data-h="29.7" data-lock="1" data-ratio="1:1.414">📄 <?php esc_html_e( 'Flyer A4 (21 × 29.7 cm)', 'mr-tee-editor' ); ?></button>
-					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="10" data-h="10" data-lock="1" data-ratio="1:1">🟩 <?php esc_html_e( 'Carré (10 × 10 cm)', 'mr-tee-editor' ); ?></button>
-					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="garment" data-unit="cm" data-w="30" data-h="40" data-lock="0" data-ratio="3:4">👕 <?php esc_html_e( 'T-Shirt (30 × 40 cm)', 'mr-tee-editor' ); ?></button>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="8.5" data-h="5.5" data-lock="1" data-ratio="17:11"><span aria-hidden="true">📇</span> <?php esc_html_e( 'Carte (8.5 × 5.5 cm)', 'mr-tee-editor' ); ?></button>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="15" data-h="10" data-lock="1" data-ratio="3:2"><span aria-hidden="true">🖼️</span> <?php esc_html_e( 'Photo (15 × 10 cm)', 'mr-tee-editor' ); ?></button>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="20" data-h="9.5" data-lock="1" data-ratio="40:19"><span aria-hidden="true">☕</span> <?php esc_html_e( 'Mug Wrap (20 × 9.5 cm)', 'mr-tee-editor' ); ?></button>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="21" data-h="29.7" data-lock="1" data-ratio="1:1.414"><span aria-hidden="true">📄</span> <?php esc_html_e( 'Flyer A4 (21 × 29.7 cm)', 'mr-tee-editor' ); ?></button>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="flat_object" data-unit="cm" data-w="10" data-h="10" data-lock="1" data-ratio="1:1"><span aria-hidden="true">🟩</span> <?php esc_html_e( 'Carré (10 × 10 cm)', 'mr-tee-editor' ); ?></button>
+					<button type="button" class="button button-small mr-tee-btn-preset-dim" data-type="garment" data-unit="cm" data-w="30" data-h="40" data-lock="0" data-ratio="3:4"><span aria-hidden="true">👕</span> <?php esc_html_e( 'T-Shirt (30 × 40 cm)', 'mr-tee-editor' ); ?></button>
 				</div>
 
 				<!-- Live Ratio & Dynamic DPI Export Badge -->
 				<div class="mr-tee-ratio-badge" id="mr-tee-ratio-badge">
-					<span class="mr-tee-badge-icon dashicons dashicons-image-crop"></span>
-					<span class="mr-tee-badge-cum-text">
+					<span class="mr-tee-badge-icon dashicons dashicons-image-crop" aria-hidden="true"></span>
+					<span>
 						<strong><?php esc_html_e( 'Zone d\'impression :', 'mr-tee-editor' ); ?></strong>
 						<span id="mr-tee-badge-cum-val" class="mr-tee-badge-cum-val"><?php echo esc_html( $cum_w . ' × ' . $cum_h . ' ' . $unit ); ?></span>
 					</span>
-					<span class="mr-tee-badge-divider">|</span>
-					<span class="mr-tee-badge-ratio-text">
+					<span class="mr-tee-badge-divider" aria-hidden="true">|</span>
+					<span>
 						<strong><?php esc_html_e( 'Ratio :', 'mr-tee-editor' ); ?></strong>
 						<span id="mr-tee-badge-ratio-val"><?php echo esc_html( $cum_simple . ' (~' . round( $cumulative['aspect_ratio'], 3 ) . ' : 1)' ); ?></span>
 					</span>
-					<span class="mr-tee-badge-divider">|</span>
-					<span class="mr-tee-badge-px-text">
+					<span class="mr-tee-badge-divider" aria-hidden="true">|</span>
+					<span>
 						<strong><?php esc_html_e( 'Fichier', 'mr-tee-editor' ); ?> <span id="mr-tee-badge-dpi-val"><?php echo esc_html( $dpi ); ?></span> DPI :</strong>
 						<span id="mr-tee-badge-px-val"><?php echo esc_html( $cum_w_px . ' × ' . $cum_h_px . ' px' ); ?></span>
 					</span>
@@ -314,20 +335,38 @@ class VisualPlacementStage {
 							<?php
 							$s_id     = $side['id'];
 							$s_active = ( $s_id === $first_view_side_id );
+							$s_count  = isset( $field_count_by_side[ $s_id ] ) ? intval( $field_count_by_side[ $s_id ] ) : 0;
 							?>
 							<div
-								role="button"
-								tabindex="0"
 								class="mr-tee-side-pill <?php echo $s_active ? 'is-active' : ''; ?>"
 								data-side-id="<?php echo esc_attr( $s_id ); ?>"
 							>
-								<span class="mr-tee-side-pill-dot" aria-hidden="true"></span>
-								<span class="mr-tee-side-pill-label"><?php echo esc_html( $side['label'] ); ?></span>
-								<span class="mr-tee-side-pill-dims"><?php echo esc_html( $side['print_real_width'] . '×' . $side['print_real_height'] . ' ' . $side['print_unit'] ); ?></span>
+								<button
+									type="button"
+									class="mr-tee-side-pill-main"
+									data-side-id="<?php echo esc_attr( $s_id ); ?>"
+									aria-pressed="<?php echo $s_active ? 'true' : 'false'; ?>"
+								>
+									<span class="mr-tee-side-pill-dot" aria-hidden="true"></span>
+									<span class="mr-tee-side-pill-label"><?php echo esc_html( $side['label'] ); ?></span>
+									<span class="mr-tee-side-pill-dims"><?php echo esc_html( $side['print_real_width'] . '×' . $side['print_real_height'] . ' ' . $side['print_unit'] . ' · ' . $s_count ); ?></span>
+								</button>
 								<span class="mr-tee-side-pill-controls">
-									<button type="button" class="mr-tee-side-action-btn mr-tee-side-rename-btn" data-side-id="<?php echo esc_attr( $s_id ); ?>" title="<?php esc_attr_e( 'Renommer cette face', 'mr-tee-editor' ); ?>">✎</button>
+									<button
+										type="button"
+										class="mr-tee-side-action-btn mr-tee-side-rename-btn"
+										data-side-id="<?php echo esc_attr( $s_id ); ?>"
+										title="<?php esc_attr_e( 'Renommer cette face', 'mr-tee-editor' ); ?>"
+										aria-label="<?php echo esc_attr( sprintf( __( 'Renommer %s', 'mr-tee-editor' ), $side['label'] ) ); ?>"
+									>✎</button>
 									<?php if ( count( $print_sides ) > 1 ) : ?>
-										<button type="button" class="mr-tee-side-action-btn mr-tee-side-delete-btn" data-side-id="<?php echo esc_attr( $s_id ); ?>" title="<?php esc_attr_e( 'Supprimer cette face', 'mr-tee-editor' ); ?>">✕</button>
+										<button
+											type="button"
+											class="mr-tee-side-action-btn mr-tee-side-delete-btn"
+											data-side-id="<?php echo esc_attr( $s_id ); ?>"
+											title="<?php esc_attr_e( 'Supprimer cette face', 'mr-tee-editor' ); ?>"
+											aria-label="<?php echo esc_attr( sprintf( __( 'Supprimer %s', 'mr-tee-editor' ), $side['label'] ) ); ?>"
+										>✕</button>
 									<?php endif; ?>
 								</span>
 							</div>
@@ -358,7 +397,7 @@ class VisualPlacementStage {
 							$v_side_label = isset( $sides_by_id[ $v_side_id ]['label'] ) ? $sides_by_id[ $v_side_id ]['label'] : $v_side_id;
 							$v_role       = ! empty( $view['view_role'] ) ? $view['view_role'] : 'full';
 							$v_role_label = isset( $role_labels[ $v_role ] ) ? $role_labels[ $v_role ] : $role_labels['full'];
-							$v_raw_img    = ! empty( $view['image_url'] ) ? $view['image_url'] : ( 0 === $v_idx ? $thumb_url : '' );
+							$v_raw_img    = ! empty( $view['image_url'] ) ? $view['image_url'] : ( $v_id === $first_default_side_view_id ? $thumb_url : '' );
 							$v_img        = SceneGraphSchema::normalize_url_scheme( $v_raw_img );
 							?>
 							<button
@@ -367,12 +406,13 @@ class VisualPlacementStage {
 								data-view-id="<?php echo esc_attr( $v_id ); ?>"
 								data-side-id="<?php echo esc_attr( $v_side_id ); ?>"
 								data-view-role="<?php echo esc_attr( $v_role ); ?>"
+								aria-pressed="<?php echo 0 === $v_idx ? 'true' : 'false'; ?>"
 							>
 								<span class="mr-tee-view-tab-thumb">
 									<?php if ( ! empty( $v_img ) ) : ?>
 										<img src="<?php echo esc_url( $v_img ); ?>" alt="" loading="lazy" decoding="async" />
 									<?php else : ?>
-										<span class="dashicons dashicons-format-image"></span>
+										<span class="dashicons dashicons-format-image" aria-hidden="true"></span>
 									<?php endif; ?>
 								</span>
 								<span class="mr-tee-view-tab-meta">
@@ -380,6 +420,9 @@ class VisualPlacementStage {
 									<span class="mr-tee-view-tab-badges">
 										<span class="mr-tee-view-side-badge"><?php echo esc_html( $v_side_label ); ?></span>
 										<span class="mr-tee-view-role-badge is-role-<?php echo esc_attr( $v_role ); ?>"><?php echo esc_html( $v_role_label ); ?></span>
+										<?php if ( ! empty( $view['is_cart_preview'] ) ) : ?>
+											<span class="mr-tee-view-badge-cart" title="<?php esc_attr_e( 'Aperçu panier', 'mr-tee-editor' ); ?>" aria-label="<?php esc_attr_e( 'Aperçu panier', 'mr-tee-editor' ); ?>">🛒</span>
+										<?php endif; ?>
 									</span>
 								</span>
 							</button>
@@ -394,7 +437,7 @@ class VisualPlacementStage {
 
 				<!-- C. Active View Settings Mini-Bar -->
 				<div class="mr-tee-active-view-bar" id="mr-tee-active-view-bar" data-active-view-id="<?php echo esc_attr( $first_view_id ); ?>">
-					<div class="mr-tee-view-setting-group">
+					<div class="mr-tee-view-setting-group mr-tee-view-setting-name">
 						<label for="mr_tee_view_label"><?php esc_html_e( 'Nom de la vue', 'mr-tee-editor' ); ?></label>
 						<input
 							type="text"
@@ -446,24 +489,26 @@ class VisualPlacementStage {
 
 					<div class="mr-tee-view-setting-actions">
 						<button type="button" id="mr_tee_view_image_btn" class="button button-small">
-							📁 <?php esc_html_e( 'Image WP', 'mr-tee-editor' ); ?>
+							<span aria-hidden="true">📁</span> <?php esc_html_e( 'Image WP', 'mr-tee-editor' ); ?>
 						</button>
 						<label class="button button-small mr-tee-view-upload-label">
-							<span>⬆️ <?php esc_html_e( 'Importer', 'mr-tee-editor' ); ?></span>
-							<input type="file" id="mr_tee_view_image_upload" accept="image/*" style="display:none;" />
+							<span><span aria-hidden="true">⬆️</span> <?php esc_html_e( 'Importer', 'mr-tee-editor' ); ?></span>
+							<input type="file" id="mr_tee_view_image_upload" accept="image/*" class="screen-reader-text" />
 						</label>
 						<button
 							type="button"
 							id="mr_tee_view_move_left"
 							class="button button-small"
 							title="<?php esc_attr_e( 'Déplacer la vue vers la gauche', 'mr-tee-editor' ); ?>"
-							<?php echo count( $preview_views ) <= 1 ? 'disabled' : ''; ?>
+							aria-label="<?php esc_attr_e( 'Déplacer la vue vers la gauche', 'mr-tee-editor' ); ?>"
+							disabled
 						>◀</button>
 						<button
 							type="button"
 							id="mr_tee_view_move_right"
 							class="button button-small"
 							title="<?php esc_attr_e( 'Déplacer la vue vers la droite', 'mr-tee-editor' ); ?>"
+							aria-label="<?php esc_attr_e( 'Déplacer la vue vers la droite', 'mr-tee-editor' ); ?>"
 							<?php echo count( $preview_views ) <= 1 ? 'disabled' : ''; ?>
 						>▶</button>
 						<button
@@ -471,10 +516,11 @@ class VisualPlacementStage {
 							id="mr_tee_view_delete_btn"
 							class="button button-small button-link-delete"
 							title="<?php esc_attr_e( 'Supprimer cette vue', 'mr-tee-editor' ); ?>"
+							aria-label="<?php esc_attr_e( 'Supprimer cette vue', 'mr-tee-editor' ); ?>"
 							<?php echo count( $preview_views ) <= 1 ? 'disabled' : ''; ?>
 						>✕</button>
-						<span id="mr-tee-view-upload-status" class="mr-tee-view-upload-status"></span>
 					</div>
+					<span id="mr-tee-view-upload-status" class="mr-tee-view-upload-status" aria-live="polite"></span>
 				</div>
 
 				<!-- Hidden JSON Payloads for Printable Sides & Preview Views -->
@@ -487,19 +533,22 @@ class VisualPlacementStage {
 				<div class="mr-tee-pills-scroll" id="mr-tee-pills-list">
 					<?php foreach ( $text_lines as $idx => $line ) : ?>
 						<?php
-						$color          = self::$field_colors[ $idx % count( self::$field_colors ) ];
-						$field_type     = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) ? 'image' : 'text';
-						$is_image       = ( 'image' === $field_type );
-						$line_side_id   = ! empty( $line['side_id'] ) && isset( $sides_by_id[ $line['side_id'] ] ) ? $line['side_id'] : $default_side_id;
-						$view_placement = ( $line_side_id === $first_view_side_id && ! empty( $line['placements'][ $first_view_id ] ) && is_array( $line['placements'][ $first_view_id ] ) )
+						$color             = self::$field_colors[ $idx % count( self::$field_colors ) ];
+						$field_type        = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) ? 'image' : 'text';
+						$is_image          = ( 'image' === $field_type );
+						$line_side_id      = ! empty( $line['side_id'] ) && isset( $sides_by_id[ $line['side_id'] ] ) ? $line['side_id'] : $default_side_id;
+						$is_on_active_side = ( $line_side_id === $first_view_side_id );
+						$view_placement    = ( $is_on_active_side && ! empty( $line['placements'][ $first_view_id ] ) && is_array( $line['placements'][ $first_view_id ] ) )
 							? $line['placements'][ $first_view_id ]
 							: null;
-						$bw             = ( $view_placement && isset( $view_placement['box_width'] ) ) ? floatval( $view_placement['box_width'] ) : ( isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : 40.0 );
-						$bh             = ( $view_placement && isset( $view_placement['box_height'] ) ) ? floatval( $view_placement['box_height'] ) : ( isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : ( $is_image ? 30.0 : 8.5 ) );
+						$bw                = ( $view_placement && isset( $view_placement['box_width'] ) ) ? floatval( $view_placement['box_width'] ) : ( isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : 40.0 );
+						$bh                = ( $view_placement && isset( $view_placement['box_height'] ) ) ? floatval( $view_placement['box_height'] ) : ( isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : ( $is_image ? 30.0 : 8.5 ) );
+						$br                = ( $view_placement && isset( $view_placement['box_rotate'] ) ) ? intval( round( floatval( $view_placement['box_rotate'] ) ) ) : ( isset( $line['box_rotate'] ) ? intval( round( floatval( $line['box_rotate'] ) ) ) : 0 );
+						$rot_suffix        = 0 !== $br ? ' (' . $br . '°)' : '';
 						?>
 						<button
 							type="button"
-							class="mr-tee-field-pill <?php echo $initial_active_idx === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-pill' : ''; ?>"
+							class="mr-tee-field-pill <?php echo $initial_active_idx === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-pill' : ''; ?> <?php echo $is_on_active_side ? '' : 'is-other-side'; ?>"
 							data-field-index="<?php echo esc_attr( $idx ); ?>"
 							data-field-type="<?php echo esc_attr( $field_type ); ?>"
 							data-side-id="<?php echo esc_attr( $line_side_id ); ?>"
@@ -510,21 +559,21 @@ class VisualPlacementStage {
 								<span class="mr-tee-pill-type-icon" aria-hidden="true">🖼️</span>
 							<?php endif; ?>
 							<span class="mr-tee-pill-label"><?php echo esc_html( $line['label'] ); ?></span>
-							<span class="mr-tee-pill-dims"><?php echo esc_html( round( $bw, 1 ) . '×' . round( $bh, 1 ) . '%' ); ?></span>
+							<span class="mr-tee-pill-dims"><?php echo esc_html( round( $bw, 1 ) . '×' . round( $bh, 1 ) . '%' . $rot_suffix ); ?></span>
 						</button>
 					<?php endforeach; ?>
 				</div>
 
 				<div class="mr-tee-add-buttons-group">
 					<div class="mr-tee-field-reorder-group" title="<?php esc_attr_e( 'Réordonner le champ actif dans le formulaire client', 'mr-tee-editor' ); ?>">
-						<button type="button" class="button button-small" id="mr-tee-btn-field-move-left" title="<?php esc_attr_e( 'Déplacer le champ actif avant', 'mr-tee-editor' ); ?>" <?php echo count( $text_lines ) <= 1 ? 'disabled' : ''; ?>>◀</button>
-						<button type="button" class="button button-small" id="mr-tee-btn-field-move-right" title="<?php esc_attr_e( 'Déplacer le champ actif après', 'mr-tee-editor' ); ?>" <?php echo count( $text_lines ) <= 1 ? 'disabled' : ''; ?>>▶</button>
+						<button type="button" class="button button-small" id="mr-tee-btn-field-move-left" title="<?php esc_attr_e( 'Déplacer le champ actif avant', 'mr-tee-editor' ); ?>" aria-label="<?php esc_attr_e( 'Déplacer le champ actif avant', 'mr-tee-editor' ); ?>" <?php echo count( $text_lines ) <= 1 ? 'disabled' : ''; ?>>◀</button>
+						<button type="button" class="button button-small" id="mr-tee-btn-field-move-right" title="<?php esc_attr_e( 'Déplacer le champ actif après', 'mr-tee-editor' ); ?>" aria-label="<?php esc_attr_e( 'Déplacer le champ actif après', 'mr-tee-editor' ); ?>" <?php echo count( $text_lines ) <= 1 ? 'disabled' : ''; ?>>▶</button>
 					</div>
 					<button type="button" class="button button-secondary button-small mr-tee-btn-add-field-pill" id="mr-tee-btn-add-field-pill">
 						+ <?php esc_html_e( 'Texte', 'mr-tee-editor' ); ?>
 					</button>
 					<button type="button" class="button button-secondary button-small mr-tee-btn-add-image-field-pill" id="mr-tee-btn-add-image-field-pill">
-						🖼️ + <?php esc_html_e( 'Image', 'mr-tee-editor' ); ?>
+						<span aria-hidden="true">🖼️</span> + <?php esc_html_e( 'Image', 'mr-tee-editor' ); ?>
 					</button>
 				</div>
 			</div>
@@ -533,18 +582,23 @@ class VisualPlacementStage {
 				<!-- Left Column: Canvas Micro-Toolbar + Mockup Stage -->
 				<div class="mr-tee-stage-col-preview">
 					<!-- Canvas Micro-Toolbar -->
-					<div class="mr-tee-canvas-toolbar" id="mr-tee-canvas-toolbar">
-						<button type="button" class="mr-tee-canvas-tool-btn" data-action="center-h" title="<?php esc_attr_e( 'Centrer horizontalement', 'mr-tee-editor' ); ?>">↔ <?php esc_html_e( 'Centrer H', 'mr-tee-editor' ); ?></button>
-						<button type="button" class="mr-tee-canvas-tool-btn" data-action="center-v" title="<?php esc_attr_e( 'Centrer verticalement', 'mr-tee-editor' ); ?>">↕ <?php esc_html_e( 'Centrer V', 'mr-tee-editor' ); ?></button>
-						<button type="button" class="mr-tee-canvas-tool-btn" data-action="center-both" title="<?php esc_attr_e( 'Centrer au milieu du visuel', 'mr-tee-editor' ); ?>">✛ <?php esc_html_e( 'Centrer', 'mr-tee-editor' ); ?></button>
+					<div class="mr-tee-canvas-toolbar" id="mr-tee-canvas-toolbar" role="toolbar" aria-label="<?php esc_attr_e( 'Outils de positionnement', 'mr-tee-editor' ); ?>">
+						<button type="button" class="mr-tee-canvas-tool-btn" data-action="undo" title="<?php esc_attr_e( 'Annuler le dernier déplacement (Ctrl+Z)', 'mr-tee-editor' ); ?>" aria-label="<?php esc_attr_e( 'Annuler', 'mr-tee-editor' ); ?>" disabled>↶</button>
+						<button type="button" class="mr-tee-canvas-tool-btn" data-action="redo" title="<?php esc_attr_e( 'Rétablir (Ctrl+Shift+Z)', 'mr-tee-editor' ); ?>" aria-label="<?php esc_attr_e( 'Rétablir', 'mr-tee-editor' ); ?>" disabled>↷</button>
 						<span class="mr-tee-canvas-tool-sep" aria-hidden="true"></span>
-						<button type="button" class="mr-tee-canvas-tool-btn" data-action="reset-rot" title="<?php esc_attr_e( 'Réinitialiser la rotation à 0°', 'mr-tee-editor' ); ?>">↺ 0°</button>
-						<button type="button" class="mr-tee-canvas-tool-btn" data-action="duplicate" title="<?php esc_attr_e( 'Dupliquer le champ actif', 'mr-tee-editor' ); ?>"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><?php esc_html_e( 'Dupliquer', 'mr-tee-editor' ); ?></button>
+						<button type="button" class="mr-tee-canvas-tool-btn" data-action="center-h" title="<?php esc_attr_e( 'Centrer horizontalement', 'mr-tee-editor' ); ?>"><span aria-hidden="true">↔</span> <?php esc_html_e( 'Centrer H', 'mr-tee-editor' ); ?></button>
+						<button type="button" class="mr-tee-canvas-tool-btn" data-action="center-v" title="<?php esc_attr_e( 'Centrer verticalement', 'mr-tee-editor' ); ?>"><span aria-hidden="true">↕</span> <?php esc_html_e( 'Centrer V', 'mr-tee-editor' ); ?></button>
+						<button type="button" class="mr-tee-canvas-tool-btn" data-action="center-both" title="<?php esc_attr_e( 'Centrer au milieu du visuel', 'mr-tee-editor' ); ?>"><span aria-hidden="true">✛</span> <?php esc_html_e( 'Centrer', 'mr-tee-editor' ); ?></button>
+						<span class="mr-tee-canvas-tool-sep" aria-hidden="true"></span>
+						<button type="button" class="mr-tee-canvas-tool-btn" data-action="reset-rot" title="<?php esc_attr_e( 'Réinitialiser la rotation à 0°', 'mr-tee-editor' ); ?>"><span aria-hidden="true">↺</span> 0°</button>
+						<button type="button" class="mr-tee-canvas-tool-btn" data-action="duplicate" title="<?php esc_attr_e( 'Dupliquer le champ actif', 'mr-tee-editor' ); ?>"><svg class="mr-tee-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><?php esc_html_e( 'Dupliquer', 'mr-tee-editor' ); ?></button>
 					</div>
 
 					<div
 						class="mr-tee-stage-canvas-wrap <?php echo $is_locked ? 'is-aspect-locked' : ''; ?> <?php echo '' === $first_view_img ? 'is-no-image' : ''; ?>"
 						id="mr-tee-stage-canvas-wrap"
+						tabindex="0"
+						aria-label="<?php esc_attr_e( 'Zone de placement visuelle — utilisez les flèches pour ajuster la zone active', 'mr-tee-editor' ); ?>"
 						data-active-view-id="<?php echo esc_attr( $first_view_id ); ?>"
 						data-active-side-id="<?php echo esc_attr( $first_view_side_id ); ?>"
 						data-blend-mode="<?php echo esc_attr( $first_view_blend ); ?>"
@@ -552,12 +606,17 @@ class VisualPlacementStage {
 					>
 						<img
 							src="<?php echo esc_url( $first_view_img ); ?>"
-							alt="Garment Preview"
+							alt="<?php esc_attr_e( 'Aperçu du produit', 'mr-tee-editor' ); ?>"
 							decoding="async"
 							class="mr-tee-stage-garment-img"
 							id="mr-tee-stage-garment-img"
 							<?php echo '' === $first_view_img ? 'style="display:none;"' : ''; ?>
 						/>
+
+						<!-- Magnetic Center Alignment Guides & Live Transform HUD -->
+						<div class="mr-tee-snap-guide mr-tee-snap-guide-v" id="mr-tee-snap-guide-v" aria-hidden="true"></div>
+						<div class="mr-tee-snap-guide mr-tee-snap-guide-h" id="mr-tee-snap-guide-h" aria-hidden="true"></div>
+						<div class="mr-tee-transform-hud" id="mr-tee-transform-hud" aria-hidden="true"></div>
 
 						<!-- Empty-State Overlay when active view has no mockup image yet -->
 						<div class="mr-tee-stage-empty-overlay" id="mr-tee-stage-empty-overlay" <?php echo '' === $first_view_img ? '' : 'style="display:none;"'; ?>>
@@ -566,14 +625,14 @@ class VisualPlacementStage {
 								<strong><?php esc_html_e( 'Choisissez l\'image mockup de cette vue', 'mr-tee-editor' ); ?></strong>
 								<p><?php esc_html_e( 'Importez ou sélectionnez la photo de cette vue pour placer vos zones de personnalisation.', 'mr-tee-editor' ); ?></p>
 								<div class="mr-tee-stage-empty-actions">
-									<button type="button" class="button button-primary mr-tee-empty-pick-wp">📁 <?php esc_html_e( 'Image WP', 'mr-tee-editor' ); ?></button>
-									<button type="button" class="button button-secondary mr-tee-empty-upload-file">⬆️ <?php esc_html_e( 'Importer', 'mr-tee-editor' ); ?></button>
+									<button type="button" class="button button-primary mr-tee-empty-pick-wp"><span aria-hidden="true">📁</span> <?php esc_html_e( 'Image WP', 'mr-tee-editor' ); ?></button>
+									<button type="button" class="button button-secondary mr-tee-empty-upload-file"><span aria-hidden="true">⬆️</span> <?php esc_html_e( 'Importer', 'mr-tee-editor' ); ?></button>
 								</div>
 							</div>
 						</div>
 
 						<!-- Multi-Rectangle Design Area Boxes -->
-						<div id="mr-tee-boxes-container">
+						<div id="mr-tee-boxes-container" data-blend="<?php echo esc_attr( $first_view_blend ); ?>">
 							<?php foreach ( $text_lines as $idx => $line ) : ?>
 								<?php
 								$color             = self::$field_colors[ $idx % count( self::$field_colors ) ];
@@ -593,7 +652,7 @@ class VisualPlacementStage {
 								?>
 								<div
 									id="mr-tee-field-box-<?php echo esc_attr( $idx ); ?>"
-									class="mr-tee-field-box <?php echo $initial_active_idx === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-field' : ''; ?><?php echo esc_attr( $badge_classes ); ?>"
+									class="mr-tee-field-box <?php echo $initial_active_idx === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-field' : ''; ?> <?php echo $is_on_active_side ? '' : 'is-other-side'; ?><?php echo esc_attr( $badge_classes ); ?>"
 									data-field-index="<?php echo esc_attr( $idx ); ?>"
 									data-field-type="<?php echo esc_attr( $field_type ); ?>"
 									data-side-id="<?php echo esc_attr( $line_side_id ); ?>"
@@ -625,7 +684,7 @@ class VisualPlacementStage {
 					</div>
 
 					<p class="description mr-tee-stage-instructions">
-						<?php esc_html_e( 'Glissez une zone pour la déplacer, tirez les poignées pour redimensionner, ou utilisez les flèches du clavier (Maj + flèches = 2%).', 'mr-tee-editor' ); ?>
+						<?php esc_html_e( 'Glissez une zone (aimantée au centre, maintenez Alt pour désactiver), utilisez les flèches quand la scène est active (Maj = 2%), Échap pour annuler, Ctrl+Z pour revenir en arrière.', 'mr-tee-editor' ); ?>
 					</p>
 				</div>
 
@@ -709,10 +768,11 @@ class VisualPlacementStage {
 
 								<table class="form-table mr-tee-coords-table">
 									<tr>
-										<th><label><?php esc_html_e( 'Nom', 'mr-tee-editor' ); ?></label></th>
+										<th><label for="mr_tee_field_label_<?php echo esc_attr( $idx ); ?>" class="mr-tee-lbl-label"><?php esc_html_e( 'Nom', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<input
 												type="text"
+												id="mr_tee_field_label_<?php echo esc_attr( $idx ); ?>"
 												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][label]"
 												value="<?php echo esc_attr( $line['label'] ); ?>"
 												class="regular-text mr-tee-field-label-input"
@@ -721,9 +781,10 @@ class VisualPlacementStage {
 										</td>
 									</tr>
 									<tr>
-										<th><label><?php esc_html_e( 'Type', 'mr-tee-editor' ); ?></label></th>
+										<th><label for="mr_tee_field_type_<?php echo esc_attr( $idx ); ?>" class="mr-tee-lbl-type"><?php esc_html_e( 'Type', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<select
+												id="mr_tee_field_type_<?php echo esc_attr( $idx ); ?>"
 												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][field_type]"
 												class="mr-tee-field-type-select"
 												data-field-index="<?php echo esc_attr( $idx ); ?>"
@@ -734,9 +795,10 @@ class VisualPlacementStage {
 										</td>
 									</tr>
 									<tr>
-										<th><label><?php esc_html_e( 'Face', 'mr-tee-editor' ); ?></label></th>
+										<th><label for="mr_tee_field_side_<?php echo esc_attr( $idx ); ?>" class="mr-tee-lbl-side"><?php esc_html_e( 'Face', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<select
+												id="mr_tee_field_side_<?php echo esc_attr( $idx ); ?>"
 												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][side_id]"
 												class="mr-tee-field-side-select"
 												data-field-index="<?php echo esc_attr( $idx ); ?>"
@@ -750,7 +812,7 @@ class VisualPlacementStage {
 
 									<!-- Image Field Specific Controls -->
 									<tr class="mr-tee-row-image-only" <?php echo $is_image ? '' : 'style="display:none;"'; ?>>
-										<th><label><?php esc_html_e( 'Image', 'mr-tee-editor' ); ?></label></th>
+										<th><label for="mr_tee_field_default_image_<?php echo esc_attr( $idx ); ?>" class="mr-tee-lbl-default-image"><?php esc_html_e( 'Image', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<div class="mr-tee-default-img-picker" data-field-index="<?php echo esc_attr( $idx ); ?>">
 												<div class="mr-tee-default-img-preview-wrap">
@@ -769,6 +831,7 @@ class VisualPlacementStage {
 												/>
 												<input
 													type="text"
+													id="mr_tee_field_default_image_<?php echo esc_attr( $idx ); ?>"
 													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][default_image]"
 													value="<?php echo esc_attr( $def_img_url ); ?>"
 													placeholder="https://..."
@@ -777,27 +840,29 @@ class VisualPlacementStage {
 												/>
 												<div class="mr-tee-default-img-actions">
 													<button type="button" class="button button-secondary button-small mr-tee-btn-select-default-image" data-field-index="<?php echo esc_attr( $idx ); ?>">
-														📁 <?php esc_html_e( 'Médiathèque', 'mr-tee-editor' ); ?>
+														<span aria-hidden="true">📁</span> <?php esc_html_e( 'Médiathèque', 'mr-tee-editor' ); ?>
 													</button>
 													<label class="button button-small mr-tee-upload-btn-label">
-														<span>⬆️ <?php esc_html_e( 'Importer', 'mr-tee-editor' ); ?></span>
-														<input type="file" accept="image/*" class="mr-tee-quick-image-file" style="display:none;" data-field-index="<?php echo esc_attr( $idx ); ?>" />
+														<span><span aria-hidden="true">⬆️</span> <?php esc_html_e( 'Importer', 'mr-tee-editor' ); ?></span>
+														<input type="file" accept="image/*" class="screen-reader-text mr-tee-quick-image-file" data-field-index="<?php echo esc_attr( $idx ); ?>" />
 													</label>
 													<button
 														type="button"
 														class="button button-small mr-tee-btn-clear-default-image"
 														data-field-index="<?php echo esc_attr( $idx ); ?>"
+														aria-label="<?php esc_attr_e( 'Retirer l\'image', 'mr-tee-editor' ); ?>"
 														<?php echo $def_img_url ? '' : 'style="display:none;"'; ?>
 													>✕</button>
 												</div>
-												<span class="mr-tee-img-upload-status"></span>
+												<span class="mr-tee-img-upload-status" aria-live="polite"></span>
 											</div>
 										</td>
 									</tr>
 									<tr class="mr-tee-row-image-only" <?php echo $is_image ? '' : 'style="display:none;"'; ?>>
-										<th><label><?php esc_html_e( 'Ajustement', 'mr-tee-editor' ); ?></label></th>
+										<th><label for="mr_tee_field_image_fit_<?php echo esc_attr( $idx ); ?>" class="mr-tee-lbl-image-fit"><?php esc_html_e( 'Ajustement', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<select
+												id="mr_tee_field_image_fit_<?php echo esc_attr( $idx ); ?>"
 												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][image_fit]"
 												class="mr-tee-field-image-fit"
 												data-field-index="<?php echo esc_attr( $idx ); ?>"
@@ -810,11 +875,12 @@ class VisualPlacementStage {
 
 									<!-- Text Field Specific Controls -->
 									<tr class="mr-tee-row-text-only" <?php echo $is_image ? 'style="display:none;"' : ''; ?>>
-										<th><label><?php esc_html_e( 'Texte', 'mr-tee-editor' ); ?></label></th>
+										<th><label for="mr_tee_field_text_<?php echo esc_attr( $idx ); ?>" class="mr-tee-lbl-text"><?php esc_html_e( 'Texte', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<?php if ( ! empty( $line['multiline'] ) ) : ?>
 												<textarea
 													rows="2"
+													id="mr_tee_field_text_<?php echo esc_attr( $idx ); ?>"
 													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][default_text]"
 													class="regular-text mr-tee-field-text-input"
 													data-field-index="<?php echo esc_attr( $idx ); ?>"
@@ -822,6 +888,7 @@ class VisualPlacementStage {
 											<?php else : ?>
 												<input
 													type="text"
+													id="mr_tee_field_text_<?php echo esc_attr( $idx ); ?>"
 													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][default_text]"
 													value="<?php echo esc_attr( isset( $line['default_text'] ) ? $line['default_text'] : '' ); ?>"
 													class="regular-text mr-tee-field-text-input"
@@ -831,7 +898,7 @@ class VisualPlacementStage {
 										</td>
 									</tr>
 									<tr class="mr-tee-row-text-only" <?php echo $is_image ? 'style="display:none;"' : ''; ?>>
-										<th><label><?php esc_html_e( 'Police', 'mr-tee-editor' ); ?></label></th>
+										<th><label for="mr_tee_field_font_<?php echo esc_attr( $idx ); ?>" class="mr-tee-lbl-font"><?php esc_html_e( 'Police', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<?php
 											$svg_allowed_ids = array();
@@ -850,6 +917,7 @@ class VisualPlacementStage {
 											}
 											?>
 											<select
+												id="mr_tee_field_font_<?php echo esc_attr( $idx ); ?>"
 												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][font]"
 												class="mr-tee-field-font-select"
 												data-field-index="<?php echo esc_attr( $idx ); ?>"
@@ -874,33 +942,23 @@ class VisualPlacementStage {
 										</td>
 									</tr>
 									<tr class="mr-tee-row-text-only mr-tee-row-svg-color-notice" <?php echo ( ! $is_image && $is_sel_svg_font ) ? '' : 'style="display:none;"'; ?>>
-										<th><label><?php esc_html_e( 'Couleur', 'mr-tee-editor' ); ?></label></th>
+										<th><span><?php esc_html_e( 'Couleur', 'mr-tee-editor' ); ?></span></th>
 										<td>
-											<span class="mr-tee-svg-color-notice">✨ <?php esc_html_e( 'Couleurs intégrées à la police SVG', 'mr-tee-editor' ); ?></span>
+											<span class="mr-tee-svg-color-notice"><span aria-hidden="true">✨</span> <?php esc_html_e( 'Couleurs intégrées à la police SVG', 'mr-tee-editor' ); ?></span>
 										</td>
 									</tr>
 									<tr class="mr-tee-row-text-only mr-tee-row-color-mode" <?php echo ( ! $is_image && ! $is_sel_svg_font ) ? '' : 'style="display:none;"'; ?>>
-										<th><label><?php esc_html_e( 'Mode Couleur', 'mr-tee-editor' ); ?></label></th>
+										<th><label for="mr_tee_field_color_mode_<?php echo esc_attr( $idx ); ?>" class="mr-tee-lbl-color-mode"><?php esc_html_e( 'Mode Couleur', 'mr-tee-editor' ); ?></label></th>
 										<td>
-											<select name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][color_mode]" class="mr-tee-field-color-mode" data-field-index="<?php echo esc_attr( $idx ); ?>">
+											<select
+												id="mr_tee_field_color_mode_<?php echo esc_attr( $idx ); ?>"
+												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][color_mode]"
+												class="mr-tee-field-color-mode"
+												data-field-index="<?php echo esc_attr( $idx ); ?>"
+											>
 												<option value="multi" <?php selected( $color_mode, 'multi' ); ?>><?php esc_html_e( 'Multicolore (Palette)', 'mr-tee-editor' ); ?></option>
 												<option value="solid" <?php selected( $color_mode, 'solid' ); ?>><?php esc_html_e( 'Couleur Unie', 'mr-tee-editor' ); ?></option>
 											</select>
-										</td>
-									</tr>
-									<tr class="mr-tee-row-text-only mr-tee-row-solid-color" <?php echo ( ! $is_image && ! $is_sel_svg_font && 'solid' === $color_mode ) ? '' : 'style="display:none;"'; ?>>
-										<th><label><?php esc_html_e( 'Couleur du texte', 'mr-tee-editor' ); ?></label></th>
-										<td>
-											<div class="mr-tee-color-picker-row">
-												<input
-													type="color"
-													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][color_hex]"
-													value="<?php echo esc_attr( $line_color_hex ); ?>"
-													class="mr-tee-field-color-hex"
-													data-field-index="<?php echo esc_attr( $idx ); ?>"
-												/>
-												<span class="mr-tee-color-hex-readout"><?php echo esc_html( strtoupper( $line_color_hex ) ); ?></span>
-											</div>
 											<label class="mr-tee-inline-check">
 												<input type="hidden" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][allow_color_pick]" value="0" />
 												<input
@@ -915,14 +973,31 @@ class VisualPlacementStage {
 											</label>
 										</td>
 									</tr>
+									<tr class="mr-tee-row-text-only mr-tee-row-solid-color" <?php echo ( ! $is_image && ! $is_sel_svg_font && 'solid' === $color_mode ) ? '' : 'style="display:none;"'; ?>>
+										<th><label for="mr_tee_field_color_hex_<?php echo esc_attr( $idx ); ?>" class="mr-tee-lbl-color-hex"><?php esc_html_e( 'Couleur du texte', 'mr-tee-editor' ); ?></label></th>
+										<td>
+											<div class="mr-tee-color-picker-row">
+												<input
+													type="color"
+													id="mr_tee_field_color_hex_<?php echo esc_attr( $idx ); ?>"
+													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][color_hex]"
+													value="<?php echo esc_attr( $line_color_hex ); ?>"
+													class="mr-tee-field-color-hex"
+													data-field-index="<?php echo esc_attr( $idx ); ?>"
+												/>
+												<span class="mr-tee-color-hex-readout"><?php echo esc_html( strtoupper( $line_color_hex ) ); ?></span>
+											</div>
+										</td>
+									</tr>
 									<tr class="mr-tee-row-text-only" <?php echo $is_image ? 'style="display:none;"' : ''; ?>>
-										<th><label><?php esc_html_e( 'Max Caract.', 'mr-tee-editor' ); ?></label></th>
+										<th><label for="mr_tee_field_max_chars_<?php echo esc_attr( $idx ); ?>" class="mr-tee-lbl-max-chars"><?php esc_html_e( 'Max Caract.', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<input
 												type="number"
 												step="1"
 												min="1"
 												max="500"
+												id="mr_tee_field_max_chars_<?php echo esc_attr( $idx ); ?>"
 												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][max_chars]"
 												value="<?php echo esc_attr( isset( $line['max_chars'] ) && intval( $line['max_chars'] ) > 0 ? intval( $line['max_chars'] ) : 25 ); ?>"
 												class="small-text mr-tee-field-max-chars"
@@ -931,7 +1006,7 @@ class VisualPlacementStage {
 										</td>
 									</tr>
 									<tr>
-										<th><label><?php esc_html_e( 'Options', 'mr-tee-editor' ); ?></label></th>
+										<th><span><?php esc_html_e( 'Options', 'mr-tee-editor' ); ?></span></th>
 										<td class="mr-tee-options-cell">
 											<span class="mr-tee-opt-text-only" <?php echo $is_image ? 'style="display:none;"' : ''; ?>>
 												<label>
@@ -1078,11 +1153,11 @@ class VisualPlacementStage {
 										class="button button-small mr-tee-btn-duplicate-field"
 										data-field-index="<?php echo esc_attr( $idx ); ?>"
 									>
-										<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px;" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><?php esc_html_e( 'Dupliquer', 'mr-tee-editor' ); ?>
+										<svg class="mr-tee-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><?php esc_html_e( 'Dupliquer', 'mr-tee-editor' ); ?>
 									</button>
 									<button
 										type="button"
-										class="button button-link-delete mr-tee-btn-delete-field"
+										class="button button-small button-link-delete mr-tee-btn-delete-field"
 										data-field-index="<?php echo esc_attr( $idx ); ?>"
 										<?php echo count( $text_lines ) <= 1 ? 'style="display:none;"' : ''; ?>
 									>

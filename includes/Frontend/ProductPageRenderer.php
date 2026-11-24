@@ -941,13 +941,19 @@ class ProductPageRenderer {
 
 				<!-- Repeater Trigger Accordion: "Nombre de champignons" -->
 				<?php if ( ! empty( $rep['enabled'] ) ) : ?>
+					<?php
+					$rep_label      = ! empty( $rep['label'] ) ? (string) $rep['label'] : __( 'Nombre d\'éléments', 'mr-tee-editor' );
+					$rep_subtitle   = isset( $rep['subtitle'] ) ? (string) $rep['subtitle'] : '';
+					$rep_item_label = ! empty( $rep['item_label'] ) ? (string) $rep['item_label'] : __( 'Élément', 'mr-tee-editor' );
+					$rep_max_chars  = ! empty( $rep['max_chars'] ) ? intval( $rep['max_chars'] ) : 12;
+					?>
 					<div class="mr-tee-repeater-trigger-card">
 						<button type="button" class="mr-tee-repeater-trigger-btn" id="mr-tee-open-count-modal">
 							<div class="mr-tee-trigger-left">
 								<span class="mr-tee-badge-number">2</span>
 								<div class="mr-tee-trigger-texts">
-									<strong class="mr-tee-trigger-title"><?php echo esc_html( $rep['label'] ); ?></strong>
-									<span class="mr-tee-trigger-subtitle"><?php echo esc_html( $rep['subtitle'] ); ?></span>
+									<strong class="mr-tee-trigger-title"><?php echo esc_html( $rep_label ); ?></strong>
+									<span class="mr-tee-trigger-subtitle"><?php echo esc_html( $rep_subtitle ); ?></span>
 								</div>
 							</div>
 							<div class="mr-tee-trigger-right">
@@ -979,7 +985,7 @@ class ProductPageRenderer {
 										<img src="<?php echo esc_url( $icons[ $icon_key ]['url'] ); ?>" alt="Mushroom Icon" />
 									</div>
 									<div class="mr-tee-rep-name-summary">
-										<strong><?php echo esc_html( $rep['item_label'] . ' ' . $item_num ); ?> :</strong>
+										<strong><?php echo esc_html( $rep_item_label . ' ' . $item_num ); ?> :</strong>
 										<span class="mr-tee-rep-summary-text" id="mr-tee-rep-summary-<?php echo esc_attr( $item_num ); ?>"><?php echo esc_html( $def_item['name'] ); ?></span>
 									</div>
 									<button type="button" class="mr-tee-rep-toggle-btn" aria-label="Toggle details">
@@ -995,7 +1001,7 @@ class ProductPageRenderer {
 											id="mr_tee_rep_name_<?php echo esc_attr( $item_num ); ?>"
 											name="mr_tee_repeater[<?php echo esc_attr( $i ); ?>][name]"
 											value="<?php echo esc_attr( $def_item['name'] ); ?>"
-											maxlength="<?php echo esc_attr( $rep['max_chars'] ); ?>"
+											maxlength="<?php echo esc_attr( $rep_max_chars ); ?>"
 											data-ref-id="id-ref-text-champ-<?php echo esc_attr( $item_num ); ?>"
 											data-warning="1"
 											placeholder=" "
@@ -1005,7 +1011,7 @@ class ProductPageRenderer {
 											<?php esc_html_e( 'Prénom', 'mr-tee-editor' ); ?>
 										</label>
 										<span class="mr-tee-char-counter">
-											<span class="mr-tee-char-count"><?php echo esc_html( (string) self::strlen_utf8( $def_item['name'] ) ); ?></span>/<?php echo esc_attr( $rep['max_chars'] ); ?>
+											<span class="mr-tee-char-count"><?php echo esc_html( (string) self::strlen_utf8( $def_item['name'] ) ); ?></span>/<?php echo esc_attr( $rep_max_chars ); ?>
 										</span>
 									</div>
 

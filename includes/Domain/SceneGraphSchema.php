@@ -1834,6 +1834,22 @@ class SceneGraphSchema {
 			$font_def     = isset( $fonts[ $font_id ] ) ? $fonts[ $font_id ] : FontRegistry::get_font( $font_id );
 			$color_mode   = isset( $line['color_mode'] ) ? $line['color_mode'] : 'multi';
 
+			$font_stroke_w   = isset( $font_def['stroke_width'] ) ? floatval( $font_def['stroke_width'] ) : 0.0;
+			$font_stroke_hex = isset( $font_def['stroke'] ) ? (string) $font_def['stroke'] : 'transparent';
+			$font_palette    = ( ! empty( $font_def['palette'] ) && is_array( $font_def['palette'] ) ) ? array_values( $font_def['palette'] ) : array();
+			$line_cset_id    = ! empty( $line['color_set_id'] ) ? (string) $line['color_set_id'] : '';
+			if ( empty( $font_palette ) && '' !== $line_cset_id && isset( $color_sets[ $line_cset_id ]['colors'] ) && is_array( $color_sets[ $line_cset_id ]['colors'] ) ) {
+				$cset_colors  = $color_sets[ $line_cset_id ]['colors'];
+				$font_palette = array_values( array_filter( array_keys( $cset_colors ), function ( $k ) { return is_string( $k ) && 0 === strpos( $k, '#' ); } ) );
+				if ( empty( $font_palette ) ) {
+					$font_palette = array_values( array_filter( $cset_colors, function ( $v ) { return is_string( $v ) && 0 === strpos( $v, '#' ); } ) );
+				}
+			} elseif ( count( $font_palette ) <= 1 && 'multi' === $color_mode && '' !== $line_cset_id && ! empty( $color_sets[ $line_cset_id ]['multiple'] ) && ! empty( $color_sets[ $line_cset_id ]['colors'] ) ) {
+				$font_palette = array_values( $color_sets[ $line_cset_id ]['colors'] );
+			}
+			$has_multi_palette = ! empty( $font_def['multi_color'] ) || count( $font_palette ) > 1;
+			$outside_only      = ! isset( $font_def['outside_only'] ) || ! empty( $font_def['outside_only'] );
+
 			$references[] = array(
 				'id'               => $text_ref_id,
 				'type'             => 'TEXT',
@@ -1851,10 +1867,10 @@ class SceneGraphSchema {
 				'fontId'           => $font_id,
 				'fontFamily'       => $font_def['family'],
 				'letterSpacing'    => isset( $font_def['letter_spacing'] ) ? floatval( $font_def['letter_spacing'] ) : 0.05,
-				'strokeWidth'      => isset( $font_def['stroke_width'] ) ? floatval( $font_def['stroke_width'] ) : 0.0,
-				'strokeColor'      => isset( $font_def['stroke'] ) ? $font_def['stroke'] : 'transparent',
-				'casing'           => ! empty( $font_def['uppercase'] ) ? 'UPPER' : 'ORIGINAL',
-				'multiColor'       => ! empty( $font_def['multi_color'] ),
+				'strokeWidth'      => $font_stroke_w,
+				'strokeColor'      => $font_stroke_hex,
+				'casing'           => isset( $line['casing'] ) ? $line['casing'] : ( ! empty( $font_def['uppercase'] ) ? 'UPPER' : 'ORIGINAL' ),
+				'multiColor'       => $has_multi_palette,
 				'allowFontPick'    => ! empty( $line['allow_font_pick'] ),
 				'allowColorPick'   => ! empty( $line['allow_color_pick'] ),
 				'colorRefId'       => $color_ref_id,
@@ -1866,17 +1882,17 @@ class SceneGraphSchema {
 
 			if ( ! in_array( $color_ref_id, $created_color_refs, true ) ) {
 				$references[] = array(
-					'id'           => $color_ref_id,
-					'type'         => 'COLOR_SET',
-					'name'         => 'Couleur ' . $line['label'],
-					'editable'     => ! empty( $line['allow_color_pick'] ),
-					'colorMode'    => $color_mode,
-					'colorHex'     => isset( $line['color_hex'] ) ? $line['color_hex'] : '#ffffff',
-					'strokeHex'    => isset( $line['stroke_hex'] ) ? $line['stroke_hex'] : ( isset( $font_def['stroke'] ) ? $font_def['stroke'] : '#000000' ),
-					'palette'      => $font_def['palette'],
-					'outsideOnly'  => true,
-					'strokeWidth'  => isset( $font_def['stroke_width'] ) ? floatval( $font_def['stroke_width'] ) : 0.0,
-					'variationType'=> 'LETTER',
+					'id'            => $color_ref_id,
+					'type'          => 'COLOR_SET',
+					'name'          => 'Couleur ' . $line['label'],
+					'editable'      => ! empty( $line['allow_color_pick'] ),
+					'colorMode'     => $color_mode,
+					'colorHex'      => isset( $line['color_hex'] ) ? $line['color_hex'] : '#ffffff',
+					'strokeHex'     => isset( $line['stroke_hex'] ) ? $line['stroke_hex'] : ( 'transparent' !== $font_stroke_hex ? $font_stroke_hex : '#000000' ),
+					'palette'       => $font_palette,
+					'outsideOnly'   => $outside_only,
+					'strokeWidth'   => $font_stroke_w,
+					'variationType' => 'LETTER',
 				);
 				$created_color_refs[] = $color_ref_id;
 			}
@@ -1912,11 +1928,11 @@ class SceneGraphSchema {
 				'casing'             => isset( $line['casing'] ) ? $line['casing'] : ( ! empty( $font_def['uppercase'] ) ? 'UPPER' : 'ORIGINAL' ),
 				'letterSpacing'      => isset( $font_def['letter_spacing'] ) ? floatval( $font_def['letter_spacing'] ) : 0.05,
 				'stroke'             => array(
-					'width'       => floatval( $font_def['stroke_width'] ),
-					'outsideOnly' => true,
-					'color'       => isset( $font_def['stroke'] ) ? $font_def['stroke'] : 'transparent',
+					'width'       => $font_stroke_w,
+					'outsideOnly' => $outside_only,
+					'color'       => $font_stroke_hex,
 				),
-				'multiColor'         => ! empty( $font_def['multi_color'] ),
+				'multiColor'         => $has_multi_palette,
 			);
 
 			if ( ! empty( $line['is_masked'] ) ) {

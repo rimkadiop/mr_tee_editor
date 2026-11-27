@@ -7,7 +7,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.5.0';
+import { SvgRenderer } from './svg-renderer.js?v=2.5.9';
 
 export class PrintExporter {
 	static CHUNK_SIZE_BYTES = 600 * 1024; // 600 KB binary chunks fit cleanly under 1 MB proxy/WAF limits while minimizing round-trips
@@ -85,6 +85,37 @@ export class PrintExporter {
 				}
 				if (normUrl && window.mrTeeThumbB64Cache[normUrl]) {
 					return window.mrTeeThumbB64Cache[normUrl];
+				}
+			}
+
+			// Fast path: reuse already-decoded same-origin HTMLImageElement from live stage prewarm cache
+			if (window.mrTeePrewarmedImages && typeof window.mrTeePrewarmedImages.get === 'function') {
+				const preImg = window.mrTeePrewarmedImages.get(rawUrl) || (normUrl ? window.mrTeePrewarmedImages.get(normUrl) : null);
+				if (preImg && this.isSameOriginImage(preImg)) {
+					try {
+						const natW = preImg.naturalWidth || maxDim;
+						const natH = preImg.naturalHeight || maxDim;
+						const longest = Math.max(natW, natH);
+						const scale = longest > maxDim ? (maxDim / longest) : 1.0;
+						const canvas = document.createElement('canvas');
+						canvas.width = Math.max(1, Math.round(natW * scale));
+						canvas.height = Math.max(1, Math.round(natH * scale));
+						const ctx = canvas.getContext('2d');
+						if (ctx) {
+							ctx.clearRect(0, 0, canvas.width, canvas.height);
+							ctx.drawImage(preImg, 0, 0, canvas.width, canvas.height);
+							const cleanPath = String(normUrl || rawUrl).split('?')[0].toLowerCase();
+							const needsAlpha = cleanPath.endsWith('.png') || cleanPath.endsWith('.webp');
+							const fastDataUrl = needsAlpha ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', 0.82);
+							if (fastDataUrl && fastDataUrl.startsWith('data:image/')) {
+								window.mrTeeThumbB64Cache[rawUrl] = fastDataUrl;
+								if (normUrl) window.mrTeeThumbB64Cache[normUrl] = fastDataUrl;
+								return fastDataUrl;
+							}
+						}
+					} catch (e) {
+						// Fall through to standard fetch path if canvas read is blocked
+					}
 				}
 			}
 		}
@@ -180,12 +211,13 @@ export class PrintExporter {
 	static resolveProductBackgroundUrl(viewId = null) {
 		const imgEl = this.findProductGalleryImageElement(viewId);
 		if (imgEl) {
+			// Prefer already-sized single-product image (~800px) over multi-MB full-res master for 800px cart composites
 			const candidates = [
-				imgEl.getAttribute('data-large_image'),
-				imgEl.getAttribute('data-lazy-src'),
-				imgEl.getAttribute('data-src'),
 				imgEl.currentSrc,
 				imgEl.getAttribute('src'),
+				imgEl.getAttribute('data-lazy-src'),
+				imgEl.getAttribute('data-src'),
+				imgEl.getAttribute('data-large_image'),
 			];
 			for (const cand of candidates) {
 				if (cand && !cand.startsWith('data:image/svg+xml') && !cand.startsWith('data:image/gif')) {
@@ -234,6 +266,16 @@ export class PrintExporter {
 
 	static async loadBackgroundImage(rawUrl) {
 		if (!rawUrl) return null;
+		const normUrl = this.normalizeSameHostUrl(rawUrl);
+		// Fast path: same-origin relative URLs decode directly via native browser image cache without canvas tainting
+		if (normUrl && (normUrl.startsWith('/') || normUrl.startsWith('data:'))) {
+			try {
+				const directImg = await this.loadHtmlImage(normUrl, false);
+				if (directImg && directImg.naturalWidth > 0) {
+					return { img: directImg, naturalWidth: directImg.naturalWidth, naturalHeight: directImg.naturalHeight, taintedSafe: true };
+				}
+			} catch (e) {}
+		}
 		const dataUrl = await this.fetchImageAsDataUrl(rawUrl);
 		if (dataUrl) {
 			try {
@@ -243,9 +285,8 @@ export class PrintExporter {
 				}
 			} catch (e) {}
 		}
-		const fallbackUrl = this.normalizeSameHostUrl(rawUrl);
 		try {
-			const img = await this.loadHtmlImage(fallbackUrl, true);
+			const img = await this.loadHtmlImage(normUrl, true);
 			if (img && img.naturalWidth > 0) {
 				return { img, naturalWidth: img.naturalWidth, naturalHeight: img.naturalHeight, taintedSafe: false };
 			}
@@ -901,8 +942,12 @@ export class PrintExporter {
 		const designKey = this.generateDesignKey();
 
 		let primaryUploadedUrl = '';
+		const secondaryB64Bytes = renderedViews.slice(1).reduce((sum, item) => sum + ((item && item.b64) ? item.b64.length : 0), 0);
+		const totalInlineBytes = payloadJson.length + (compositeB64 ? compositeB64.length : 0) + secondaryB64Bytes;
+		const inlineAllPreviews = totalInlineBytes < 260 * 1024;
 		const approxBytes = payloadJson.length + (compositeB64 ? compositeB64.length : 0);
-		if (approxBytes < 180 * 1024) {
+
+		if (inlineAllPreviews || approxBytes < 180 * 1024) {
 			if (designKeyInput) designKeyInput.value = designKey;
 			if (payloadInput) payloadInput.value = payloadJson;
 			if (previewInput) previewInput.value = compositeB64 || '';
@@ -918,7 +963,7 @@ export class PrintExporter {
 			if (previewInput) previewInput.value = '';
 		}
 
-		// Upload additional cart preview views (index 1..N) in parallel and persist metadata in #mr_tee_previews_json
+		// Persist additional cart preview views (index 1..N) inline when compact, or upload in parallel if large
 		const previewsMeta = [];
 		if (renderedViews.length > 1) {
 			const v0 = primaryEntry.view || {};
@@ -927,6 +972,15 @@ export class PrintExporter {
 				const v = item.view || {};
 				const rawViewId = v.id || `view_${i}`;
 				const safeSuffix = String(rawViewId).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32) || `view_${i}`;
+				if (inlineAllPreviews && item.b64) {
+					return {
+						view_id: safeSuffix,
+						side_id: v.side_id || 'front',
+						label: v.label || `Vue ${i + 1}`,
+						url: '',
+						b64: item.b64,
+					};
+				}
 				const blob = this.dataUrlToBlob(item.b64);
 				const previewArtifact = (item.b64 && item.b64.includes('image/jpeg')) ? 'preview_jpg' : 'preview_png';
 				let uploadedUrl = '';

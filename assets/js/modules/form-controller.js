@@ -11,11 +11,44 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.5.0';
+import { SvgRenderer } from './svg-renderer.js?v=2.5.9';
 
 const SVG_PLACEHOLDER_IMAGE = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
 const ALLOWED_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml']);
 const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
+
+function parseHexRgb(hex) {
+	const raw = String(hex || '').trim().toLowerCase().replace(/^#/, '');
+	const norm = raw.length === 3 ? raw.split('').map((c) => c + c).join('') : raw;
+	if (!/^[0-9a-f]{6}$/.test(norm)) return null;
+	return [
+		parseInt(norm.slice(0, 2), 16),
+		parseInt(norm.slice(2, 4), 16),
+		parseInt(norm.slice(4, 6), 16),
+	];
+}
+
+function findClosestSwatchHex(targetHex, swatchHexes) {
+	const norm = String(targetHex || '').trim().toLowerCase();
+	if (!norm || !norm.startsWith('#') || !Array.isArray(swatchHexes) || swatchHexes.length === 0) {
+		return '';
+	}
+	if (swatchHexes.includes(norm)) return norm;
+	const tRgb = parseHexRgb(norm);
+	if (!tRgb) return '';
+	let bestHex = '';
+	let bestDist = 33;
+	for (const candidate of swatchHexes) {
+		const cRgb = parseHexRgb(candidate);
+		if (!cRgb) continue;
+		const dist = Math.hypot(tRgb[0] - cRgb[0], tRgb[1] - cRgb[1], tRgb[2] - cRgb[2]);
+		if (dist < bestDist) {
+			bestDist = dist;
+			bestHex = candidate;
+		}
+	}
+	return bestHex;
+}
 
 function normalizeSameHostUrl(rawUrl) {
 	if (!rawUrl || typeof rawUrl !== 'string') return '';
@@ -57,7 +90,7 @@ export class FormController {
 	 */
 	async loadPrintExporter() {
 		if (this._printExporterClass) return this._printExporterClass;
-		const mod = await import('./print-exporter.js?v=2.5.0');
+		const mod = await import('./print-exporter.js?v=2.5.9');
 		this._printExporterClass = mod.PrintExporter;
 		if (typeof window !== 'undefined') {
 			window.mrTeePrintExporter = mod.PrintExporter;
@@ -67,7 +100,7 @@ export class FormController {
 
 	/**
 	 * Notify gallery stage when a user focuses or interacts with a control inside
-	 * a `.mr-tee-field-group[data-side-id]` or explicit side ID string.
+	 * a `.mr-tee-field-group[data-side-id]`, `.mr-tee-side-section[data-side-id]`, or explicit side ID string.
 	 *
 	 * @param {Element|string|null} targetEl Interacted control element or explicit side ID.
 	 */
@@ -78,7 +111,7 @@ export class FormController {
 			return;
 		}
 		if (!targetEl.closest) return;
-		const group = targetEl.closest('.mr-tee-field-group[data-side-id]');
+		const group = targetEl.closest('.mr-tee-field-group[data-side-id], .mr-tee-side-section[data-side-id]');
 		if (!group) return;
 		const sideId = group.getAttribute('data-side-id');
 		if (sideId) {
@@ -87,16 +120,22 @@ export class FormController {
 	}
 
 	/**
-	 * Highlight field groups belonging to the currently active gallery side on multi-side products.
+	 * Highlight side sections and field groups belonging to the currently active gallery side on multi-side products.
 	 *
 	 * @param {string} sideId Active print side identifier.
 	 */
 	setActiveSide(sideId) {
 		if (!this.container) return;
+		const sections = Array.from(this.container.querySelectorAll('.mr-tee-side-section[data-side-id]'));
 		const groups = Array.from(this.container.querySelectorAll('.mr-tee-field-group[data-side-id]'));
-		const distinctSides = new Set(groups.map(g => g.getAttribute('data-side-id')).filter(Boolean));
+		const distinctSides = new Set(
+			[...sections, ...groups].map(el => el.getAttribute('data-side-id')).filter(Boolean)
+		);
 		if (distinctSides.size <= 1) return;
 		const target = sideId ? String(sideId) : '';
+		sections.forEach((sec) => {
+			sec.classList.toggle('is-active-side', Boolean(target && sec.getAttribute('data-side-id') === target));
+		});
 		groups.forEach((g) => {
 			g.classList.toggle('is-active-side', Boolean(target && g.getAttribute('data-side-id') === target));
 		});
@@ -123,76 +162,222 @@ export class FormController {
 	}
 
 	/**
-	 * Synchronize color swatch picker visibility, active pill state, and color name readout
-	 * when switching between standard vector fonts and OpenType-SVG color fonts.
+	 * Close any open mobile collapsible color trays (optionally preserving one active field group).
+	 *
+	 * @param {Element|null} exceptGroup Field group to leave open, if any.
+	 */
+	closeAllColorTrays(exceptGroup = null) {
+		if (!this.container) return;
+		this.container.querySelectorAll('.mr-tee-field-group.is-color-open').forEach((openGroup) => {
+			if (exceptGroup && openGroup === exceptGroup) return;
+			openGroup.classList.remove('is-color-open');
+			const btn = openGroup.querySelector('.mr-tee-color-trigger-btn');
+			if (btn) btn.setAttribute('aria-expanded', 'false');
+		});
+	}
+
+	/**
+	 * Keep the compact left-hand mobile Color Switch trigger button in sync with the active swatch
+	 * or hide it cleanly whenever the active font does not support custom colors (e.g., OpenType-SVG).
 	 *
 	 * @param {Element|null} fieldGroup `.mr-tee-field-group` element.
-	 * @param {boolean} isOtSvg Whether the newly selected font is an OpenType-SVG font.
+	 * @param {Object}       state      Trigger display state.
 	 */
-	syncSwatchesForLine(fieldGroup, isOtSvg) {
-		const swatchesWrap = fieldGroup ? fieldGroup.querySelector('.mr-tee-color-swatches-wrap') : null;
-		if (!swatchesWrap) return;
+	syncColorTrigger(fieldGroup, { hidden = false, isMulti = false, hex = '', name = '' } = {}) {
+		if (!fieldGroup) return;
+		const triggerBtn = fieldGroup.querySelector('.mr-tee-color-trigger-btn');
+		if (!triggerBtn) return;
 
-		if (isOtSvg) {
+		if (hidden) {
+			triggerBtn.style.display = 'none';
+			triggerBtn.setAttribute('aria-expanded', 'false');
+			fieldGroup.classList.remove('is-color-open');
+			return;
+		}
+
+		triggerBtn.style.display = '';
+		const dot = triggerBtn.querySelector('.mr-tee-color-trigger-dot');
+		if (dot) {
+			dot.classList.toggle('mr-tee-color-trigger-dot--multi', Boolean(isMulti));
+			if (isMulti) {
+				dot.style.backgroundColor = '';
+			} else if (hex) {
+				dot.style.backgroundColor = hex;
+			}
+		}
+
+		const i18n = (typeof window !== 'undefined' && window.mrTeeProductData && window.mrTeeProductData.i18n) || {};
+		const colorLabel = i18n.colorLabel || 'Couleur';
+		const fallbackChoose = i18n.chooseColor || 'Choisir';
+		const displayName = name || fallbackChoose;
+		triggerBtn.setAttribute('aria-label', `${colorLabel} : ${displayName}`);
+		triggerBtn.setAttribute('title', name || colorLabel);
+	}
+
+	/**
+	 * Synchronize color swatch picker visibility, mobile color switch trigger state,
+	 * Multicolore pill availability, active pill state, and color name readout whenever a line
+	 * initializes or switches fonts.
+	 *
+	 * @param {Element|null} fieldGroup `.mr-tee-field-group` element.
+	 * @param {boolean}      isOtSvg    Whether the active font is an OpenType-SVG font.
+	 * @param {Object|null}  fontDef    Optional active font definition.
+	 */
+	syncSwatchesForLine(fieldGroup, isOtSvg, fontDef = null) {
+		const swatchesWrap = fieldGroup ? fieldGroup.querySelector('.mr-tee-color-swatches-wrap') : null;
+		if (!swatchesWrap) {
+			this.syncColorTrigger(fieldGroup, { hidden: true });
+			return;
+		}
+
+		const isMasked = swatchesWrap.getAttribute('data-masked') === '1';
+		if (isOtSvg || isMasked) {
 			swatchesWrap.style.display = 'none';
+			this.syncColorTrigger(fieldGroup, { hidden: true });
 			return;
 		}
 		swatchesWrap.style.display = '';
 
+		const i18n = (typeof window !== 'undefined' && window.mrTeeProductData && window.mrTeeProductData.i18n) || {};
 		const colorRefId = swatchesWrap.getAttribute('data-color-ref-id');
 		const colorRef = colorRefId ? this.store.getReference(colorRefId) : null;
-		const activeHex = (colorRef && colorRef.colorMode !== 'multi' && colorRef.colorHex)
+		const supportsMulti = Boolean(
+			(fontDef && fontDef.multi_color)
+			|| (fontDef && Array.isArray(fontDef.palette) && fontDef.palette.length > 1)
+			|| (colorRef && colorRef.colorMode === 'multi')
+			|| (colorRef && Array.isArray(colorRef._initialMultiPalette) && colorRef._initialMultiPalette.length > 1 && (!fontDef || fontDef.multi_color !== false))
+		);
+
+		const multiBtn = swatchesWrap.querySelector('.mr-tee-color-swatch-pill--multi, [data-color-hex="multi"]');
+		if (multiBtn) {
+			multiBtn.style.display = supportsMulti ? '' : 'none';
+		}
+
+		const isMultiActive = Boolean(colorRef && colorRef.colorMode === 'multi' && supportsMulti);
+		const rawActiveHex = (!isMultiActive && colorRef && colorRef.colorHex)
 			? String(colorRef.colorHex).toLowerCase()
 			: '';
-		let matchedName = '';
 
-		swatchesWrap.querySelectorAll('.mr-tee-color-swatch-pill').forEach((sp) => {
+		const pills = Array.from(swatchesWrap.querySelectorAll('.mr-tee-color-swatch-pill'));
+		const solidHexes = pills
+			.map((sp) => String(sp.getAttribute('data-color-hex') || '').toLowerCase())
+			.filter((h) => h && h !== 'multi');
+		const resolvedActiveHex = (!isMultiActive && rawActiveHex)
+			? (findClosestSwatchHex(rawActiveHex, solidHexes) || rawActiveHex)
+			: '';
+
+		let matchedName = '';
+		let matchedHex = resolvedActiveHex || rawActiveHex;
+
+		pills.forEach((sp) => {
 			const spHex = String(sp.getAttribute('data-color-hex') || '').toLowerCase();
-			const isActive = Boolean(activeHex && spHex === activeHex);
+			const isActive = (spHex === 'multi')
+				? isMultiActive
+				: Boolean(!isMultiActive && resolvedActiveHex && spHex === resolvedActiveHex);
 			sp.classList.toggle('is-active', isActive);
 			sp.setAttribute('aria-pressed', isActive ? 'true' : 'false');
 			if (isActive) {
 				matchedName = sp.getAttribute('data-color-name') || sp.getAttribute('title') || '';
+				if (spHex !== 'multi') {
+					matchedHex = spHex;
+				}
 			}
 		});
+
+		if (isMultiActive && !matchedName) {
+			matchedName = i18n.multicolorLabel || 'Multicolore';
+		}
 
 		const nameReadout = swatchesWrap.querySelector('.mr-tee-active-color-name');
 		if (nameReadout) {
 			nameReadout.textContent = matchedName;
 		}
+
+		this.syncColorTrigger(fieldGroup, {
+			hidden: false,
+			isMulti: isMultiActive,
+			hex: isMultiActive ? '' : matchedHex,
+			name: matchedName,
+		});
 	}
 
 	/**
-	 * Horizontally scroll each `.mr-tee-font-pills` strip so its active pill is visible on load
-	 * without ever causing vertical page scroll (supports both LTR and RTL).
+	 * Lazily apply inline `font-family` previews onto inactive `.mr-tee-font-pill` buttons
+	 * after initial paint or on user interaction so every font pill displays its real typeface.
+	 *
+	 * @param {Element|null} scroller `.mr-tee-font-pills` container element.
+	 */
+	hydrateFontPillsInScroller(scroller) {
+		if (!scroller || scroller._mrTeeFontsHydrated) return;
+		scroller._mrTeeFontsHydrated = true;
+		let appliedAny = false;
+		scroller.querySelectorAll('.mr-tee-font-pill[data-font-family]').forEach((pill) => {
+			const fam = pill.getAttribute('data-font-family');
+			if (fam && !pill.style.fontFamily) {
+				pill.style.fontFamily = `'${fam}', sans-serif`;
+				appliedAny = true;
+			}
+		});
+		if (appliedAny && typeof document !== 'undefined' && document.fonts && document.fonts.ready && typeof document.fonts.ready.then === 'function') {
+			document.fonts.ready.then(() => this.scrollActiveFontPillsIntoView()).catch(() => {});
+		}
+	}
+
+	/**
+	 * Horizontally scroll each `.mr-tee-font-pills` strip so its active pill is completely clear
+	 * of the trailing fade mask on load without leaving awkward sliver edges or vertical page scroll (LTR & RTL).
 	 */
 	scrollActiveFontPillsIntoView() {
 		if (!this.container) return;
+		const fadeClearance = 26;
 		this.container.querySelectorAll('.mr-tee-font-pills').forEach((scroller) => {
 			if (scroller._mrTeeUserScrolled) return;
 			const activePill = scroller.querySelector('.mr-tee-font-pill.is-active');
 			if (!activePill) return;
 			const viewW = scroller.clientWidth || 0;
-			if (viewW <= 0 || scroller.scrollWidth <= viewW + 1) return;
+			if (viewW <= 0 || scroller.scrollWidth <= viewW + 1) {
+				scroller.classList.remove('is-scrolled-left');
+				return;
+			}
 
 			const isRtl = typeof window !== 'undefined' && window.getComputedStyle(scroller).direction === 'rtl';
 			if (isRtl) {
 				const sRect = scroller.getBoundingClientRect();
 				const pRect = activePill.getBoundingClientRect();
-				if (pRect.left < sRect.left || pRect.right > sRect.right) {
-					const delta = (pRect.left - sRect.left) - Math.max(8, Math.round((viewW - pRect.width) / 2));
+				if (pRect.left < sRect.left + fadeClearance || pRect.right > sRect.right) {
+					const delta = (pRect.left - sRect.left) - Math.max(fadeClearance, Math.round((viewW - pRect.width) / 2));
 					scroller.scrollLeft += delta;
 				}
+				scroller.classList.toggle('is-scrolled-left', Math.abs(scroller.scrollLeft) > 4);
 				return;
 			}
 
 			const pillLeft = activePill.offsetLeft;
 			const pillRight = pillLeft + activePill.offsetWidth;
 			const currentLeft = scroller.scrollLeft;
-			if (pillLeft < currentLeft || pillRight > currentLeft + viewW) {
-				const targetLeft = Math.max(0, pillLeft - Math.max(8, Math.round((viewW - activePill.offsetWidth) / 2)));
+			if (pillLeft < currentLeft || pillRight > currentLeft + viewW - fadeClearance) {
+				const maxScroll = Math.max(0, scroller.scrollWidth - viewW);
+				const centered = Math.max(0, pillLeft - Math.max(8, Math.round((viewW - activePill.offsetWidth) / 2)));
+				const clearRight = Math.max(0, pillRight + fadeClearance - viewW);
+				let targetLeft = Math.min(maxScroll, Math.max(centered, clearRight));
+
+				// Snap past any tiny (<26px) sliced trailing edge of a previous pill so the leftmost visible pill starts crisp
+				const pills = Array.from(scroller.querySelectorAll('.mr-tee-font-pill'));
+				for (let i = 0; i < pills.length - 1; i++) {
+					const p = pills[i];
+					const pEnd = p.offsetLeft + p.offsetWidth;
+					const visibleRemnant = pEnd - targetLeft;
+					if (p.offsetLeft < targetLeft && visibleRemnant > 0 && visibleRemnant < 26) {
+						const nextLeft = Math.max(0, pills[i + 1].offsetLeft - 1);
+						if (nextLeft <= pillLeft && nextLeft <= maxScroll) {
+							targetLeft = nextLeft;
+						}
+						break;
+					}
+				}
 				scroller.scrollLeft = targetLeft;
 			}
+			scroller.classList.toggle('is-scrolled-left', scroller.scrollLeft > 4);
 		});
 	}
 
@@ -215,15 +400,38 @@ export class FormController {
 		this.addToCartBtn = (parentCartForm && parentCartForm.querySelector('button[type="submit"], input[type="submit"], .single_add_to_cart_button'))
 			|| document.querySelector('form.cart button[type="submit"], form.cart input[type="submit"], .single_add_to_cart_button');
 
+		this.initMobileFormRelocation();
+
 		if (this.container) {
-			this.container.querySelectorAll('.mr-tee-font-pills').forEach((scroller) => {
+			const pillScrollers = Array.from(this.container.querySelectorAll('.mr-tee-font-pills'));
+			pillScrollers.forEach((scroller) => {
+				scroller.addEventListener('scroll', () => {
+					scroller.classList.toggle('is-scrolled-left', Math.abs(scroller.scrollLeft) > 4);
+				}, { passive: true });
 				scroller.addEventListener('pointerdown', () => {
 					scroller._mrTeeUserScrolled = true;
+					this.hydrateFontPillsInScroller(scroller);
 				}, { once: true, passive: true });
 				scroller.addEventListener('wheel', () => {
 					scroller._mrTeeUserScrolled = true;
+					this.hydrateFontPillsInScroller(scroller);
 				}, { once: true, passive: true });
+				['pointerenter', 'touchstart', 'focusin'].forEach((evt) => {
+					scroller.addEventListener(evt, () => this.hydrateFontPillsInScroller(scroller), { once: true, passive: true });
+				});
 			});
+
+			// Hydrate real visual typeface previews on all font pills right after first paint (unless user enabled Data-Saver)
+			const saveData = Boolean(typeof navigator !== 'undefined' && navigator.connection && navigator.connection.saveData);
+			if (!saveData && pillScrollers.length > 0) {
+				const hydrateAllIdle = () => pillScrollers.forEach((s) => this.hydrateFontPillsInScroller(s));
+				if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+					setTimeout(() => window.requestIdleCallback(hydrateAllIdle, { timeout: 800 }), 250);
+				} else {
+					setTimeout(hydrateAllIdle, 350);
+				}
+			}
+
 			requestAnimationFrame(() => this.scrollActiveFontPillsIntoView());
 			if (document.fonts && document.fonts.ready && typeof document.fonts.ready.then === 'function') {
 				document.fonts.ready.then(() => this.scrollActiveFontPillsIntoView()).catch(() => {});
@@ -231,42 +439,204 @@ export class FormController {
 		}
 	}
 
+	/**
+	 * On mobile (< 992px), place the live `<form class="cart">` (Personalization + Variations + Add to Cart)
+	 * directly beneath the gallery/view pills and ABOVE product title & description so shoppers customize
+	 * right under the garment preview. Automatically restores the exact desktop position at >= 992px.
+	 * Works across Classic WooCommerce themes (preserving `.entry-summary` CSS selectors), Block/FSE themes,
+	 * and Page Builders (Elementor, Divi, Bricks, Flatsome).
+	 */
+	initMobileFormRelocation() {
+		if (typeof window === 'undefined' || !this.container || !this.cartForm) return;
+		const cartForm = this.cartForm;
+		if (!cartForm.parentNode || !cartForm.contains(this.container)) return;
+
+		const galleryRoot = document.getElementById('mr-tee-gallery-root')
+			|| document.querySelector('.woocommerce-product-gallery, .wp-block-woocommerce-product-image-gallery');
+		if (!galleryRoot || !galleryRoot.parentNode) return;
+
+		// Preserve exact original DOM position via an invisible comment anchor
+		const originAnchor = document.createComment('mr-tee-cart-form-origin');
+		cartForm.parentNode.insertBefore(originAnchor, cartForm);
+
+		let mobileSlot = null;
+		const mql = typeof window.matchMedia === 'function' ? window.matchMedia('(max-width: 991px)') : null;
+
+		const isAdjacentClassicSummary = (summaryEl) => {
+			if (!summaryEl || !galleryRoot) return false;
+			if (galleryRoot.nextElementSibling === summaryEl) return true;
+			// Allow lightweight hidden/badge siblings between gallery and summary inside same product wrapper
+			if (galleryRoot.parentNode === summaryEl.parentNode) {
+				let sib = galleryRoot.nextElementSibling;
+				while (sib && sib !== summaryEl) {
+					const cs = window.getComputedStyle(sib);
+					const h = sib.getBoundingClientRect ? sib.getBoundingClientRect().height : 0;
+					if (cs.display !== 'none' && h > 16) return false;
+					sib = sib.nextElementSibling;
+				}
+				return sib === summaryEl;
+			}
+			return false;
+		};
+
+		const applyPlacement = () => {
+			const isMobile = mql ? mql.matches : window.innerWidth <= 991;
+			if (isMobile) {
+				const summary = originAnchor.parentNode && originAnchor.parentNode.closest
+					? originAnchor.parentNode.closest('.summary, .entry-summary')
+					: null;
+				if (summary && isAdjacentClassicSummary(summary)) {
+					// Classic WooCommerce themes: prepend inside .entry-summary so ALL theme `.entry-summary form.cart` CSS stays intact
+					if (summary.firstChild !== cartForm) {
+						summary.insertBefore(cartForm, summary.firstChild);
+					}
+					if (mobileSlot && mobileSlot.parentNode) {
+						mobileSlot.remove();
+					}
+				} else {
+					// Block/FSE themes & Page Builders: place in dedicated slot immediately after #mr-tee-gallery-root
+					if (!mobileSlot) {
+						mobileSlot = document.createElement('div');
+						mobileSlot.id = 'mr-tee-mobile-form-slot';
+						mobileSlot.className = 'mr-tee-mobile-form-slot';
+					}
+					if (mobileSlot.previousElementSibling !== galleryRoot) {
+						galleryRoot.insertAdjacentElement('afterend', mobileSlot);
+					}
+					if (cartForm.parentNode !== mobileSlot) {
+						mobileSlot.appendChild(cartForm);
+					}
+				}
+				cartForm.classList.add('mr-tee-mobile-form-relocated');
+			} else {
+				// Desktop (>= 992px): restore exact original DOM position inside right summary column
+				if (originAnchor.parentNode && originAnchor.nextSibling !== cartForm) {
+					originAnchor.parentNode.insertBefore(cartForm, originAnchor.nextSibling);
+				}
+				cartForm.classList.remove('mr-tee-mobile-form-relocated');
+				if (mobileSlot && mobileSlot.parentNode) {
+					mobileSlot.remove();
+				}
+			}
+		};
+
+		applyPlacement();
+		if (mql) {
+			if (typeof mql.addEventListener === 'function') {
+				mql.addEventListener('change', applyPlacement);
+			} else if (typeof mql.addListener === 'function') {
+				mql.addListener(applyPlacement);
+			}
+		} else {
+			window.addEventListener('resize', applyPlacement, { passive: true });
+		}
+	}
+
+	/**
+	 * Resolve the currently active font definition for a `.mr-tee-field-group`.
+	 *
+	 * @param {Element|null} fieldGroup `.mr-tee-field-group` element.
+	 * @return {{ fontId: string, fontDef: Object|null, isOtSvg: boolean }}
+	 */
+	resolveFieldActiveFont(fieldGroup) {
+		if (!fieldGroup) return { fontId: '', fontDef: null, isOtSvg: false };
+		const lineIdx = parseInt(fieldGroup.getAttribute('data-line-index'), 10);
+		const lineConfig = (!Number.isNaN(lineIdx) && this.config.text_lines && this.config.text_lines[lineIdx]) || {};
+		const ref = lineConfig.ref_id ? this.store.getReference(lineConfig.ref_id) : null;
+		const activePill = fieldGroup.querySelector('.mr-tee-font-pill.is-active');
+		const fontId = (ref && ref.fontId)
+			|| (activePill && activePill.getAttribute('data-font-id'))
+			|| lineConfig.font
+			|| (Array.isArray(lineConfig.allowed_fonts) && lineConfig.allowed_fonts[0])
+			|| '';
+		const fonts = (window.mrTeeProductData && window.mrTeeProductData.fonts)
+			|| (window.mrTeeProductData && window.mrTeeProductData.config && window.mrTeeProductData.config.fonts)
+			|| {};
+		const fontDef = (fontId && fonts[fontId]) ? fonts[fontId] : null;
+		const isOtSvg = Boolean(fontDef && (fontDef.font_type === 'opentype_svg' || fontDef.color_svg));
+		return { fontId, fontDef, isOtSvg };
+	}
+
 	bindEvents() {
 		if (!this.container) return;
 		const i18n = (window.mrTeeProductData && window.mrTeeProductData.i18n) || {};
 
-		// 1. Text Inputs with Live Character Counters, Max-Lines Enforcement & Stage Sync
+		// 0. Side Section Headers (Recto / Verso clickable card headers sync directly with gallery stage)
+		this.container.querySelectorAll('.mr-tee-side-section-header[data-side-id]').forEach((headerBtn) => {
+			headerBtn.addEventListener('click', () => {
+				const sideId = headerBtn.getAttribute('data-side-id');
+				if (sideId) {
+					this.setActiveSide(sideId);
+					this.notifySideFocus(sideId);
+				}
+			});
+		});
+
+		// Synchronize initial color picker visibility across all field groups on mount
+		this.container.querySelectorAll('.mr-tee-field-group').forEach((fieldGroup) => {
+			if (fieldGroup.getAttribute('data-field-type') === 'image') return;
+			const { fontDef, isOtSvg } = this.resolveFieldActiveFont(fieldGroup);
+			this.syncSwatchesForLine(fieldGroup, isOtSvg, fontDef);
+		});
+
+		// 1. Text Inputs with Live Character Counters, Quick Clear Button, Max-Lines Enforcement & Stage Sync
 		this.container.querySelectorAll('.mr-tee-text-inputs-wrap .mr-tee-text-input').forEach((input) => {
 			const group = input.closest('.mr-tee-field-group');
+			const floatWrap = input.closest('.mr-tee-floating-label-wrap');
 			const lineIdx = parseInt(group.getAttribute('data-line-index'), 10);
 			const lineConfig = (this.config.text_lines && this.config.text_lines[lineIdx]) || {};
 			const counterWrap = group.querySelector('.mr-tee-char-counter');
 			const charCounter = group.querySelector('.mr-tee-char-count');
+			const clearBtn = group.querySelector('.mr-tee-input-clear-btn');
 			const maxChars = parseInt(input.getAttribute('maxlength') || lineConfig.max_chars || 0, 10) || 0;
 			const maxLines = input.tagName === 'TEXTAREA'
 				? (parseInt(lineConfig.max_lines || input.getAttribute('data-max-lines') || 0, 10) || 0)
 				: 0;
 
+			const syncClearState = (val) => {
+				const hasVal = String(val || '').length > 0;
+				if (floatWrap) {
+					floatWrap.classList.toggle('has-value', hasVal);
+				}
+				if (clearBtn) {
+					clearBtn.style.display = hasVal ? '' : 'none';
+				}
+			};
+
 			this.updateCharCounter(counterWrap, charCounter, input.value, maxChars);
+			syncClearState(input.value);
+
+			if (clearBtn) {
+				clearBtn.addEventListener('click', (e) => {
+					e.preventDefault();
+					this.notifySideFocus(input);
+					input.value = '';
+					this.updateCharCounter(counterWrap, charCounter, '', maxChars);
+					syncClearState('');
+					if (lineConfig.ref_id) {
+						this.store.setTextValue(lineConfig.ref_id, '');
+					}
+					input.focus();
+				});
+			}
 
 			const warmLineFont = () => {
-				this.notifySideFocus(input);
-				const activeFontId = lineConfig.font || (Array.isArray(lineConfig.allowed_fonts) && lineConfig.allowed_fonts[0]);
+				const { fontId: activeFontId, fontDef } = this.resolveFieldActiveFont(group);
 				if (activeFontId) {
 					const sData = SvgRenderer.getSvgFontData(activeFontId);
 					if (sData) {
 						SvgRenderer.prewarmFontGlyphs(sData, { immediate: true });
-					} else {
-						const fonts = (window.mrTeeProductData && window.mrTeeProductData.fonts) || {};
-						if (fonts[activeFontId] && (fonts[activeFontId].font_type === 'opentype_svg' || fonts[activeFontId].color_svg)) {
-							SvgRenderer.ensureSvgFontLoaded(activeFontId, fonts[activeFontId], { prewarmGlyphs: true }).catch(() => {});
-						}
+					} else if (fontDef && (fontDef.font_type === 'opentype_svg' || fontDef.color_svg)) {
+						SvgRenderer.ensureSvgFontLoaded(activeFontId, fontDef, { prewarmGlyphs: true }).catch(() => {});
 					}
 				}
 			};
 
 			input.addEventListener('pointerdown', warmLineFont, { passive: true });
-			input.addEventListener('focus', warmLineFont);
+			input.addEventListener('focus', () => {
+				this.closeAllColorTrays(group);
+				warmLineFont();
+			});
 
 			if (maxLines > 0) {
 				input.addEventListener('keydown', (e) => {
@@ -296,6 +666,7 @@ export class FormController {
 					}
 				}
 				this.updateCharCounter(counterWrap, charCounter, val, maxChars);
+				syncClearState(val);
 				if (lineConfig.ref_id) {
 					this.store.setTextValue(lineConfig.ref_id, val);
 				}
@@ -305,7 +676,8 @@ export class FormController {
 		// 2. Font Selector Pills
 		this.container.querySelectorAll('.mr-tee-font-pill').forEach((pill) => {
 			pill.addEventListener('pointerdown', () => {
-				this.notifySideFocus(pill);
+				const scroller = pill.closest('.mr-tee-font-pills');
+				if (scroller) this.hydrateFontPillsInScroller(scroller);
 				const fontId = pill.getAttribute('data-font-id');
 				const fonts = (window.mrTeeProductData && window.mrTeeProductData.fonts) || {};
 				const fontDef = fonts[fontId] || null;
@@ -315,19 +687,28 @@ export class FormController {
 			}, { passive: true });
 
 			pill.addEventListener('focus', () => {
-				this.notifySideFocus(pill);
+				const scroller = pill.closest('.mr-tee-font-pills');
+				if (scroller) this.hydrateFontPillsInScroller(scroller);
 			});
 
 			pill.addEventListener('click', () => {
 				this.notifySideFocus(pill);
 				const pillsContainer = pill.closest('.mr-tee-font-pills');
+				if (pillsContainer) this.hydrateFontPillsInScroller(pillsContainer);
 				const fieldGroup = pill.closest('.mr-tee-field-group');
+				this.closeAllColorTrays(fieldGroup);
 				const lineIdx = parseInt(pillsContainer.getAttribute('data-line-index'), 10);
 				const lineConfig = (this.config.text_lines && this.config.text_lines[lineIdx]) || {};
 				const fontId = pill.getAttribute('data-font-id');
 
-				const prevActivePill = pillsContainer.querySelector('.mr-tee-font-pill.is-active');
-				const prevFontId = lineConfig.font;
+				const refId = lineConfig.ref_id || `id-ref-text-line-${lineIdx + 1}`;
+				const ref = this.store.getReference(refId);
+				const committedFontId = (ref && ref.fontId) ? ref.fontId : lineConfig.font;
+				const committedPill = committedFontId
+					? Array.from(pillsContainer.querySelectorAll('.mr-tee-font-pill')).find(
+						(p) => p.getAttribute('data-font-id') === String(committedFontId)
+					)
+					: pillsContainer.querySelector('.mr-tee-font-pill.is-active');
 
 				// Highlight active immediately for snappy feedback
 				pillsContainer.querySelectorAll('.mr-tee-font-pill').forEach((p) => {
@@ -342,7 +723,11 @@ export class FormController {
 				const fontDef = fonts[fontId] || null;
 				const isOtSvg = Boolean(fontDef && (fontDef.font_type === 'opentype_svg' || fontDef.color_svg));
 
-				const refId = lineConfig.ref_id || `id-ref-text-line-${lineIdx + 1}`;
+				// Immediately hide color picker when tapping an OpenType-SVG pill so UI feels instant
+				if (isOtSvg) {
+					this.syncSwatchesForLine(fieldGroup, true, fontDef);
+				}
+
 				const reqToken = (lineConfig._fontLoadToken || 0) + 1;
 				lineConfig._fontLoadToken = reqToken;
 				lineConfig.font = fontId;
@@ -359,12 +744,15 @@ export class FormController {
 					const warmText = isUpper ? currentText.toUpperCase() : currentText;
 					const revertSelection = () => {
 						if (lineConfig._fontLoadToken !== reqToken) return;
-						lineConfig.font = prevFontId;
+						lineConfig.font = committedFontId;
 						pill.classList.remove('is-active', 'is-loading');
 						pill.removeAttribute('aria-busy');
-						if (prevActivePill && prevActivePill !== pill) {
-							prevActivePill.classList.add('is-active');
+						if (committedPill && committedPill !== pill) {
+							committedPill.classList.add('is-active');
 						}
+						const prevDef = committedFontId ? (fonts[committedFontId] || null) : null;
+						const prevIsOt = Boolean(prevDef && (prevDef.font_type === 'opentype_svg' || prevDef.color_svg));
+						this.syncSwatchesForLine(fieldGroup, prevIsOt, prevDef);
 					};
 					SvgRenderer.ensureSvgFontLoaded(fontId, fontDef, { prewarmGlyphs: true, priorityText: warmText })
 						.then((loadedData) => {
@@ -376,28 +764,61 @@ export class FormController {
 								return;
 							}
 							this.store.setTextFont(refId, fontId, fontDef);
-							this.syncSwatchesForLine(fieldGroup, true);
+							this.syncSwatchesForLine(fieldGroup, true, fontDef);
 						})
 						.catch(() => {
 							revertSelection();
 						});
 				} else {
 					this.store.setTextFont(refId, fontId, fontDef);
-					this.syncSwatchesForLine(fieldGroup, false);
+					this.syncSwatchesForLine(fieldGroup, false, fontDef);
 				}
 			});
 		});
 
-		// 2b. Color Swatch Selector Pills (Embroidery Thread & Ink Palettes)
+		// 2a. Mobile Left Color Switch Trigger & Collapsible Inline Color Tray
+		this.container.querySelectorAll('.mr-tee-color-trigger-btn').forEach((triggerBtn) => {
+			triggerBtn.addEventListener('click', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				const fieldGroup = triggerBtn.closest('.mr-tee-field-group');
+				if (!fieldGroup) return;
+				const willOpen = !fieldGroup.classList.contains('is-color-open');
+				this.closeAllColorTrays(willOpen ? fieldGroup : null);
+				fieldGroup.classList.toggle('is-color-open', willOpen);
+				triggerBtn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+				if (willOpen) {
+					const list = fieldGroup.querySelector('.mr-tee-color-swatches-list');
+					const activeDot = list ? list.querySelector('.mr-tee-color-swatch-pill.is-active') : null;
+					if (list && activeDot && list.scrollWidth > list.clientWidth + 1) {
+						const dotLeft = activeDot.offsetLeft;
+						const dotRight = dotLeft + activeDot.offsetWidth;
+						if (dotLeft < list.scrollLeft || dotRight > list.scrollLeft + list.clientWidth) {
+							list.scrollLeft = Math.max(0, dotLeft - Math.round((list.clientWidth - activeDot.offsetWidth) / 2));
+						}
+					}
+				}
+			});
+		});
+
+		this.container.querySelectorAll('.mr-tee-color-tray-close').forEach((closeBtn) => {
+			closeBtn.addEventListener('click', (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				this.closeAllColorTrays();
+			});
+		});
+
+		// 2b. Color Swatch Selector Pills (Embroidery Thread, Solid Ink & Multicolore Palettes)
 		this.container.querySelectorAll('.mr-tee-color-swatch-pill').forEach((pill) => {
-			pill.addEventListener('pointerdown', () => this.notifySideFocus(pill), { passive: true });
-			pill.addEventListener('focus', () => this.notifySideFocus(pill));
 			pill.addEventListener('click', () => {
 				this.notifySideFocus(pill);
 				const group = pill.closest('.mr-tee-color-swatches-wrap');
+				const fieldGroup = pill.closest('.mr-tee-field-group');
 				const colorRefId = group ? group.getAttribute('data-color-ref-id') : 'id-ref-color-selector';
 				const colorHex = pill.getAttribute('data-color-hex');
 				const colorName = pill.getAttribute('data-color-name') || pill.getAttribute('title') || '';
+				const { fontDef } = this.resolveFieldActiveFont(fieldGroup);
 
 				if (group) {
 					group.querySelectorAll('.mr-tee-color-swatch-pill').forEach((p) => {
@@ -413,7 +834,13 @@ export class FormController {
 				pill.setAttribute('aria-pressed', 'true');
 
 				if (colorHex) {
-					this.store.setColorSelection(colorRefId, colorHex);
+					this.syncColorTrigger(fieldGroup, {
+						hidden: false,
+						isMulti: colorHex === 'multi',
+						hex: colorHex === 'multi' ? '' : colorHex,
+						name: colorName,
+					});
+					this.store.setColorSelection(colorRefId, colorHex, fontDef);
 				}
 			});
 		});
@@ -440,7 +867,6 @@ export class FormController {
 
 		if (openCountBtn && this.countModal) {
 			openCountBtn.addEventListener('click', () => {
-				this.notifySideFocus('front');
 				tempCount = Math.max(minItems, Math.min(maxItems, this.store.state.activeCount));
 				this.updateModalCountDisplay(tempCount);
 				this.countModal.style.display = 'flex';
@@ -524,7 +950,6 @@ export class FormController {
 			if (header) {
 				header.addEventListener('click', (e) => {
 					if (e.target && e.target.closest('input')) return;
-					this.notifySideFocus('front');
 					const isOpen = card.classList.toggle('is-open');
 					if (toggleBtn) toggleBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
 				});
@@ -532,7 +957,6 @@ export class FormController {
 
 			// Name input
 			if (nameInput) {
-				nameInput.addEventListener('focus', () => this.notifySideFocus('front'));
 				nameInput.addEventListener('input', () => {
 					this.notifySideFocus('front');
 					const val = nameInput.value;
@@ -681,17 +1105,25 @@ export class FormController {
 			});
 		}
 
-		if (this.countModal || this.warningModal) {
-			document.addEventListener('keydown', (e) => {
-				if (e.key !== 'Escape') return;
-				if (this.countModal && this.countModal.style.display !== 'none') {
-					this.countModal.style.display = 'none';
-				}
-				if (this.warningModal && this.warningModal.style.display !== 'none') {
-					this.warningModal.style.display = 'none';
-				}
-			});
-		}
+		document.addEventListener('click', (e) => {
+			if (!this.container) return;
+			const openGroup = this.container.querySelector('.mr-tee-field-group.is-color-open');
+			if (!openGroup) return;
+			if (!e.target || !openGroup.contains(e.target)) {
+				this.closeAllColorTrays();
+			}
+		});
+
+		document.addEventListener('keydown', (e) => {
+			if (e.key !== 'Escape') return;
+			this.closeAllColorTrays();
+			if (this.countModal && this.countModal.style.display !== 'none') {
+				this.countModal.style.display = 'none';
+			}
+			if (this.warningModal && this.warningModal.style.display !== 'none') {
+				this.warningModal.style.display = 'none';
+			}
+		});
 	}
 
 	async runExportAndSubmit() {
@@ -786,17 +1218,12 @@ export class FormController {
 			};
 
 			if (uploadBtn && fileInput) {
-				uploadBtn.addEventListener('pointerdown', () => this.notifySideFocus(uploadBtn), { passive: true });
-				uploadBtn.addEventListener('focus', () => this.notifySideFocus(uploadBtn));
 				uploadBtn.addEventListener('click', () => {
-					this.notifySideFocus(uploadBtn);
 					fileInput.click();
 				});
 			}
 
 			if (resetBtn && fileInput) {
-				resetBtn.addEventListener('pointerdown', () => this.notifySideFocus(resetBtn), { passive: true });
-				resetBtn.addEventListener('focus', () => this.notifySideFocus(resetBtn));
 				resetBtn.addEventListener('click', () => {
 					this.notifySideFocus(resetBtn);
 					card._uploadToken = (card._uploadToken || 0) + 1;
@@ -885,6 +1312,9 @@ export class FormController {
 					if (resetBtn && (defaultImg || previewDataUrl)) {
 						resetBtn.style.display = 'inline-flex';
 					}
+
+					// Automatically focus the corresponding garment view once a new image is actually added
+					this.notifySideFocus(fileInput);
 
 					// Immediate 0ms local preview in SVG scene graph
 					if (refId) {

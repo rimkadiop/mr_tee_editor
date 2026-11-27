@@ -1,5 +1,5 @@
 /**
- * Mr. Tee Editor - Frontend Modular Orchestrator (v2.5.0)
+ * Mr. Tee Editor - Frontend Modular Orchestrator (v2.5.9)
  *
  * Bootstraps the client-side personalization application by interconnecting
  * StateStore, SceneGraphEngine, SvgRenderer, GalleryStage, FormController, and lazy-loaded PrintExporter
@@ -8,11 +8,11 @@
  * @package MrTeeEditor\Assets
  */
 
-import { StateStore } from './modules/state-store.js?v=2.5.0';
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.5.0';
-import { SvgRenderer } from './modules/svg-renderer.js?v=2.5.0';
-import { GalleryStage } from './modules/gallery-stage.js?v=2.5.0';
-import { FormController } from './modules/form-controller.js?v=2.5.0';
+import { StateStore } from './modules/state-store.js?v=2.5.9';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.5.9';
+import { SvgRenderer } from './modules/svg-renderer.js?v=2.5.9';
+import { GalleryStage } from './modules/gallery-stage.js?v=2.5.9';
+import { FormController } from './modules/form-controller.js?v=2.5.9';
 
 window.mrTeeSvgRenderer = SvgRenderer;
 window.mrTeeSceneGraphEngine = SceneGraphEngine;
@@ -30,6 +30,7 @@ class MrTeeFrontendApp {
 
 		this.dirtyViews = new Set();
 		this.renderedViews = new Set();
+		this._pendingFontUpgrades = new Set();
 		this._siblingSyncTimer = null;
 		this._printExporterClass = null;
 
@@ -43,7 +44,7 @@ class MrTeeFrontendApp {
 	 */
 	async loadPrintExporter() {
 		if (this._printExporterClass) return this._printExporterClass;
-		const mod = await import('./modules/print-exporter.js?v=2.5.0');
+		const mod = await import('./modules/print-exporter.js?v=2.5.9');
 		this._printExporterClass = mod.PrintExporter;
 		window.mrTeePrintExporter = mod.PrintExporter;
 		return this._printExporterClass;
@@ -67,8 +68,8 @@ class MrTeeFrontendApp {
 			cartForm.action = cartForm.action.replace('https:', 'http:');
 		}
 
-		// 1. Initialize State Store
-		this.store = new StateStore(this.config);
+		// 1. Initialize State Store with localized productId
+		this.store = new StateStore(this.config, this.data.productId || 0);
 
 		// 2. Initialize Gallery Stage (Dedicated multi-view gallery with legacy fallback)
 		this.stage = new GalleryStage(this.config, {
@@ -166,12 +167,15 @@ class MrTeeFrontendApp {
 			}
 		}
 
-		// 5. Stage 1 (Critical Initial Paint): Immediately decode ONLY the default_text glyphs
+		// 5. Stage 1 (Critical Initial Paint): Immediately decode ONLY Slide 0's default_text glyphs
 		//    so the visible product preview renders with 0ms delay and zero bandwidth contention.
 		this.prewarmDefaultTextGlyphs();
 
-		// 6. Stage 2 (Post-Load / Idle): Pre-warm the remaining A-Z, 0-9 alphabet in throttled batches
-		//    and lazy-fetch secondary allowed OpenType-SVG manifests in the background.
+		// 6. Post-Paint Off-Screen Default Text (~550ms): Quietly decode off-screen sides' default_text
+		//    glyphs (e.g. Verso ~8 WebP letters) so tapping Verso renders 100% crisp 3D text instantly.
+		setTimeout(() => this.prewarmActiveLineFonts(), 550);
+
+		// 7. Stage 2 (On First Interaction): Lazy-fetch secondary unselected OpenType-SVG manifests.
 		this.scheduleStageTwoWarmup();
 	}
 
@@ -330,6 +334,67 @@ class MrTeeFrontendApp {
 	}
 
 	/**
+	 * Ensure any OpenType-SVG fonts used by layers on `sideId` are loaded in memory,
+	 * and trigger an automatic view re-render the moment a lazy manifest finishes loading.
+	 *
+	 * @param {string} sideId Target print side identifier (empty string checks all layers).
+	 */
+	ensureMissingSvgFontsForSide(sideId = '') {
+		const fonts = (this.data && this.data.fonts) || {};
+		const targetLayers = sideId
+			? SvgRenderer.filterLayersBySide(this.currentLayers || [], sideId)
+			: (this.currentLayers || []);
+		if (!Array.isArray(targetLayers) || targetLayers.length === 0) return;
+
+		const inspectNodes = (nodes) => {
+			if (!Array.isArray(nodes)) return;
+			for (const node of nodes) {
+				if (!node || node.hide) continue;
+				if (node.type === 'TEXT') {
+					const fId = node.fontId || '';
+					const fDef = fId ? fonts[fId] : null;
+					const isOt = Boolean(
+						node.fontType === 'opentype_svg'
+						|| (fDef && (fDef.font_type === 'opentype_svg' || fDef.color_svg))
+					);
+					if (isOt && fId && !SvgRenderer.getSvgFontData(fId)) {
+						const upgradeKey = String(fId).toLowerCase().replace(/[\s\-]+/g, '_');
+						if (!this._pendingFontUpgrades.has(upgradeKey)) {
+							this._pendingFontUpgrades.add(upgradeKey);
+							const rawText = String(node.value || '');
+							const isUpper = (node.casing === 'UPPER') || Boolean(fDef && fDef.uppercase);
+							const warmText = isUpper ? rawText.toUpperCase() : rawText;
+							SvgRenderer.ensureSvgFontLoaded(fId, fDef, {
+								prewarmGlyphs: false,
+								priorityText: warmText,
+							})
+								.then((loaded) => {
+									this._pendingFontUpgrades.delete(upgradeKey);
+									if (!loaded) return;
+									this.markAllViewsDirty();
+									if (this.stage && this.stage.isDedicated) {
+										this.renderActiveViewIfNeeded(this.stage.getActiveViewId(), true);
+										this.scheduleSiblingViewsSync();
+									} else {
+										this.renderSceneGraph();
+									}
+								})
+								.catch(() => {
+									this._pendingFontUpgrades.delete(upgradeKey);
+								});
+						}
+					}
+				}
+				if (Array.isArray(node.items)) {
+					inspectNodes(node.items);
+				}
+			}
+		};
+
+		inspectNodes(targetLayers);
+	}
+
+	/**
 	 * Render SVG markup for any specific preview view ID (also exposed on `window.mrTeeApp.renderViewSvg`
 	 * so `PrintExporter` can render every customizable view cleanly during Add-to-Cart).
 	 *
@@ -346,6 +411,9 @@ class MrTeeFrontendApp {
 		if (meta && meta.customizable === false) {
 			return '';
 		}
+
+		const activeSideId = (extraOpts && extraOpts.sideId) || (meta && meta.sideId) || '';
+		this.ensureMissingSvgFontsForSide(activeSideId);
 
 		const sideDef = this.getSideDef(meta && meta.sideId);
 		const ratio = (extraOpts && extraOpts.aspectRatio > 0)
@@ -433,9 +501,10 @@ class MrTeeFrontendApp {
 	}
 
 	/**
-	 * Schedule Stage 2 background alphabet pre-warming and secondary manifest prefetching
-	 * strictly upon first user interaction with the editor/gallery so initial page load
-	 * downloads ZERO unused alphabet glyph bitmaps (~600 KB+ saved on initial load).
+	 * Schedule Stage 2 manifest & default-text glyph warmup upon first user interaction with
+	 * the editor/gallery so initial page load downloads zero unused off-screen assets, and
+	 * gallery swiping only fetches lightweight ~4 KB manifests + off-screen default_text glyphs
+	 * (full A-Z/0-9 alphabet prewarming occurs on input focus in FormController).
 	 */
 	scheduleStageTwoWarmup() {
 		let warmed = false;
@@ -462,17 +531,11 @@ class MrTeeFrontendApp {
 	}
 
 	/**
-	 * Stage 2: Pre-warm all glyph bitmaps (A-Z, 0-9) in throttled batches for the active font on each line.
+	 * Stage 2: Load off-screen active OpenType-SVG manifests and pre-decode ONLY their default_text
+	 * glyphs (saving ~70–100 unused alphabet image requests when browsing views).
 	 */
 	prewarmActiveLineFonts() {
 		const fonts = (this.data && this.data.fonts) || {};
-		const preloaded = (this.data && this.data.svgFonts) || {};
-		for (const [, sData] of Object.entries(preloaded)) {
-			if (sData) {
-				SvgRenderer.prewarmFontGlyphs(sData);
-			}
-		}
-
 		const textLines = this.config.text_lines || [];
 		for (const line of textLines) {
 			if (line.field_type === 'image') continue;
@@ -480,7 +543,26 @@ class MrTeeFrontendApp {
 			if (!activeFontId) continue;
 			const fDef = fonts[activeFontId];
 			if (fDef && (fDef.font_type === 'opentype_svg' || fDef.color_svg)) {
-				SvgRenderer.ensureSvgFontLoaded(activeFontId, fDef, { prewarmGlyphs: true }).catch(() => {});
+				let defaultText = line.default_text || '';
+				const isUpper = (line.casing === 'UPPER') || Boolean(fDef && fDef.uppercase);
+				if (isUpper) {
+					defaultText = defaultText.toUpperCase();
+				}
+				const alreadyLoaded = Boolean(SvgRenderer.getSvgFontData(activeFontId));
+				SvgRenderer.ensureSvgFontLoaded(activeFontId, fDef, {
+					prewarmGlyphs: false,
+					priorityText: defaultText,
+				})
+					.then((loaded) => {
+						if (!alreadyLoaded && loaded) {
+							this.markAllViewsDirty();
+							if (this.stage && this.stage.isDedicated) {
+								this.renderActiveViewIfNeeded(this.stage.getActiveViewId(), true);
+								this.scheduleSiblingViewsSync();
+							}
+						}
+					})
+					.catch(() => {});
 			}
 		}
 	}
@@ -535,10 +617,13 @@ class MrTeeFrontendApp {
 	}
 
 	/**
-	 * Idle-prefetch secondary allowed OpenType-SVG font manifests (~20 KB JSON only, without
-	 * downloading all 36 glyph bitmaps per unselected font) so tapping any font pill is instant.
+	 * Idle-prefetch secondary allowed OpenType-SVG font manifests (~4 KB JSON only, without
+	 * downloading glyph bitmaps) so tapping any font pill is instant.
 	 */
 	prefetchAllowedSvgFonts() {
+		const saveData = Boolean(typeof navigator !== 'undefined' && navigator.connection && navigator.connection.saveData);
+		if (saveData) return;
+
 		const fonts = (this.data && this.data.fonts) || {};
 		const textLines = this.config.text_lines || [];
 		const toPrefetch = new Set();

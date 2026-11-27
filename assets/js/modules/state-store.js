@@ -11,7 +11,7 @@
  */
 
 export class StateStore {
-	constructor(initialConfig) {
+	constructor(initialConfig, productId = 0) {
 		this.config = initialConfig || {};
 		this.listeners = new Set();
 
@@ -24,7 +24,7 @@ export class StateStore {
 		const initialCount = Number.isNaN(parsedDef) ? Math.max(minCount, 2) : Math.max(minCount, parsedDef);
 
 		this.state = {
-			productId: this.config.productId || 0,
+			productId: parseInt(productId || this.config.productId || 0, 10) || 0,
 			layers: Array.isArray(perso.layers) ? JSON.parse(JSON.stringify(perso.layers)) : [],
 			references: Array.isArray(perso.references) ? JSON.parse(JSON.stringify(perso.references)) : [],
 			area: perso.area || { width: 2400, height: 3000, higherAnchor: 'top', widerAnchor: 'middle' },
@@ -205,10 +205,17 @@ export class StateStore {
 						colorRef._initialColorHex = colorRef.colorHex || '';
 						colorRef._initialColorMode = colorRef.colorMode || 'solid';
 					}
-					const wantsMulti = Boolean(fontDef.multi_color) && Array.isArray(fontDef.palette) && fontDef.palette.length > 1;
+					if (colorRef._initialMultiPalette === undefined && Array.isArray(colorRef.palette) && colorRef.palette.length > 1) {
+						colorRef._initialMultiPalette = colorRef.palette.slice();
+					}
+					const fontMultiPalette = (Array.isArray(fontDef.palette) && fontDef.palette.length > 1)
+						? fontDef.palette.slice()
+						: (Array.isArray(colorRef._initialMultiPalette) ? colorRef._initialMultiPalette.slice() : null);
+					const wantsMulti = Boolean(fontDef.multi_color) && Boolean(fontMultiPalette && fontMultiPalette.length > 1);
+
 					if (wantsMulti && !colorRef._userPickedColor) {
 						colorRef.colorMode = 'multi';
-						colorRef.palette = fontDef.palette.slice();
+						colorRef.palette = fontMultiPalette;
 					} else {
 						colorRef.colorMode = 'solid';
 						if (Array.isArray(fontDef.palette) && fontDef.palette.length > 0) {
@@ -222,12 +229,9 @@ export class StateStore {
 							colorRef.color = { hex: nextHex };
 						}
 					}
-					if (fontDef.stroke !== undefined) {
-						colorRef.strokeHex = fontDef.stroke;
-					}
-					if (fontDef.stroke_width !== undefined) {
-						colorRef.strokeWidth = parseFloat(fontDef.stroke_width);
-					}
+
+					colorRef.strokeHex = fontDef.stroke || 'transparent';
+					colorRef.strokeWidth = (fontDef.stroke_width !== undefined) ? parseFloat(fontDef.stroke_width) : 0;
 				}
 			}
 		}
@@ -237,14 +241,41 @@ export class StateStore {
 	}
 
 	/**
-	 * Update color selection for a COLOR_SET selector reference.
+	 * Update color selection for a COLOR_SET selector reference (supports solid hex or 'multi').
 	 *
-	 * @param {string} colorRefId COLOR_SET reference ID.
-	 * @param {string} colorHex Selected color hex code (e.g. '#08086d').
+	 * @param {string}      colorRefId COLOR_SET reference ID.
+	 * @param {string}      colorHex   Selected color hex code (e.g. '#08086d') or 'multi'.
+	 * @param {Object|null} fontDef    Optional active font definition when restoring 'multi' palette.
 	 */
-	setColorSelection(colorRefId, colorHex) {
+	setColorSelection(colorRefId, colorHex, fontDef = null) {
 		const colorRef = this.getReference(colorRefId);
 		if (!colorRef) return;
+
+		if (colorRef._initialMultiPalette === undefined && Array.isArray(colorRef.palette) && colorRef.palette.length > 1) {
+			colorRef._initialMultiPalette = colorRef.palette.slice();
+		}
+
+		if (String(colorHex).toLowerCase() === 'multi') {
+			if (colorRef.colorMode === 'multi') return;
+			colorRef._userPickedColor = false;
+			colorRef.colorMode = 'multi';
+			const nextPalette = (fontDef && Array.isArray(fontDef.palette) && fontDef.palette.length > 1)
+				? fontDef.palette.slice()
+				: (Array.isArray(colorRef._initialMultiPalette) && colorRef._initialMultiPalette.length > 1
+					? colorRef._initialMultiPalette.slice()
+					: (Array.isArray(colorRef.palette) && colorRef.palette.length > 1
+						? colorRef.palette.slice()
+						: ['#f9b617', '#44983a', '#4483bc', '#db160d']));
+			colorRef.palette = nextPalette;
+			if (!colorRef.colorHex || !String(colorRef.colorHex).startsWith('#')) {
+				colorRef.colorHex = nextPalette[0] || '#f9b617';
+				colorRef.color = { hex: colorRef.colorHex };
+			}
+			this.state.isDirty = true;
+			this.notify('color_change');
+			return;
+		}
+
 		if (colorRef.colorMode === 'solid' && colorRef.colorHex === colorHex) return;
 
 		colorRef._userPickedColor = true;

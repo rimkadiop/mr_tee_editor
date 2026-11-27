@@ -39,8 +39,10 @@
 .mr-tee-field-group,
 .mr-tee-input-row,
 .mr-tee-floating-label-wrap,
+.mr-tee-style-controls,
 .mr-tee-font-selector-row,
 .mr-tee-color-swatches-wrap,
+.mr-tee-color-tray-head,
 .mr-tee-color-swatches-list,
 .mr-tee-repeater-items-wrap {
 	min-width: 0;
@@ -58,29 +60,49 @@
 	margin: 0;
 }
 
-/* 1. Main Card: PERSONNALISER */
+/* 1. Main Card: Personnalisation */
 .mr-tee-card.mr-tee-main-card {
-	background: #edf5fc;
-	border: 1px solid #d9e8f5;
-	border-radius: 14px;
+	background: #ffffff;
+	border: 1px solid #dbe4f0;
+	border-radius: 16px;
 	padding: 16px 14px;
-	box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+	box-shadow: 0 2px 10px rgba(15, 23, 42, 0.04);
+}
+
+/* Single-side products without Recto/Verso sub-cards get the soft section surface directly */
+.mr-tee-card.mr-tee-main-card:not(:has(.mr-tee-side-section)) {
+	background: #f1f5fa;
+	border-color: #d7e1ee;
 }
 
 .mr-tee-card-header {
-	margin-bottom: 10px;
+	margin-bottom: 12px;
+	padding-bottom: 10px;
+	border-bottom: 1px solid #dce5f1;
 }
 
 .mr-tee-card-title {
 	margin: 0;
-	font-size: 13px;
-	font-weight: 800;
-	letter-spacing: 0.6px;
-	color: #154694;
-	text-transform: uppercase;
+	font-size: 13.5px;
+	font-weight: 700;
+	letter-spacing: 0.2px;
+	color: #0f172a;
+	text-transform: none;
 	display: flex;
 	align-items: center;
 	gap: 8px;
+}
+
+.mr-tee-title-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
+	border-radius: 7px;
+	background: #e6effb;
+	color: #154694;
+	flex-shrink: 0;
 }
 
 .mr-tee-badge-number {
@@ -96,37 +118,148 @@
 	font-weight: 700;
 }
 
-/* Floating Label Inputs */
-.mr-tee-field-group {
-	margin-bottom: 10px;
-	border-radius: 11px;
-	transition: box-shadow 0.2s ease;
+/* Multi-Side Sections (Recto / Verso clean separation with subtle tinted surface so white fields stand out) */
+.mr-tee-side-section {
+	background: #f1f5fa;
+	border: 1px solid #d7e1ee;
+	border-radius: 12px;
+	padding: 12px;
+	margin-bottom: 12px;
+	transition: background-color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
-.mr-tee-field-group:last-child {
+.mr-tee-side-section:last-child {
 	margin-bottom: 0;
 }
 
-.mr-tee-field-group.is-active-side > .mr-tee-input-row .mr-tee-floating-label-wrap,
-.mr-tee-field-group.is-active-side > .mr-tee-image-field-card {
-	border-color: #93b4e8;
+.mr-tee-side-section.is-active-side {
+	background: #edf3fc;
+	border-color: #8cb2e8;
+	box-shadow: 0 2px 10px rgba(21, 70, 148, 0.08);
 }
 
+.mr-tee-side-section-header,
+.mr-tee-editor-container .mr-tee-side-section-header {
+	width: 100%;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 0 0 9px;
+	margin: 0 0 10px;
+	background: transparent;
+	border: 0;
+	border-bottom: 1px solid #dce5f1;
+	border-radius: 0;
+	cursor: pointer;
+	text-align: left;
+	color: #334155;
+	transition: color 0.15s ease;
+}
+
+.mr-tee-side-section-header:hover,
+.mr-tee-editor-container .mr-tee-side-section-header:hover {
+	background: transparent;
+	color: #0f172a;
+	box-shadow: none;
+}
+
+.mr-tee-side-section-header:focus-visible,
+.mr-tee-editor-container .mr-tee-side-section-header:focus-visible {
+	outline: 2px solid #154694;
+	outline-offset: 2px;
+	border-radius: 4px;
+}
+
+.mr-tee-side-section-title {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12.5px;
+	font-weight: 700;
+	color: #1e293b;
+	line-height: 1.25;
+}
+
+.mr-tee-side-section.is-active-side .mr-tee-side-section-title {
+	color: #154694;
+}
+
+.mr-tee-side-section-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 22px;
+	height: 22px;
+	border-radius: 6px;
+	background: #e2eaf4;
+	color: #475569;
+	flex-shrink: 0;
+	transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.mr-tee-side-section.is-active-side .mr-tee-side-section-icon {
+	background: #dbeafe;
+	color: #154694;
+}
+
+.mr-tee-side-section-count {
+	font-size: 11px;
+	font-weight: 600;
+	color: #475569;
+	background: #ffffff;
+	border: 1px solid #d5dfec;
+	border-radius: 99px;
+	padding: 2px 8px;
+	line-height: 1.3;
+	flex-shrink: 0;
+}
+
+.mr-tee-side-section.is-active-side .mr-tee-side-section-count {
+	background: #ffffff;
+	border-color: #93b4e8;
+	color: #154694;
+}
+
+/* Field Groups & Subtle Separation */
+.mr-tee-field-group {
+	padding-bottom: 12px;
+	margin-bottom: 12px;
+	border-bottom: 1px solid #dce5f1;
+	transition: border-color 0.2s ease;
+}
+
+.mr-tee-side-section .mr-tee-field-group {
+	border-bottom-color: #dce5f1;
+}
+
+.mr-tee-field-group:last-child {
+	padding-bottom: 0;
+	margin-bottom: 0;
+	border-bottom: 0;
+}
+
+/* Floating Label Inputs */
 .mr-tee-floating-label-wrap {
 	position: relative;
 	background: #ffffff;
-	border: 1.5px solid #cbd5e1;
+	border: 1.5px solid #c6d3e3;
 	border-radius: 10px;
-	padding: 0 12px;
-	height: 48px;
+	padding: 0 10px 0 12px;
+	height: 50px;
 	display: flex;
 	align-items: center;
-	transition: all 0.2s ease;
+	box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+	transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.mr-tee-floating-label-wrap:hover {
+	border-color: #94a3b8;
 }
 
 .mr-tee-floating-label-wrap:focus-within {
 	border-color: #154694;
-	box-shadow: 0 0 0 3px rgba(21, 70, 148, 0.12);
+	box-shadow: 0 0 0 3px rgba(21, 70, 148, 0.1);
 }
 
 .mr-tee-text-input {
@@ -139,7 +272,7 @@
 	border-radius: 0 !important;
 	outline: none !important;
 	background: transparent !important;
-	padding: 15px 46px 3px 0 !important;
+	padding: 16px 68px 3px 0 !important;
 	font-family: inherit !important;
 	font-size: 15px !important;
 	font-weight: 600 !important;
@@ -157,12 +290,12 @@
 .mr-tee-floating-label {
 	position: absolute;
 	left: 12px;
-	right: 54px;
-	top: 14px;
+	right: 76px;
+	top: 15px;
 	margin: 0 !important;
 	padding: 0 !important;
 	width: auto !important;
-	max-width: calc(100% - 66px);
+	max-width: calc(100% - 88px);
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -174,7 +307,7 @@
 	text-transform: none !important;
 	letter-spacing: normal !important;
 	pointer-events: none;
-	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+	transition: all 0.18s cubic-bezier(0.4, 0, 0.2, 1);
 	transform-origin: left top;
 }
 
@@ -182,19 +315,33 @@
 .mr-tee-text-input:not(:placeholder-shown) ~ .mr-tee-floating-label {
 	top: 5px;
 	font-size: 10.5px;
-	font-weight: 700;
+	font-weight: 600;
+	color: #475569;
+}
+
+.mr-tee-text-input:focus ~ .mr-tee-floating-label {
 	color: #154694;
 }
 
-.mr-tee-char-counter {
+.mr-tee-input-meta-right {
 	position: absolute;
-	right: 12px;
-	top: 15px;
+	right: 8px;
+	top: 50%;
+	transform: translateY(-50%);
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	z-index: 2;
+}
+
+.mr-tee-char-counter {
 	font-size: 11px;
 	font-weight: 600;
+	font-variant-numeric: tabular-nums;
 	color: #94a3b8;
 	pointer-events: none;
 	user-select: none;
+	line-height: 1;
 }
 
 .mr-tee-char-counter.is-near-limit {
@@ -206,9 +353,43 @@
 	font-weight: 700;
 }
 
+.mr-tee-input-clear-btn,
+.mr-tee-editor-container .mr-tee-input-clear-btn {
+	position: relative;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: #f1f5f9;
+	color: #64748b;
+	font-size: 14px;
+	font-weight: 600;
+	line-height: 1;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	flex-shrink: 0;
+	transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.mr-tee-input-clear-btn:hover,
+.mr-tee-editor-container .mr-tee-input-clear-btn:hover {
+	background: #e2e8f0;
+	color: #0f172a;
+	box-shadow: none;
+}
+
+.mr-tee-input-clear-btn:focus-visible,
+.mr-tee-editor-container .mr-tee-input-clear-btn:focus-visible {
+	outline: 2px solid #154694;
+	outline-offset: 1px;
+}
+
 .mr-tee-floating-label-wrap.mr-tee-floating-label-wrap--textarea {
 	height: auto;
-	min-height: 72px;
+	min-height: 74px;
 	padding-top: 22px;
 	padding-bottom: 8px;
 	align-items: flex-start;
@@ -216,86 +397,57 @@
 
 .mr-tee-floating-label-wrap--textarea .mr-tee-text-input:focus ~ .mr-tee-floating-label,
 .mr-tee-floating-label-wrap--textarea .mr-tee-text-input:not(:placeholder-shown) ~ .mr-tee-floating-label {
-	top: 1px;
+	top: 2px;
 	left: 10px;
-	right: 54px;
+	right: 76px;
 	padding: 4px 2px 3px !important;
 	background: #ffffff !important;
 	border-radius: 6px;
 }
 
-.mr-tee-floating-label-wrap--textarea .mr-tee-char-counter {
-	top: 6px;
+.mr-tee-floating-label-wrap--textarea .mr-tee-input-meta-right {
+	top: 7px;
+	transform: none;
 }
 
 .mr-tee-textarea {
 	resize: vertical;
 	min-height: 46px !important;
 	line-height: 1.35 !important;
-	padding: 2px 46px 2px 0 !important;
+	padding: 2px 68px 2px 0 !important;
 }
 
-/* Color Swatch Picker */
-.mr-tee-color-swatches-wrap {
+/* Unified Style Controls Row (Desktop: font rail; Mobile <= 991px: Color Switch on left + Font Rail on right) */
+.mr-tee-style-controls {
 	margin-top: 8px;
-	margin-bottom: 6px;
-}
-
-.mr-tee-active-color-name {
-	font-weight: 700;
-	color: #0f172a;
-	margin-left: 4px;
-}
-
-.mr-tee-color-swatches-list {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 8px;
-	margin-top: 4px;
-}
-
-.mr-tee-color-swatch-pill,
-.mr-tee-editor-container .mr-tee-color-swatch-pill {
-	width: 32px;
-	height: 32px;
+	width: 100%;
+	max-width: 100%;
 	min-width: 0;
-	border: 0;
-	border-radius: 50%;
-	cursor: pointer;
-	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-	box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.18), 0 1px 3px rgba(0, 0, 0, 0.12);
-	position: relative;
-	padding: 0;
-	display: inline-block;
-	flex-shrink: 0;
 }
 
-.mr-tee-color-swatch-pill:hover,
-.mr-tee-editor-container .mr-tee-color-swatch-pill:hover {
-	transform: scale(1.12);
+.mr-tee-color-trigger-btn,
+.mr-tee-editor-container .mr-tee-color-trigger-btn,
+.mr-tee-color-tray-close,
+.mr-tee-editor-container .mr-tee-color-tray-close {
+	display: none;
 }
 
-.mr-tee-color-swatch-pill:focus-visible,
-.mr-tee-editor-container .mr-tee-color-swatch-pill:focus-visible {
-	outline: 2px solid #154694;
-	outline-offset: 2px;
+.mr-tee-color-tray-head {
+	display: contents;
 }
 
-.mr-tee-color-swatch-pill.is-active,
-.mr-tee-editor-container .mr-tee-color-swatch-pill.is-active {
-	transform: scale(1.15);
-	outline: 2.5px solid #154694;
-	outline-offset: 2px;
-	box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.18), 0 2px 6px rgba(21, 70, 148, 0.35);
-}
-
-/* Font Pills */
+/* Font Pills (directly under input, with subtle scroll edge fade) */
 .mr-tee-font-selector-row {
 	width: 100%;
 	min-width: 0;
 	max-width: 100%;
 	contain: inline-size;
-	margin-top: 6px;
+	margin-top: 8px;
+	position: relative;
+}
+
+.mr-tee-style-controls .mr-tee-font-selector-row {
+	margin-top: 0;
 }
 
 .mr-tee-font-pills {
@@ -305,33 +457,46 @@
 	max-width: 100%;
 	gap: 6px;
 	overflow-x: auto;
-	padding-bottom: 2px;
+	padding: 1px 22px 2px 1px;
 	-webkit-overflow-scrolling: touch;
 	scrollbar-width: none;
+	-webkit-mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 18px), transparent 100%);
+	mask-image: linear-gradient(to right, #000 0%, #000 calc(100% - 18px), transparent 100%);
 }
 
 .mr-tee-font-pills::-webkit-scrollbar {
 	display: none;
 }
 
+.mr-tee-font-pills.is-scrolled-left {
+	-webkit-mask-image: linear-gradient(to right, transparent 0%, #000 14px, #000 calc(100% - 18px), transparent 100%);
+	mask-image: linear-gradient(to right, transparent 0%, #000 14px, #000 calc(100% - 18px), transparent 100%);
+}
+
 .mr-tee-font-pill,
 .mr-tee-editor-container .mr-tee-font-pill {
 	width: auto;
-	height: auto;
+	height: 30px;
 	display: inline-flex;
 	align-items: center;
-	border: 1.5px solid #cbd5e1;
+	border: 1px solid #c8d4e3;
 	background: #ffffff;
-	border-radius: 99px;
-	padding: 5px 11px;
+	border-radius: 8px;
+	padding: 0 10px;
 	font-size: 12px;
 	font-weight: 500;
-	line-height: 1.25;
+	line-height: 1.2;
 	color: #334155;
 	cursor: pointer;
 	white-space: nowrap;
 	flex-shrink: 0;
-	transition: all 0.15s ease;
+	box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+	transition: border-color 0.15s ease, background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mr-tee-font-pill-text {
+	display: inline-block;
+	line-height: 1.2;
 }
 
 .mr-tee-font-pill:hover,
@@ -356,13 +521,92 @@
 	background: #154694;
 	color: #ffffff;
 	font-weight: 600;
-	box-shadow: 0 2px 6px rgba(21, 70, 148, 0.25);
+	box-shadow: 0 1px 4px rgba(21, 70, 148, 0.22);
+}
+
+/* Prevent synthetic browser faux-bold from distorting single-weight display TTF/OTF typefaces */
+.mr-tee-font-pill[data-font-family],
+.mr-tee-editor-container .mr-tee-font-pill[data-font-family],
+.mr-tee-font-pill[data-font-family].is-active,
+.mr-tee-editor-container .mr-tee-font-pill[data-font-family].is-active {
+	font-weight: 400;
 }
 
 .mr-tee-font-pill.is-loading,
 .mr-tee-editor-container .mr-tee-font-pill.is-loading {
 	opacity: 0.72;
 	cursor: progress;
+}
+
+/* Color Swatch Picker (compact inline layout on desktop, collapsible tray under left switch on mobile) */
+.mr-tee-color-swatches-wrap {
+	margin-top: 8px;
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px 10px;
+}
+
+.mr-tee-color-swatches-wrap .mr-tee-picker-label {
+	margin: 0;
+	font-size: 11.5px;
+	font-weight: 600;
+	color: #64748b;
+	white-space: nowrap;
+	line-height: 1.2;
+}
+
+.mr-tee-active-color-name {
+	font-weight: 600;
+	color: #1e293b;
+	margin-left: 3px;
+}
+
+.mr-tee-color-swatches-list {
+	display: inline-flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 7px;
+}
+
+.mr-tee-color-swatch-pill,
+.mr-tee-editor-container .mr-tee-color-swatch-pill {
+	width: 24px;
+	height: 24px;
+	min-width: 0;
+	border: 0;
+	border-radius: 50%;
+	cursor: pointer;
+	transition: transform 0.16s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.16s ease;
+	box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.18);
+	position: relative;
+	padding: 0;
+	display: inline-block;
+	flex-shrink: 0;
+}
+
+.mr-tee-color-swatch-pill--multi,
+.mr-tee-editor-container .mr-tee-color-swatch-pill--multi {
+	background: conic-gradient(from 45deg, #ef4444, #facc15, #22c55e, #3b82f6, #ec4899, #ef4444) !important;
+}
+
+.mr-tee-color-swatch-pill:hover,
+.mr-tee-editor-container .mr-tee-color-swatch-pill:hover {
+	transform: scale(1.1);
+}
+
+.mr-tee-color-swatch-pill:focus-visible,
+.mr-tee-editor-container .mr-tee-color-swatch-pill:focus-visible {
+	outline: 2px solid #154694;
+	outline-offset: 2px;
+}
+
+.mr-tee-color-swatch-pill.is-active,
+.mr-tee-editor-container .mr-tee-color-swatch-pill.is-active {
+	transform: scale(1.12);
+	outline: 2px solid #154694;
+	outline-offset: 2px;
+	box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.2), 0 2px 5px rgba(21, 70, 148, 0.28);
 }
 
 /* 2. Repeater Trigger Button */
@@ -1060,19 +1304,52 @@
 	overflow: hidden !important;
 }
 
-/* 3. Desktop Sticky Gallery & Stage Overlay Protection */
+/* 3. Viewport Clip Protection & Desktop Sticky Gallery */
+html:has(body.has-mr-tee-editor),
+body.has-mr-tee-editor {
+	overflow-x: clip !important;
+	overflow-y: visible !important;
+}
+
 .has-mr-tee-editor .product-details-wrapper {
 	overflow: visible !important;
 	display: flow-root !important;
 }
 
-@media (min-width: 992px) {
-	html:has(body.has-mr-tee-editor),
-	body.has-mr-tee-editor {
-		overflow-x: clip !important;
-		overflow-y: visible !important;
+@media (max-width: 991px) {
+	.has-mr-tee-editor .mr-tee-mobile-form-slot {
+		width: 100%;
+		max-width: 100%;
+		margin: 0;
 	}
 
+	.has-mr-tee-editor form.cart.mr-tee-mobile-form-relocated {
+		margin-top: 0 !important;
+		margin-bottom: 18px !important;
+		padding-bottom: 18px !important;
+		border-bottom: 1px solid #e2e8f0;
+	}
+
+	.has-mr-tee-editor form.cart.mr-tee-mobile-form-relocated > .mr-tee-editor-container,
+	.has-mr-tee-editor form.cart.mr-tee-mobile-form-relocated .mr-tee-editor-container {
+		margin-top: 4px;
+		margin-bottom: 14px;
+	}
+
+	.has-mr-tee-editor form.cart.mr-tee-mobile-form-relocated .single_add_to_cart_button {
+		height: auto !important;
+		min-height: 48px;
+		line-height: 1.25 !important;
+		padding: 12px 18px !important;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		text-align: center;
+		white-space: normal;
+	}
+}
+
+@media (min-width: 992px) {
 	.mr-tee-card.mr-tee-main-card {
 		padding: 18px 18px;
 	}
@@ -1266,30 +1543,308 @@
 	outline-offset: 2px;
 }
 
+/* ==========================================================================
+   Mobile Unified Style Bar (Color Switch Left + Visual Font Rail Right) & Touch Ergonomics
+   ========================================================================== */
+@keyframes mrTeeColorTrayIn {
+	from {
+		opacity: 0;
+		transform: translateY(-4px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+@media (max-width: 991px) {
+	.mr-tee-card.mr-tee-main-card {
+		padding: 14px 12px;
+	}
+
+	.mr-tee-side-section {
+		padding: 11px;
+		margin-bottom: 10px;
+	}
+
+	.mr-tee-field-group {
+		padding-bottom: 11px;
+		margin-bottom: 11px;
+	}
+
+	/* Expanded 36x36 invisible hit area around inline clear (x) button for effortless thumb taps */
+	.mr-tee-input-clear-btn::after {
+		content: "";
+		position: absolute;
+		inset: -8px;
+	}
+
+	/* Single-Lane Style Toolbar: Color Switch (left) + Visual Font Pills Rail (right) */
+	.mr-tee-style-controls {
+		display: flex;
+		align-items: center;
+		gap: 11px;
+		margin-top: 8px;
+	}
+
+	.mr-tee-style-controls .mr-tee-font-selector-row {
+		flex: 1 1 0;
+		min-width: 0;
+		margin-top: 0;
+	}
+
+	.mr-tee-color-trigger-btn,
+	.mr-tee-editor-container .mr-tee-color-trigger-btn {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 4px;
+		width: auto;
+		height: 36px;
+		padding: 0 7px 0 6px;
+		border-radius: 9px;
+		border: 1.5px solid #c6d3e3;
+		background: #ffffff;
+		color: #64748b;
+		cursor: pointer;
+		flex-shrink: 0;
+		box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+		transition: border-color 0.16s ease, background-color 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+		-webkit-tap-highlight-color: transparent;
+	}
+
+	/* Subtle studio divider separating Color Switch (left) from Font Pills Rail (right); auto-hides with trigger */
+	.mr-tee-color-trigger-btn::after {
+		content: "";
+		position: absolute;
+		inset-inline-end: -7px;
+		top: 50%;
+		transform: translateY(-50%);
+		width: 1px;
+		height: 20px;
+		background: #d2dce9;
+		pointer-events: none;
+	}
+
+	.mr-tee-color-trigger-btn:hover,
+	.mr-tee-editor-container .mr-tee-color-trigger-btn:hover {
+		border-color: #94a3b8;
+		background: #f8fafc;
+		color: #334155;
+		box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+	}
+
+	.mr-tee-color-trigger-btn:focus-visible,
+	.mr-tee-editor-container .mr-tee-color-trigger-btn:focus-visible {
+		outline: 2px solid #154694;
+		outline-offset: 2px;
+	}
+
+	.mr-tee-field-group.is-color-open .mr-tee-color-trigger-btn,
+	.mr-tee-editor-container .mr-tee-field-group.is-color-open .mr-tee-color-trigger-btn {
+		border-color: #154694;
+		background: #ffffff;
+		color: #154694;
+		box-shadow: 0 0 0 2.5px rgba(21, 70, 148, 0.14);
+	}
+
+	.mr-tee-color-trigger-dot {
+		width: 22px;
+		height: 22px;
+		border-radius: 50%;
+		display: inline-block;
+		flex-shrink: 0;
+		background-color: #111827;
+		box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.22);
+		transition: transform 0.15s ease;
+	}
+
+	.mr-tee-color-trigger-dot--multi {
+		background: conic-gradient(from 45deg, #ef4444, #facc15, #22c55e, #3b82f6, #ec4899, #ef4444) !important;
+	}
+
+	.mr-tee-color-trigger-caret {
+		width: 11px;
+		height: 11px;
+		flex-shrink: 0;
+		transition: transform 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+	}
+
+	.mr-tee-field-group.is-color-open .mr-tee-color-trigger-caret {
+		transform: rotate(180deg);
+	}
+
+	/* Visual Font Pills matched to 36px toolbar height with crisp 20px 3D glyph thumbnails */
+	.mr-tee-font-pill,
+	.mr-tee-editor-container .mr-tee-font-pill {
+		height: 36px;
+		padding: 0 11px;
+		border-radius: 9px;
+		font-size: 13px;
+	}
+
+	.mr-tee-font-pill[data-font-family],
+	.mr-tee-editor-container .mr-tee-font-pill[data-font-family] {
+		font-size: 13.5px;
+	}
+
+	.mr-tee-pill-thumb,
+	.mr-tee-editor-container .mr-tee-pill-thumb {
+		width: 20px;
+		height: 20px;
+	}
+
+	/* Collapsible Inline Color Tray (hidden until user taps left Color Switch; single open tray at a time) */
+	.mr-tee-color-swatches-wrap--collapsible {
+		display: none;
+	}
+
+	.mr-tee-field-group.is-color-open .mr-tee-color-swatches-wrap--collapsible {
+		display: flex;
+		flex-direction: column;
+		align-items: stretch;
+		gap: 6px;
+		margin-top: 8px;
+		padding: 9px 10px 7px;
+		background: #ffffff;
+		border: 1px solid #cbd5e1;
+		border-radius: 10px;
+		box-shadow: 0 2px 6px rgba(15, 23, 42, 0.05);
+		animation: mrTeeColorTrayIn 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+	}
+
+	.mr-tee-color-swatches-wrap--collapsible .mr-tee-color-tray-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		width: 100%;
+	}
+
+	.mr-tee-color-swatches-wrap--collapsible .mr-tee-color-tray-close,
+	.mr-tee-editor-container .mr-tee-color-swatches-wrap--collapsible .mr-tee-color-tray-close {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		padding: 0;
+		border: 0;
+		border-radius: 50%;
+		background: #e2e8f0;
+		color: #475569;
+		font-size: 16px;
+		font-weight: 600;
+		line-height: 1;
+		cursor: pointer;
+		flex-shrink: 0;
+		transition: background-color 0.15s ease, color 0.15s ease;
+	}
+
+	.mr-tee-color-swatches-wrap--collapsible .mr-tee-color-tray-close:hover,
+	.mr-tee-editor-container .mr-tee-color-swatches-wrap--collapsible .mr-tee-color-tray-close:hover {
+		background: #cbd5e1;
+		color: #0f172a;
+		box-shadow: none;
+	}
+
+	.mr-tee-color-swatches-wrap--collapsible .mr-tee-color-tray-close:focus-visible,
+	.mr-tee-editor-container .mr-tee-color-swatches-wrap--collapsible .mr-tee-color-tray-close:focus-visible {
+		outline: 2px solid #154694;
+		outline-offset: 2px;
+	}
+
+	.mr-tee-color-swatches-wrap--collapsible .mr-tee-color-swatches-list {
+		display: flex;
+		align-items: center;
+		flex-wrap: nowrap;
+		overflow-x: auto;
+		-webkit-overflow-scrolling: touch;
+		scrollbar-width: none;
+		gap: 7px;
+		padding: 6px 4px;
+		width: 100%;
+	}
+
+	.mr-tee-color-swatches-wrap--collapsible .mr-tee-color-swatches-list::-webkit-scrollbar {
+		display: none;
+	}
+
+	.mr-tee-color-swatch-pill,
+	.mr-tee-editor-container .mr-tee-color-swatch-pill {
+		width: 26px;
+		height: 26px;
+	}
+
+	.mr-tee-color-swatch-pill.is-active,
+	.mr-tee-editor-container .mr-tee-color-swatch-pill.is-active {
+		transform: scale(1.08);
+	}
+}
+
+@media (max-width: 640px) {
+	.mr-tee-img-field-actions {
+		width: 100%;
+		justify-content: stretch;
+	}
+
+	.mr-tee-image-upload-btn,
+	.mr-tee-editor-container .mr-tee-image-upload-btn {
+		flex: 1 1 auto;
+		min-height: 38px;
+		padding: 8px 14px;
+		font-size: 13px;
+	}
+
+	.mr-tee-image-reset-btn,
+	.mr-tee-editor-container .mr-tee-image-reset-btn {
+		width: 38px;
+		height: 38px;
+	}
+}
+
 /* RTL Support */
 [dir="rtl"] .mr-tee-text-input {
-	padding: 15px 0 3px 46px !important;
+	padding: 16px 0 3px 68px !important;
 }
 
 [dir="rtl"] .mr-tee-textarea {
-	padding: 2px 0 2px 46px !important;
+	padding: 2px 0 2px 68px !important;
 }
 
 [dir="rtl"] .mr-tee-floating-label {
-	left: 54px;
+	left: 76px;
 	right: 12px;
 	transform-origin: right top;
 }
 
 [dir="rtl"] .mr-tee-floating-label-wrap--textarea .mr-tee-text-input:focus ~ .mr-tee-floating-label,
 [dir="rtl"] .mr-tee-floating-label-wrap--textarea .mr-tee-text-input:not(:placeholder-shown) ~ .mr-tee-floating-label {
-	left: 54px;
+	left: 76px;
 	right: 10px;
 }
 
+[dir="rtl"] .mr-tee-input-meta-right,
 [dir="rtl"] .mr-tee-char-counter {
 	right: auto;
-	left: 12px;
+	left: 8px;
+}
+
+[dir="rtl"] .mr-tee-font-pills {
+	padding: 1px 1px 2px 22px;
+	-webkit-mask-image: linear-gradient(to left, #000 0%, #000 calc(100% - 18px), transparent 100%);
+	mask-image: linear-gradient(to left, #000 0%, #000 calc(100% - 18px), transparent 100%);
+}
+
+[dir="rtl"] .mr-tee-font-pills.is-scrolled-left {
+	-webkit-mask-image: linear-gradient(to left, transparent 0%, #000 14px, #000 calc(100% - 18px), transparent 100%);
+	mask-image: linear-gradient(to left, transparent 0%, #000 14px, #000 calc(100% - 18px), transparent 100%);
+}
+
+[dir="rtl"] .mr-tee-color-trigger-btn,
+[dir="rtl"] .mr-tee-editor-container .mr-tee-color-trigger-btn {
+	padding: 0 6px 0 7px;
 }
 
 [dir="rtl"] .mr-tee-active-color-name {
@@ -1307,6 +1862,7 @@
 	margin: 0 0 0 6px;
 }
 
+[dir="rtl"] .mr-tee-side-section-header,
 [dir="rtl"] .mr-tee-repeater-trigger-btn,
 [dir="rtl"] .mr-tee-editor-container .mr-tee-repeater-trigger-btn {
 	text-align: right;

@@ -15,6 +15,7 @@
 const SVG_ICON_SHIRT = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.38 3.46L16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 .99.84H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.15a1 1 0 0 0 .99-.84l.58-3.47a2 2 0 0 0-1.34-2.23z"/></svg>';
 const SVG_ICON_ZOOM = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
 const SVG_ICON_PHOTO = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
+const SVG_ICON_FLIP = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>';
 const SVG_ICON_EYE = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
 
 export class DedicatedGallery {
@@ -81,12 +82,80 @@ export class DedicatedGallery {
 		}
 
 		this.isMounted = true;
+		this.syncMobileBleed();
+		if (typeof window !== 'undefined') {
+			let bleedTimer = null;
+			const onViewportResize = () => {
+				clearTimeout(bleedTimer);
+				bleedTimer = setTimeout(() => this.syncMobileBleed(), 80);
+			};
+			window.addEventListener('resize', onViewportResize, { passive: true });
+			window.addEventListener('orientationchange', onViewportResize, { passive: true });
+		}
 		this.bindControls();
 		this.bindSwipeGestures();
 		this.bindImageLoadEvents();
 		this.bindVariationSync();
 		this.initMobilePreviewFab();
 		this.goToIndex(0, { silent: true });
+	}
+
+	/**
+	 * Synchronize exact scrollbar-free viewport width for edge-to-edge full-bleed mobile display
+	 * (<= 767px), automatically opting out if the gallery is embedded inside a narrow sub-column.
+	 */
+	syncMobileBleed() {
+		if (!this.root || typeof document === 'undefined') return;
+		const docW = (document.documentElement && document.documentElement.clientWidth) || window.innerWidth || 0;
+		const bodyW = (document.body && document.body.clientWidth) || docW;
+		const cw = Math.min(docW || Infinity, bodyW || Infinity);
+		if (!Number.isFinite(cw) || cw <= 0) return;
+		if (window.innerWidth > 767) {
+			this.root.removeAttribute('data-mobile-bleed');
+			this.root.style.removeProperty('--mr-tee-mobile-vw');
+			this.root.style.removeProperty('--mr-tee-mobile-ml');
+			this.root.style.removeProperty('--mr-tee-mobile-mr');
+			return;
+		}
+
+		// Walk up ancestors to respect any boxed overflow:hidden/clip container (e.g. Divi/Elementor boxed rows)
+		let clipLeft = 0;
+		let clipRight = cw;
+		let anc = this.root.parentElement;
+		while (anc && anc !== document.body && anc !== document.documentElement) {
+			const cs = window.getComputedStyle(anc);
+			if (cs && (cs.overflowX === 'hidden' || cs.overflowX === 'clip')) {
+				const r = anc.getBoundingClientRect();
+				if (r.width > 0) {
+					clipLeft = Math.max(clipLeft, r.left);
+					clipRight = Math.min(clipRight, r.right);
+				}
+			}
+			anc = anc.parentElement;
+		}
+
+		const clipWidth = Math.max(0, clipRight - clipLeft);
+		const parent = this.root.parentElement;
+		const parentRect = parent && typeof parent.getBoundingClientRect === 'function' ? parent.getBoundingClientRect() : null;
+		const parentCs = parent ? window.getComputedStyle(parent) : null;
+		const padL = parentCs ? (parseFloat(parentCs.paddingLeft) || 0) : 0;
+		const padR = parentCs ? (parseFloat(parentCs.paddingRight) || 0) : 0;
+		const contentLeft = parentRect ? (parentRect.left + padL) : 0;
+		const contentRight = parentRect ? (parentRect.right - padR) : cw;
+
+		const canBleed = clipWidth >= cw * 0.80 && (!parentRect || (contentRight - contentLeft) >= cw * 0.70);
+		this.root.setAttribute('data-mobile-bleed', canBleed ? '1' : '0');
+		if (canBleed) {
+			const ml = Math.round(clipLeft - contentLeft);
+			const mr = Math.round(contentRight - clipRight);
+			this.root.style.setProperty('--mr-tee-mobile-vw', `${Math.round(clipWidth)}px`);
+			this.root.style.setProperty('--mr-tee-mobile-ml', `${ml}px`);
+			this.root.style.setProperty('--mr-tee-mobile-mr', `${mr}px`);
+		} else {
+			this.root.style.removeProperty('--mr-tee-mobile-vw');
+			this.root.style.removeProperty('--mr-tee-mobile-ml');
+			this.root.style.removeProperty('--mr-tee-mobile-mr');
+		}
 	}
 
 	/**
@@ -227,11 +296,47 @@ export class DedicatedGallery {
 			}
 		}
 
+		const distinctSides = new Set();
+		let hasStaticSlides = false;
+		for (const rs of rawSlides) {
+			if (!rs || !rs.is_customizable) {
+				hasStaticSlides = true;
+			} else if (rs.side_id) {
+				distinctSides.add(String(rs.side_id));
+			}
+		}
+		const hasMultiSide = distinctSides.size > 1;
+		const showThumbStrip = count > 4 || (count > 1 && hasStaticSlides);
+
+		const formatCompactLabel = (rawLabel, sideId = 'front', role = 'full', isCustom = true) => {
+			const raw = String(rawLabel || '').trim();
+			const lower = raw.toLowerCase();
+			if (isCustom) {
+				const isCloseup = role === 'closeup' || role === 'detail' || lower.includes('zoom') || lower.includes('gros plan');
+				if (isCloseup) {
+					if (lower.includes('cœur') || lower.includes('coeur') || lower.includes('poitrine')) return 'Zoom Cœur';
+					if (sideId === 'back' || lower.includes('verso') || lower.includes('dos')) return 'Zoom Dos';
+					return 'Zoom';
+				}
+				if (sideId === 'back') return 'Verso';
+				if (sideId === 'front' && role === 'full') return hasMultiSide ? 'Recto' : 'Vue Complète';
+			}
+			let lbl = raw.replace(/^\s*#?\d+\s*[.\-):]\s*/, '');
+			const stripped = lbl.replace(/\s*\([^)]*\)\s*/g, ' ').trim();
+			if (stripped) lbl = stripped;
+			lbl = lbl.replace(/\s{2,}/g, ' ').trim();
+			return lbl || (!isCustom ? 'Photo' : 'Vue');
+		};
+
 		let pillsHtml = '';
 		if (count > 1) {
 			const pillItems = rawSlides.map((s, idx) => {
-				const icon = !s.is_customizable ? SVG_ICON_PHOTO : ((s.view_role === 'closeup' || s.view_role === 'detail') ? SVG_ICON_ZOOM : SVG_ICON_SHIRT);
-				return `<button type="button" role="tab" class="mr-tee-view-pill${idx === 0 ? ' is-active' : ''}" aria-selected="${idx === 0 ? 'true' : 'false'}" data-slide-index="${idx}" data-view-id="${DedicatedGallery.escHtml(s.view_id)}" data-side-id="${DedicatedGallery.escHtml(s.side_id || '')}" data-view-role="${DedicatedGallery.escHtml(s.view_role || 'full')}"><span class="mr-tee-view-pill-icon" aria-hidden="true">${icon}</span><span class="mr-tee-view-pill-label">${DedicatedGallery.escHtml(s.label || '')}</span></button>`;
+				let icon = SVG_ICON_SHIRT;
+				if (!s.is_customizable) icon = SVG_ICON_PHOTO;
+				else if (s.view_role === 'closeup' || s.view_role === 'detail') icon = SVG_ICON_ZOOM;
+				else if (s.side_id === 'back') icon = SVG_ICON_FLIP;
+				const shortLabel = formatCompactLabel(s.label, s.side_id || 'front', s.view_role || 'full', Boolean(s.is_customizable));
+				return `<button type="button" role="tab" class="mr-tee-view-pill${idx === 0 ? ' is-active' : ''}" aria-selected="${idx === 0 ? 'true' : 'false'}" tabindex="${idx === 0 ? '0' : '-1'}" data-slide-index="${idx}" data-view-id="${DedicatedGallery.escHtml(s.view_id)}" data-side-id="${DedicatedGallery.escHtml(s.side_id || '')}" data-view-role="${DedicatedGallery.escHtml(s.view_role || 'full')}" title="${DedicatedGallery.escHtml(s.label || '')}"><span class="mr-tee-view-pill-icon" aria-hidden="true">${icon}</span><span class="mr-tee-view-pill-label">${DedicatedGallery.escHtml(shortLabel)}</span></button>`;
 			}).join('');
 			pillsHtml = `<div class="mr-tee-view-pills" role="tablist" aria-label="${DedicatedGallery.escHtml(i18n.viewsLabel || 'Vues du produit')}">${pillItems}</div>`;
 		}
@@ -264,17 +369,17 @@ export class DedicatedGallery {
 		}).join('');
 
 		const arrowsHtml = count > 1
-			? `<button type="button" class="mr-tee-gallery-arrow mr-tee-gallery-arrow--prev" aria-label="${DedicatedGallery.escHtml(i18n.prevView || 'Vue précédente')}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg></button>` +
-			  `<button type="button" class="mr-tee-gallery-arrow mr-tee-gallery-arrow--next" aria-label="${DedicatedGallery.escHtml(i18n.nextView || 'Vue suivante')}"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg></button>`
+			? `<button type="button" class="mr-tee-gallery-arrow mr-tee-gallery-arrow--prev" aria-label="${DedicatedGallery.escHtml(i18n.prevView || 'Vue précédente')}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg></button>` +
+			  `<button type="button" class="mr-tee-gallery-arrow mr-tee-gallery-arrow--next" aria-label="${DedicatedGallery.escHtml(i18n.nextView || 'Vue suivante')}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg></button>`
 			: '';
 
-		const fullscreenHtml = `<button type="button" class="mr-tee-gallery-fullscreen-btn" aria-label="${DedicatedGallery.escHtml(i18n.fullscreen || 'Agrandir l\'aperçu')}" title="${DedicatedGallery.escHtml(i18n.fullscreen || 'Agrandir l\'aperçu')}"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg></button>`;
+		const fullscreenHtml = `<button type="button" class="mr-tee-gallery-fullscreen-btn" aria-label="${DedicatedGallery.escHtml(i18n.fullscreen || 'Agrandir l\'aperçu')}" title="${DedicatedGallery.escHtml(i18n.fullscreen || 'Agrandir l\'aperçu')}"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></button>`;
 
 		let thumbsHtml = '';
-		if (count > 1) {
+		if (showThumbStrip) {
 			const thumbItems = rawSlides.map((s, idx) => {
 				const thumbUrl = DedicatedGallery.normalizeProtocol(s.thumb_url || s.image_url || '');
-				return `<button type="button" class="mr-tee-gallery-thumb${idx === 0 ? ' is-active' : ''}" data-slide-index="${idx}" data-view-id="${DedicatedGallery.escHtml(s.view_id)}" data-side-id="${DedicatedGallery.escHtml(s.side_id || '')}" aria-label="${DedicatedGallery.escHtml(s.label || '')}"><img src="${DedicatedGallery.escHtml(thumbUrl)}" alt="${DedicatedGallery.escHtml(s.label || '')}" class="skip-lazy no-lazyload" data-no-lazy="1" data-skip-lazy="1" loading="lazy" decoding="async" draggable="false" /><span class="mr-tee-gallery-thumb-label">${DedicatedGallery.escHtml(s.label || '')}</span></button>`;
+				return `<button type="button" class="mr-tee-gallery-thumb${idx === 0 ? ' is-active' : ''}"${idx === 0 ? ' aria-current="true"' : ''} data-slide-index="${idx}" data-view-id="${DedicatedGallery.escHtml(s.view_id)}" data-side-id="${DedicatedGallery.escHtml(s.side_id || '')}" aria-label="${DedicatedGallery.escHtml(s.label || '')}"><img src="${DedicatedGallery.escHtml(thumbUrl)}" alt="${DedicatedGallery.escHtml(s.label || '')}" class="skip-lazy no-lazyload" data-no-lazy="1" data-skip-lazy="1" loading="lazy" decoding="async" draggable="false" /><span class="mr-tee-gallery-thumb-label">${DedicatedGallery.escHtml(s.label || '')}</span></button>`;
 			}).join('');
 			thumbsHtml = `<div class="mr-tee-gallery-thumbs" role="group" aria-label="${DedicatedGallery.escHtml(i18n.thumbsLabel || 'Miniatures des vues')}">${thumbItems}</div>`;
 		}
@@ -285,7 +390,7 @@ export class DedicatedGallery {
 		wrapper.setAttribute('data-product-id', String(data.productId || 0));
 		wrapper.setAttribute('data-columns', '4');
 		wrapper.setAttribute('data-slide-count', String(count));
-		wrapper.innerHTML = `${pillsHtml}<div class="mr-tee-gallery-viewport"><div class="mr-tee-gallery-track">${slidesHtml}</div>${arrowsHtml}${fullscreenHtml}</div>${thumbsHtml}`;
+		wrapper.innerHTML = `<div class="mr-tee-gallery-viewport"><div class="mr-tee-gallery-track">${slidesHtml}</div>${arrowsHtml}${fullscreenHtml}</div>${pillsHtml}${thumbsHtml}`;
 
 		// Preserve outer theme layout classes if replacing a .woocommerce-product-gallery node directly
 		if (container.classList.contains('woocommerce-product-gallery')) {
@@ -363,6 +468,12 @@ export class DedicatedGallery {
 
 		this.pills = Array.from(this.root.querySelectorAll('.mr-tee-view-pill'));
 		this.thumbs = Array.from(this.root.querySelectorAll('.mr-tee-gallery-thumb'));
+		this.slides.forEach((slide, idx) => {
+			const pillEl = this.pills[idx];
+			const pillLabelEl = pillEl ? pillEl.querySelector('.mr-tee-view-pill-label') : null;
+			const pillText = pillLabelEl ? pillLabelEl.textContent.trim() : '';
+			slide.shortLabel = pillText || slide.label;
+		});
 	}
 
 	/**
@@ -785,6 +896,7 @@ export class DedicatedGallery {
 			const active = pIdx === normalized;
 			p.classList.toggle('is-active', active);
 			p.setAttribute('aria-selected', active ? 'true' : 'false');
+			p.setAttribute('tabindex', active ? '0' : '-1');
 			if (active && changed) {
 				DedicatedGallery.scrollChildHorizontally(p);
 			}
@@ -794,6 +906,11 @@ export class DedicatedGallery {
 			const tIdx = parseInt(t.getAttribute('data-slide-index'), 10);
 			const active = tIdx === normalized;
 			t.classList.toggle('is-active', active);
+			if (active) {
+				t.setAttribute('aria-current', 'true');
+			} else {
+				t.removeAttribute('aria-current');
+			}
 			if (active && changed) {
 				DedicatedGallery.scrollChildHorizontally(t);
 			}
@@ -905,6 +1022,10 @@ export class DedicatedGallery {
 			  `<button type="button" class="mr-tee-lb-arrow mr-tee-lb-arrow--next" aria-label="${DedicatedGallery.escHtml(i18n.nextView || 'Vue suivante')}"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>`
 			: '';
 
+		const lbPillsHtml = this.slides.length > 1
+			? `<div class="mr-tee-lb-pills" role="tablist">${this.slides.map((s, idx) => `<button type="button" role="tab" class="mr-tee-lb-pill${idx === this.activeIndex ? ' is-active' : ''}" data-slide-index="${idx}">${DedicatedGallery.escHtml(s.shortLabel || s.label)}</button>`).join('')}</div>`
+			: '';
+
 		lb.innerHTML = `
 			<div class="mr-tee-lb-toolbar">
 				<div class="mr-tee-lb-title"></div>
@@ -922,6 +1043,7 @@ export class DedicatedGallery {
 					</div>
 				</div>
 			</div>
+			${lbPillsHtml}
 		`;
 
 		document.body.appendChild(lb);
@@ -935,6 +1057,15 @@ export class DedicatedGallery {
 		this.lbSvgHolder = lb.querySelector('.mr-tee-live-svg-container');
 		this.lbPrevBtn = lb.querySelector('.mr-tee-lb-arrow--prev');
 		this.lbNextBtn = lb.querySelector('.mr-tee-lb-arrow--next');
+		this.lbPills = Array.from(lb.querySelectorAll('.mr-tee-lb-pill'));
+
+		this.lbPills.forEach((pill) => {
+			pill.addEventListener('click', (e) => {
+				e.stopPropagation();
+				const idx = parseInt(pill.getAttribute('data-slide-index'), 10);
+				if (!isNaN(idx)) this.goToIndex(idx);
+			});
+		});
 
 		const closeBtn = lb.querySelector('.mr-tee-lb-close');
 		const lbBody = lb.querySelector('.mr-tee-lb-body');
@@ -1074,8 +1205,21 @@ export class DedicatedGallery {
 
 		if (this.lbTitleEl) {
 			const counter = this.slides.length > 1 ? ` (${this.activeIndex + 1}/${this.slides.length})` : '';
-			this.lbTitleEl.textContent = `${slide.label}${counter}`;
+			this.lbTitleEl.textContent = `${slide.shortLabel || slide.label}${counter}`;
 		}
+
+		if (Array.isArray(this.lbPills)) {
+			this.lbPills.forEach((p, idx) => {
+				const isAct = idx === this.activeIndex;
+				p.classList.toggle('is-active', isAct);
+				p.setAttribute('aria-selected', isAct ? 'true' : 'false');
+			});
+		}
+
+		const liveRatio = (slide.imgEl && slide.imgEl.naturalWidth > 2 && slide.imgEl.naturalHeight > 2)
+			? (slide.imgEl.naturalWidth / slide.imgEl.naturalHeight)
+			: (slide.aspectRatio > 0 ? slide.aspectRatio : 0.82);
+		this.lightboxEl.style.setProperty('--mr-tee-lb-ratio', String(Number(liveRatio.toFixed(5))));
 
 		if (this.lbStageEl) {
 			if (slide.isLocked) {
@@ -1115,6 +1259,9 @@ export class DedicatedGallery {
 	 */
 	openFullscreen() {
 		if (this.isLightboxOpen) return;
+		this._lastFocusedEl = (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement)
+			? document.activeElement
+			: null;
 		this.ensureLightboxDom();
 		this.isLightboxOpen = true;
 		this.lightboxEl.classList.add('is-open');
@@ -1122,7 +1269,15 @@ export class DedicatedGallery {
 			this._prevOverflow = document.documentElement.style.overflow;
 			document.documentElement.style.overflow = 'hidden';
 		}
+		if (document.body) {
+			this._prevBodyOverflow = document.body.style.overflow;
+			document.body.style.overflow = 'hidden';
+		}
 		this.refreshLightboxContent();
+		const closeBtn = this.lightboxEl.querySelector('.mr-tee-lb-close');
+		if (closeBtn && typeof closeBtn.focus === 'function') {
+			closeBtn.focus({ preventScroll: true });
+		}
 	}
 
 	/**
@@ -1136,6 +1291,13 @@ export class DedicatedGallery {
 		if (document.documentElement && this._prevOverflow !== undefined) {
 			document.documentElement.style.overflow = this._prevOverflow;
 		}
+		if (document.body && this._prevBodyOverflow !== undefined) {
+			document.body.style.overflow = this._prevBodyOverflow;
+		}
+		if (this._lastFocusedEl && this._lastFocusedEl.isConnected && typeof this._lastFocusedEl.focus === 'function') {
+			this._lastFocusedEl.focus({ preventScroll: true });
+		}
+		this._lastFocusedEl = null;
 	}
 
 	/**

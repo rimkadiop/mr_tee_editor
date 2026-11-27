@@ -12,8 +12,8 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { DedicatedGallery } from './dedicated-gallery.js?v=2.5.0';
-import { SvgRenderer } from './svg-renderer.js?v=2.5.0';
+import { DedicatedGallery } from './dedicated-gallery.js?v=2.5.9';
+import { SvgRenderer } from './svg-renderer.js?v=2.5.9';
 
 export class GalleryStage {
 	constructor(config, options = {}) {
@@ -1167,6 +1167,10 @@ export class GalleryStage {
 		try {
 			this._domParser = this._domParser || new DOMParser();
 			const doc = this._domParser.parseFromString(svgMarkup, 'image/svg+xml');
+			if (doc.querySelector('parsererror')) {
+				existingSvg.parentNode.innerHTML = svgMarkup;
+				return;
+			}
 			const newSvg = doc.querySelector('svg.mr-tee-live-svg') || doc.querySelector('svg') || doc.documentElement;
 			if (!newSvg || newSvg.nodeName.toLowerCase() !== 'svg') {
 				existingSvg.parentNode.innerHTML = svgMarkup;
@@ -1357,7 +1361,14 @@ export class GalleryStage {
 					exGlyph.setAttribute('transform', nwTransform);
 				}
 			} else if (exGlyph) {
-				// Different glyph at this position: check if the next sibling matches (e.g. single-char deletion)
+				// 1. Check single-character insertion at index `i`: next new glyph matches current existing glyph
+				const nextNw = newGlyphs[i + 1];
+				const exKey = exGlyph.getAttribute('data-glyph-key');
+				if (nextNw && exKey && nextNw.getAttribute('data-glyph-key') === exKey) {
+					existingGroup.insertBefore(document.importNode(nwGlyph, true), exGlyph);
+					continue;
+				}
+				// 2. Check single-character deletion at index `i`: next existing glyph matches current new glyph
 				const nextEx = existingGroup.children[i + 1];
 				if (nextEx && nwKey && nextEx.getAttribute('data-glyph-key') === nwKey) {
 					existingGroup.removeChild(exGlyph);

@@ -771,7 +771,16 @@ class CartIntegration {
 				$side_id  = ! empty( $entry['side_id'] ) ? substr( preg_replace( '/[^a-zA-Z0-9_-]/', '', (string) $entry['side_id'] ), 0, 32 ) : 'front';
 				$label    = ! empty( $entry['label'] ) ? sanitize_text_field( (string) $entry['label'] ) : sprintf( __( 'Vue %d', 'mr-tee-editor' ), $idx + 1 );
 				$raw_url  = ! empty( $entry['url'] ) ? (string) $entry['url'] : '';
-				$resolved = self::resolve_safe_design_preview( $raw_url, $view_id, $paths );
+				$raw_b64  = ! empty( $entry['b64'] ) && is_string( $entry['b64'] ) ? $entry['b64'] : '';
+				$resolved = false;
+				if ( '' === $raw_url && '' !== $raw_b64 && $idx > 0 ) {
+					$is_entry_jpg = ( strpos( $raw_b64, 'image/jpeg' ) !== false || strpos( $raw_b64, 'image/jpg' ) !== false );
+					$entry_fname  = 'design_preview_' . $view_id . ( $is_entry_jpg ? '.jpg' : '.png' );
+					$resolved     = PrintAssetGenerator::save_base64_png( $raw_b64, $sub_dir, $entry_fname );
+				}
+				if ( ! $resolved ) {
+					$resolved = self::resolve_safe_design_preview( $raw_url, $view_id, $paths );
+				}
 				if ( ! $resolved || empty( $resolved['url'] ) ) {
 					continue;
 				}

@@ -418,7 +418,7 @@ class ProductPageRenderer {
 		$same_orig   = ! $url_host || $url_host === $site_host || ( $http_host && $url_host === $http_host );
 		$base_path   = ( $same_orig && ! empty( $base_parsed['path'] ) ) ? trailingslashit( $base_parsed['path'] ) : trailingslashit( MR_TEE_EDITOR_URL );
 		$entry_ver   = self::get_asset_version( 'assets/js/mr-tee-frontend.js' );
-		$mod_ver     = '2.5.0';
+		$mod_ver     = '2.5.9';
 
 		printf(
 			"<link rel=\"modulepreload\" href=\"%s\" />\n",
@@ -687,9 +687,123 @@ class ProductPageRenderer {
 					'previewBtn'        => __( 'Aperçu', 'mr-tee-editor' ),
 					'viewsLabel'        => __( 'Vues du produit', 'mr-tee-editor' ),
 					'thumbsLabel'       => __( 'Miniatures des vues', 'mr-tee-editor' ),
+					'multicolorLabel'   => __( 'Multicolore', 'mr-tee-editor' ),
+					'clearField'        => __( 'Effacer le texte', 'mr-tee-editor' ),
+					'colorLabel'        => __( 'Couleur', 'mr-tee-editor' ),
+					'chooseColor'       => __( 'Choisir', 'mr-tee-editor' ),
 				),
 			)
 		);
+	}
+
+	/**
+	 * Format a clean, customer-friendly font pill label by removing technical suffixes
+	 * (`OpenType-SVG`, `personaluse`, random 4-5 char font-foundry upload hashes, etc.).
+	 *
+	 * @param string $raw_name Raw font name from FontRegistry.
+	 * @return string
+	 */
+	public static function format_clean_font_label( $raw_name ) {
+		$name = trim( (string) $raw_name );
+		if ( '' === $name ) {
+			return '';
+		}
+		// Strip parenthetical style descriptions ("(Impact Condensé)", "(Jeu Vidéo)", "(Ballon Or 3D OpenType-SVG)")
+		// since pills already preview the typeface visually (and display fonts often lack parenthesis/accent glyphs)
+		$stripped_parens = trim( (string) preg_replace( '/\s*\([^)]*\)/u', '', $name ) );
+		if ( '' !== $stripped_parens ) {
+			$name = $stripped_parens;
+		}
+		// Strip foundry "personaluse" concatenations (e.g. "WesaysopersonaluseBold" -> "Wesayso Bold")
+		$name = (string) preg_replace( '/personal\s*use/iu', ' ', $name );
+		// Split CamelCase words and glued "italic" suffixes (e.g. "Loungeitalic" -> "Lounge Italic")
+		$name = (string) preg_replace( '/([a-z])([A-Z])/u', '$1 $2', $name );
+		$name = (string) preg_replace( '/([A-Za-z]{3,})(italic)\b/iu', '$1 Italic', $name );
+		// Strip trailing numeric foundry versions glued to a word (e.g. "Super Mario256" -> "Super Mario")
+		$name = (string) preg_replace( '/([A-Za-z]{2,})\d{2,4}$/u', '$1', $name );
+		// Strip trailing dafont/fontspace upload hashes (tokens containing a digit, optionally followed by a
+		// short all-caps remnant split by CamelCase, e.g. "L3o7 W", "L3o OZ"). Real words ("Marker", "Mario") are kept.
+		$name = (string) preg_replace( '/(?:\s+(?!\d[Dd]\b)[A-Za-z]*\d[A-Za-z0-9]*(?:\s+[A-Z]{1,3})?)+$/u', '', $name );
+		// Strip raw filename weight abbreviations (meaningful weights such as "Bold"/"Black" are kept)
+		$name = (string) preg_replace( '/\b(?:Bdit|Ita|Xbdxcn|Regular)\b/iu', '', $name );
+		$name = trim( (string) preg_replace( '/\s{2,}/u', ' ', $name ), " \t\n\r\0\x0B-–—_·," );
+		return '' !== $name ? $name : trim( (string) $raw_name );
+	}
+
+	/**
+	 * Strip redundant side prefixes ("Recto (Cœur) — ", "Verso (Dos) — ") from a field label
+	 * when the field is already rendered inside a dedicated Recto / Verso side group.
+	 *
+	 * @param string $raw_label Raw field label.
+	 * @param string $side_id   Field side ID ('front', 'back', etc.).
+	 * @return string
+	 */
+	private static function clean_field_label_for_side( $raw_label, $side_id ) {
+		$label = trim( (string) $raw_label );
+		if ( 'front' === $side_id ) {
+			$stripped = trim( (string) preg_replace( '/^(?:Recto|Devant)(?:\s*\([^)]*\))?\s*[—–\-:]\s*/iu', '', $label ) );
+			if ( '' !== $stripped ) {
+				$label = $stripped;
+			}
+		} elseif ( 'back' === $side_id ) {
+			$stripped = trim( (string) preg_replace( '/^(?:Verso|Dos)(?:\s*\([^)]*\))?\s*[—–\-:]\s*/iu', '', $label ) );
+			if ( '' !== $stripped ) {
+				$label = $stripped;
+			}
+		}
+		return $label;
+	}
+
+	/**
+	 * Match a hex color against a swatch palette using exact match first, then perceptual RGB proximity
+	 * (Euclidean distance <= 32) so near-identical default reds/blues never create duplicate dots.
+	 *
+	 * @param string               $target_hex Target hex string (e.g. '#dc2626').
+	 * @param array<string,string> $swatches   Palette map of hex => label.
+	 * @return string Matched swatch hex key (lowercase) or empty string.
+	 */
+	private static function find_matching_swatch_hex( $target_hex, array $swatches ) {
+		$norm = strtolower( trim( (string) $target_hex ) );
+		if ( '' === $norm || 0 !== strpos( $norm, '#' ) ) {
+			return '';
+		}
+		foreach ( $swatches as $s_hex => $s_label ) {
+			if ( strtolower( trim( (string) $s_hex ) ) === $norm ) {
+				return strtolower( trim( (string) $s_hex ) );
+			}
+		}
+		$parse_rgb = static function ( $h ) {
+			$c = ltrim( strtolower( trim( (string) $h ) ), '#' );
+			if ( 3 === strlen( $c ) ) {
+				$c = $c[0] . $c[0] . $c[1] . $c[1] . $c[2] . $c[2];
+			}
+			if ( ! preg_match( '/^[0-9a-f]{6}$/', $c ) ) {
+				return null;
+			}
+			return array( hexdec( substr( $c, 0, 2 ) ), hexdec( substr( $c, 2, 2 ) ), hexdec( substr( $c, 4, 2 ) ) );
+		};
+		$t_rgb = $parse_rgb( $norm );
+		if ( ! $t_rgb ) {
+			return '';
+		}
+		$best_hex  = '';
+		$best_dist = 33.0;
+		foreach ( $swatches as $s_hex => $s_label ) {
+			$s_rgb = $parse_rgb( $s_hex );
+			if ( ! $s_rgb ) {
+				continue;
+			}
+			$dist = sqrt(
+				pow( $t_rgb[0] - $s_rgb[0], 2 )
+				+ pow( $t_rgb[1] - $s_rgb[1], 2 )
+				+ pow( $t_rgb[2] - $s_rgb[2], 2 )
+			);
+			if ( $dist < $best_dist ) {
+				$best_dist = $dist;
+				$best_hex  = strtolower( trim( (string) $s_hex ) );
+			}
+		}
+		return $best_hex;
 	}
 
 	/**
@@ -721,226 +835,388 @@ class ProductPageRenderer {
 			self::enqueue_assets( $product_id );
 		}
 
-		$wc_product = is_object( $product ) && method_exists( $product, 'is_type' ) ? $product : ( function_exists( 'wc_get_product' ) ? wc_get_product( $product_id ) : null );
-		$config     = self::get_cached_config( $product_id );
-		$fonts      = self::resolve_allowed_fonts_for_config( $config );
-		$swatches   = ColorPaletteRegistry::get_solid_swatches();
-		$icons      = IconSetRegistry::get_mushroom_icons();
-		$rep        = $config['repeater'];
-		$def_count  = isset( $rep['default_count'] ) ? intval( $rep['default_count'] ) : 2;
-		$max_items  = isset( $rep['max_items'] ) ? intval( $rep['max_items'] ) : 6;
+		$wc_product   = is_object( $product ) && method_exists( $product, 'is_type' ) ? $product : ( function_exists( 'wc_get_product' ) ? wc_get_product( $product_id ) : null );
+		$config       = self::get_cached_config( $product_id );
+		$fonts        = self::resolve_allowed_fonts_for_config( $config );
+		$rep          = isset( $config['repeater'] ) && is_array( $config['repeater'] ) ? $config['repeater'] : array();
+		$rep_enabled  = ! empty( $rep['enabled'] );
+		$icons        = $rep_enabled ? IconSetRegistry::get_mushroom_icons() : array();
+		$min_items    = isset( $rep['min_items'] ) ? max( 0, intval( $rep['min_items'] ) ) : 0;
+		$max_items    = isset( $rep['max_items'] ) ? max( $min_items, intval( $rep['max_items'] ) ) : 6;
+		$def_count    = isset( $rep['default_count'] ) ? max( $min_items, min( $max_items, intval( $rep['default_count'] ) ) ) : max( $min_items, 2 );
+		$color_sets   = ColorPaletteRegistry::get_color_sets();
 
 		$side_labels = array(
-			'front' => __( 'Recto', 'mr-tee-editor' ),
-			'back'  => __( 'Verso', 'mr-tee-editor' ),
+			'front' => __( 'Recto (Devant)', 'mr-tee-editor' ),
+			'back'  => __( 'Verso (Dos)', 'mr-tee-editor' ),
 		);
-		$has_multiple_sides = ! empty( $config['print_sides'] ) && is_array( $config['print_sides'] ) && count( $config['print_sides'] ) > 1;
+		$ordered_side_ids = array();
 		if ( ! empty( $config['print_sides'] ) && is_array( $config['print_sides'] ) ) {
 			foreach ( $config['print_sides'] as $s_key => $s_def ) {
 				if ( is_array( $s_def ) ) {
 					$sid = ! empty( $s_def['id'] ) ? sanitize_key( $s_def['id'] ) : sanitize_key( (string) $s_key );
-					if ( '' !== $sid && ! empty( $s_def['label'] ) ) {
-						$side_labels[ $sid ] = (string) $s_def['label'];
+					if ( '' !== $sid ) {
+						if ( ! in_array( $sid, $ordered_side_ids, true ) ) {
+							$ordered_side_ids[] = $sid;
+						}
+						if ( ! empty( $s_def['label'] ) ) {
+							$side_labels[ $sid ] = (string) $s_def['label'];
+						}
 					}
 				}
 			}
 		}
 
+		// Group fields by print side while preserving each field's global $idx so JS indices stay 100% intact.
+		$fields_by_side = array();
+		if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
+			foreach ( $config['text_lines'] as $idx => $line ) {
+				$lsid = ! empty( $line['side_id'] ) ? sanitize_key( $line['side_id'] ) : 'front';
+				if ( '' === $lsid ) {
+					$lsid = 'front';
+				}
+				if ( ! isset( $fields_by_side[ $lsid ] ) ) {
+					$fields_by_side[ $lsid ] = array();
+					if ( ! in_array( $lsid, $ordered_side_ids, true ) ) {
+						$ordered_side_ids[] = $lsid;
+					}
+				}
+				$fields_by_side[ $lsid ][ $idx ] = $line;
+			}
+		}
+		// Keep only sides that actually contain customizable fields
+		$active_side_groups = array();
+		foreach ( $ordered_side_ids as $sid ) {
+			if ( ! empty( $fields_by_side[ $sid ] ) ) {
+				$active_side_groups[ $sid ] = $fields_by_side[ $sid ];
+			}
+		}
+		$has_multiple_sides = count( $active_side_groups ) > 1;
+		$first_side_id      = ! empty( $active_side_groups ) ? (string) array_key_first( $active_side_groups ) : 'front';
+
+		$svg_icon_front = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.38 3.46L16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 .99.84H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.15a1 1 0 0 0 .99-.84l.58-3.47a2 2 0 0 0-1.34-2.23z"/></svg>';
+		$svg_icon_back  = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>';
+		$svg_icon_edit  = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
 		?>
-		<div id="mr-tee-editor-container" class="mr-tee-editor-container" data-product-id="<?php echo esc_attr( $product_id ); ?>">
+		<div id="mr-tee-editor-container" class="mr-tee-editor-container<?php echo $has_multiple_sides ? ' mr-tee-has-multi-sides' : ''; ?>" data-product-id="<?php echo esc_attr( $product_id ); ?>">
 			<!-- Header Card: PERSONNALISER -->
 			<div class="mr-tee-card mr-tee-main-card">
 				<div class="mr-tee-card-header">
 					<h3 class="mr-tee-card-title">
-						<span class="mr-tee-badge-number">1</span>
-						<?php esc_html_e( 'PERSONNALISER', 'mr-tee-editor' ); ?>
+						<?php if ( $rep_enabled ) : ?>
+							<span class="mr-tee-badge-number">1</span>
+						<?php else : ?>
+							<span class="mr-tee-title-icon" aria-hidden="true"><?php echo $svg_icon_edit; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></span>
+						<?php endif; ?>
+						<?php esc_html_e( 'Personnalisation', 'mr-tee-editor' ); ?>
 					</h3>
 				</div>
 
-				<!-- Text & Image Field Controls -->
+				<!-- Text & Image Field Controls (cleanly grouped by side when Recto + Verso exist) -->
 				<div class="mr-tee-text-inputs-wrap">
-					<?php foreach ( $config['text_lines'] as $idx => $line ) : ?>
+					<?php foreach ( $active_side_groups as $group_side_id => $side_lines ) : ?>
 						<?php
-						$field_id       = 'mr_tee_line_' . $idx;
-						$line_side_id   = ! empty( $line['side_id'] ) ? sanitize_key( $line['side_id'] ) : 'front';
-						$side_label     = isset( $side_labels[ $line_side_id ] ) ? $side_labels[ $line_side_id ] : ucfirst( $line_side_id );
-						$is_image_field = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] );
-						if ( $is_image_field ) :
-							$default_img  = ! empty( $line['default_image'] ) ? $line['default_image'] : '';
-							$allow_upload = ! isset( $line['allow_image_upload'] ) || ! empty( $line['allow_image_upload'] );
-							$img_status   = $default_img ? __( 'Image par défaut', 'mr-tee-editor' ) : __( 'Aucune image sélectionnée', 'mr-tee-editor' );
-							?>
-							<div class="mr-tee-field-group mr-tee-field-group-image" data-line-index="<?php echo esc_attr( $idx ); ?>" data-line-id="<?php echo esc_attr( $line['id'] ); ?>" data-field-type="image" data-side-id="<?php echo esc_attr( $line_side_id ); ?>">
-								<div class="mr-tee-image-field-card" data-default-image="<?php echo esc_attr( $default_img ); ?>" data-warning="<?php echo ! empty( $line['warning_unedited'] ) ? '1' : '0'; ?>">
-									<div class="mr-tee-image-field-main">
-										<div class="mr-tee-img-field-thumb <?php echo $default_img ? '' : 'is-empty'; ?>">
-											<?php if ( $default_img ) : ?>
-												<img src="<?php echo esc_url( $default_img ); ?>" alt="<?php echo esc_attr( $line['label'] ); ?>" />
-											<?php else : ?>
-												<span class="mr-tee-img-field-placeholder-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></span>
-											<?php endif; ?>
-										</div>
-										<div class="mr-tee-img-field-info">
-											<div class="mr-tee-img-field-label">
-												<?php echo esc_html( $line['label'] ); ?>
-												<?php if ( $has_multiple_sides ) : ?>
-													<span class="mr-tee-side-badge" data-side-id="<?php echo esc_attr( $line_side_id ); ?>"><?php echo esc_html( $side_label ); ?></span>
+						$group_side_label = isset( $side_labels[ $group_side_id ] ) ? $side_labels[ $group_side_id ] : ucfirst( $group_side_id );
+						$is_first_side    = ( $group_side_id === $first_side_id );
+						$side_icon        = ( 'back' === $group_side_id ) ? $svg_icon_back : $svg_icon_front;
+						$side_field_count = count( $side_lines );
+						?>
+						<?php if ( $has_multiple_sides ) : ?>
+							<div class="mr-tee-side-section<?php echo $is_first_side ? ' is-active-side' : ''; ?>" data-side-id="<?php echo esc_attr( $group_side_id ); ?>">
+								<button type="button" class="mr-tee-side-section-header" data-side-id="<?php echo esc_attr( $group_side_id ); ?>">
+									<span class="mr-tee-side-section-title">
+										<span class="mr-tee-side-section-icon" aria-hidden="true"><?php echo $side_icon; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></span>
+										<span><?php echo esc_html( $group_side_label ); ?></span>
+									</span>
+									<span class="mr-tee-side-section-count">
+										<?php
+										echo esc_html(
+											sprintf(
+												/* translators: %d: number of customizable zones on this garment side */
+												_n( '%d zone', '%d zones', $side_field_count, 'mr-tee-editor' ),
+												$side_field_count
+											)
+										);
+										?>
+									</span>
+								</button>
+								<div class="mr-tee-side-section-body">
+						<?php endif; ?>
+
+						<?php foreach ( $side_lines as $idx => $line ) : ?>
+							<?php
+							$field_id       = 'mr_tee_line_' . $idx;
+							$line_side_id   = ! empty( $line['side_id'] ) ? sanitize_key( $line['side_id'] ) : 'front';
+							$display_label  = $has_multiple_sides
+								? self::clean_field_label_for_side( $line['label'], $line_side_id )
+								: (string) $line['label'];
+							$is_image_field = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] );
+
+							if ( $is_image_field ) :
+								$default_img  = ! empty( $line['default_image'] ) ? $line['default_image'] : '';
+								$allow_upload = ! isset( $line['allow_image_upload'] ) || ! empty( $line['allow_image_upload'] );
+								$img_status   = $default_img ? __( 'Image par défaut', 'mr-tee-editor' ) : __( 'Aucune image sélectionnée', 'mr-tee-editor' );
+								?>
+								<div class="mr-tee-field-group mr-tee-field-group-image<?php echo ( $has_multiple_sides && $is_first_side ) ? ' is-active-side' : ''; ?>" data-line-index="<?php echo esc_attr( $idx ); ?>" data-line-id="<?php echo esc_attr( $line['id'] ); ?>" data-field-type="image" data-side-id="<?php echo esc_attr( $line_side_id ); ?>">
+									<div class="mr-tee-image-field-card" data-default-image="<?php echo esc_attr( $default_img ); ?>" data-warning="<?php echo ! empty( $line['warning_unedited'] ) ? '1' : '0'; ?>">
+										<div class="mr-tee-image-field-main">
+											<div class="mr-tee-img-field-thumb <?php echo $default_img ? '' : 'is-empty'; ?>">
+												<?php if ( $default_img ) : ?>
+													<img src="<?php echo esc_url( $default_img ); ?>" alt="<?php echo esc_attr( $display_label ); ?>" />
+												<?php else : ?>
+													<span class="mr-tee-img-field-placeholder-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></span>
 												<?php endif; ?>
 											</div>
-											<div class="mr-tee-img-field-status"><?php echo esc_html( $img_status ); ?></div>
-										</div>
-										<?php if ( $allow_upload ) : ?>
-											<div class="mr-tee-img-field-actions">
-												<input
-													type="file"
-													id="<?php echo esc_attr( $field_id ); ?>"
-													class="mr-tee-image-file-input"
-													accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
-													data-line-index="<?php echo esc_attr( $idx ); ?>"
-													data-ref-id="<?php echo esc_attr( $line['ref_id'] ); ?>"
-													data-default-image="<?php echo esc_attr( $default_img ); ?>"
-													data-warning="<?php echo ! empty( $line['warning_unedited'] ) ? '1' : '0'; ?>"
-													style="display:none;"
-												/>
-												<button type="button" class="mr-tee-image-upload-btn" data-target-input="<?php echo esc_attr( $field_id ); ?>">
-													<?php echo $default_img ? esc_html__( 'Changer l\'image', 'mr-tee-editor' ) : esc_html__( 'Importer une image', 'mr-tee-editor' ); ?>
-												</button>
-												<button type="button" class="mr-tee-image-reset-btn" data-line-index="<?php echo esc_attr( $idx ); ?>" style="display:none;" title="<?php esc_attr_e( 'Revenir à l\'image par défaut', 'mr-tee-editor' ); ?>">
-													↺
-												</button>
+											<div class="mr-tee-img-field-info">
+												<div class="mr-tee-img-field-label" title="<?php echo esc_attr( $line['label'] ); ?>">
+													<?php echo esc_html( $display_label ); ?>
+												</div>
+												<div class="mr-tee-img-field-status"><?php echo esc_html( $img_status ); ?></div>
 											</div>
-										<?php endif; ?>
+											<?php if ( $allow_upload ) : ?>
+												<div class="mr-tee-img-field-actions">
+													<input
+														type="file"
+														id="<?php echo esc_attr( $field_id ); ?>"
+														class="mr-tee-image-file-input"
+														accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+														data-line-index="<?php echo esc_attr( $idx ); ?>"
+														data-ref-id="<?php echo esc_attr( $line['ref_id'] ); ?>"
+														data-default-image="<?php echo esc_attr( $default_img ); ?>"
+														data-warning="<?php echo ! empty( $line['warning_unedited'] ) ? '1' : '0'; ?>"
+														style="display:none;"
+													/>
+													<button type="button" class="mr-tee-image-upload-btn" data-target-input="<?php echo esc_attr( $field_id ); ?>">
+														<?php echo $default_img ? esc_html__( 'Changer l\'image', 'mr-tee-editor' ) : esc_html__( 'Importer une image', 'mr-tee-editor' ); ?>
+													</button>
+													<button type="button" class="mr-tee-image-reset-btn" data-line-index="<?php echo esc_attr( $idx ); ?>" style="display:none;" title="<?php esc_attr_e( 'Revenir à l\'image par défaut', 'mr-tee-editor' ); ?>">
+														↺
+													</button>
+												</div>
+											<?php endif; ?>
+										</div>
 									</div>
 								</div>
-							</div>
-							<?php
-							continue;
-						endif;
-						$is_multiline = ! empty( $line['multiline'] );
-						?>
-						<div class="mr-tee-field-group" data-line-index="<?php echo esc_attr( $idx ); ?>" data-line-id="<?php echo esc_attr( $line['id'] ); ?>" data-side-id="<?php echo esc_attr( $line_side_id ); ?>">
-							<div class="mr-tee-input-row">
-								<div class="mr-tee-floating-label-wrap <?php echo $is_multiline ? 'mr-tee-floating-label-wrap--textarea' : ''; ?>">
-									<?php if ( $is_multiline ) : ?>
-										<textarea
-											id="<?php echo esc_attr( $field_id ); ?>"
-											class="mr-tee-text-input mr-tee-textarea"
-											name="mr_tee_custom_text[<?php echo esc_attr( $idx ); ?>]"
-											rows="<?php echo esc_attr( ! empty( $line['max_lines'] ) ? $line['max_lines'] : 3 ); ?>"
-											maxlength="<?php echo esc_attr( $line['max_chars'] ); ?>"
-											data-max-lines="<?php echo esc_attr( ! empty( $line['max_lines'] ) ? $line['max_lines'] : 3 ); ?>"
-											data-ref-id="<?php echo esc_attr( $line['ref_id'] ); ?>"
-											data-default="<?php echo esc_attr( $line['default_text'] ); ?>"
-											data-warning="<?php echo ! empty( $line['warning_unedited'] ) ? '1' : '0'; ?>"
-											placeholder=" "
-										><?php echo esc_textarea( $line['default_text'] ); ?></textarea>
-									<?php else : ?>
-										<input
-											type="text"
-											id="<?php echo esc_attr( $field_id ); ?>"
-											class="mr-tee-text-input"
-											name="mr_tee_custom_text[<?php echo esc_attr( $idx ); ?>]"
-											value="<?php echo esc_attr( $line['default_text'] ); ?>"
-											maxlength="<?php echo esc_attr( $line['max_chars'] ); ?>"
-											data-ref-id="<?php echo esc_attr( $line['ref_id'] ); ?>"
-											data-default="<?php echo esc_attr( $line['default_text'] ); ?>"
-											data-warning="<?php echo ! empty( $line['warning_unedited'] ) ? '1' : '0'; ?>"
-											placeholder=" "
-											autocomplete="off"
-										/>
-									<?php endif; ?>
-									<label for="<?php echo esc_attr( $field_id ); ?>" class="mr-tee-floating-label">
-										<?php echo esc_html( $line['label'] ); ?>
-										<?php if ( $has_multiple_sides ) : ?>
-											<span class="mr-tee-side-badge" data-side-id="<?php echo esc_attr( $line_side_id ); ?>"><?php echo esc_html( $side_label ); ?></span>
-										<?php endif; ?>
-									</label>
-									<span class="mr-tee-char-counter">
-										<span class="mr-tee-char-count"><?php echo esc_html( (string) self::strlen_utf8( $line['default_text'] ) ); ?></span>/<?php echo esc_attr( $line['max_chars'] ); ?>
-									</span>
-								</div>
-							</div>
-
-							<!-- Color Swatch Selector Pills (for embroidery thread or ink) -->
-							<?php if ( ! empty( $line['allow_color_pick'] ) && ! empty( $line['color_swatches'] ) && is_array( $line['color_swatches'] ) ) : ?>
 								<?php
-								$active_swatch_hex  = isset( $line['color_hex'] ) ? strtolower( (string) $line['color_hex'] ) : '';
+								continue;
+							endif;
+
+							$is_multiline   = ! empty( $line['multiline'] );
+							$active_font_id = ! empty( $line['font'] ) ? (string) $line['font'] : ( ! empty( $line['allowed_fonts'][0] ) ? (string) $line['allowed_fonts'][0] : '' );
+							$active_f_def   = isset( $fonts[ $active_font_id ] ) ? $fonts[ $active_font_id ] : FontRegistry::get_font( $active_font_id );
+							$is_active_ot   = ! empty( $active_f_def ) && ( ( ! empty( $active_f_def['font_type'] ) && 'opentype_svg' === $active_f_def['font_type'] ) || ! empty( $active_f_def['color_svg'] ) );
+							$is_masked_line = ! empty( $line['is_masked'] );
+							$hide_swatches  = $is_active_ot || $is_masked_line;
+
+							$line_cset_id   = ! empty( $line['color_set_id'] ) ? (string) $line['color_set_id'] : '';
+							$supports_multi = ! empty( $active_f_def['multi_color'] )
+								|| ( ! empty( $active_f_def['palette'] ) && is_array( $active_f_def['palette'] ) && count( $active_f_def['palette'] ) > 1 )
+								|| ( '' !== $line_cset_id && ! empty( $color_sets[ $line_cset_id ]['multiple'] ) );
+							$line_color_mode = isset( $line['color_mode'] ) ? (string) $line['color_mode'] : 'solid';
+							$is_multi_active = $supports_multi && 'multi' === $line_color_mode;
+							$has_init_text   = '' !== (string) $line['default_text'];
+							?>
+							<div class="mr-tee-field-group<?php echo ( $has_multiple_sides && $is_first_side ) ? ' is-active-side' : ''; ?>" data-line-index="<?php echo esc_attr( $idx ); ?>" data-line-id="<?php echo esc_attr( $line['id'] ); ?>" data-side-id="<?php echo esc_attr( $line_side_id ); ?>">
+								<div class="mr-tee-input-row">
+									<div class="mr-tee-floating-label-wrap <?php echo $is_multiline ? 'mr-tee-floating-label-wrap--textarea' : ''; ?><?php echo $has_init_text ? ' has-value' : ''; ?>">
+										<?php if ( $is_multiline ) : ?>
+											<textarea
+												id="<?php echo esc_attr( $field_id ); ?>"
+												class="mr-tee-text-input mr-tee-textarea"
+												rows="<?php echo esc_attr( ! empty( $line['max_lines'] ) ? $line['max_lines'] : 3 ); ?>"
+												maxlength="<?php echo esc_attr( $line['max_chars'] ); ?>"
+												data-max-lines="<?php echo esc_attr( ! empty( $line['max_lines'] ) ? $line['max_lines'] : 3 ); ?>"
+												data-ref-id="<?php echo esc_attr( $line['ref_id'] ); ?>"
+												data-default="<?php echo esc_attr( $line['default_text'] ); ?>"
+												data-warning="<?php echo ! empty( $line['warning_unedited'] ) ? '1' : '0'; ?>"
+												placeholder=" "
+											><?php echo esc_textarea( $line['default_text'] ); ?></textarea>
+										<?php else : ?>
+											<input
+												type="text"
+												id="<?php echo esc_attr( $field_id ); ?>"
+												class="mr-tee-text-input"
+												value="<?php echo esc_attr( $line['default_text'] ); ?>"
+												maxlength="<?php echo esc_attr( $line['max_chars'] ); ?>"
+												data-ref-id="<?php echo esc_attr( $line['ref_id'] ); ?>"
+												data-default="<?php echo esc_attr( $line['default_text'] ); ?>"
+												data-warning="<?php echo ! empty( $line['warning_unedited'] ) ? '1' : '0'; ?>"
+												placeholder=" "
+												autocomplete="off"
+											/>
+										<?php endif; ?>
+										<label for="<?php echo esc_attr( $field_id ); ?>" class="mr-tee-floating-label" title="<?php echo esc_attr( $line['label'] ); ?>">
+											<?php echo esc_html( $display_label ); ?>
+										</label>
+										<div class="mr-tee-input-meta-right">
+											<span class="mr-tee-char-counter">
+												<span class="mr-tee-char-count"><?php echo esc_html( (string) self::strlen_utf8( $line['default_text'] ) ); ?></span>/<?php echo esc_attr( $line['max_chars'] ); ?>
+											</span>
+											<button
+												type="button"
+												class="mr-tee-input-clear-btn"
+												data-target-input="<?php echo esc_attr( $field_id ); ?>"
+												aria-label="<?php esc_attr_e( 'Effacer le texte', 'mr-tee-editor' ); ?>"
+												title="<?php esc_attr_e( 'Effacer le texte', 'mr-tee-editor' ); ?>"
+												<?php echo $has_init_text ? '' : 'style="display:none;"'; ?>
+											>&times;</button>
+										</div>
+									</div>
+								</div>
+
+								<!-- Unified Style Controls Row: Color Switch (left on mobile) + Visual Font Pills (right on same line) -->
+								<?php
+								$allowed_font_ids = ( ! empty( $line['allowed_fonts'] ) && is_array( $line['allowed_fonts'] ) )
+									? $line['allowed_fonts']
+									: array_keys( $fonts );
+								$ordered_pills = array();
+								foreach ( $allowed_font_ids as $f_id ) {
+									if ( isset( $fonts[ $f_id ] ) ) {
+										$ordered_pills[ $f_id ] = $fonts[ $f_id ];
+									}
+								}
+								$has_font_picker  = ! empty( $line['allow_font_pick'] ) && count( $ordered_pills ) > 1;
+								$has_color_picker = ! empty( $line['allow_color_pick'] ) && ! empty( $line['color_swatches'] ) && is_array( $line['color_swatches'] );
+
+								$line_swatches      = array();
+								$active_swatch_hex  = '';
 								$active_swatch_name = '';
-								foreach ( $line['color_swatches'] as $s_hex => $s_label ) {
-									if ( strtolower( (string) $s_hex ) === $active_swatch_hex ) {
-										$active_swatch_name = (string) $s_label;
-										break;
+								if ( $has_color_picker ) {
+									$line_swatches     = $line['color_swatches'];
+									$active_swatch_hex = isset( $line['color_hex'] ) ? strtolower( trim( (string) $line['color_hex'] ) ) : '';
+									if ( '' !== $active_swatch_hex && 0 === strpos( $active_swatch_hex, '#' ) ) {
+										$matched_hex = self::find_matching_swatch_hex( $active_swatch_hex, $line_swatches );
+										if ( '' !== $matched_hex ) {
+											$active_swatch_hex = $matched_hex;
+										} elseif ( ! $is_multi_active ) {
+											$line_swatches = array( $active_swatch_hex => __( 'Par défaut', 'mr-tee-editor' ) ) + $line_swatches;
+										}
+									}
+
+									if ( $is_multi_active ) {
+										$active_swatch_name = __( 'Multicolore', 'mr-tee-editor' );
+									} else {
+										foreach ( $line_swatches as $s_hex => $s_label ) {
+											if ( strtolower( trim( (string) $s_hex ) ) === $active_swatch_hex ) {
+												$active_swatch_name = (string) $s_label;
+												break;
+											}
+										}
 									}
 								}
 								?>
-								<div class="mr-tee-color-swatches-wrap" data-color-ref-id="<?php echo esc_attr( ! empty( $line['color_ref_id'] ) ? $line['color_ref_id'] : 'id-ref-color-' . $idx ); ?>">
-									<label class="mr-tee-picker-label">
-										<?php esc_html_e( 'Couleur :', 'mr-tee-editor' ); ?>
-										<span class="mr-tee-active-color-name"><?php echo esc_html( $active_swatch_name ); ?></span>
-									</label>
-									<div class="mr-tee-color-swatches-list">
-										<?php foreach ( $line['color_swatches'] as $hex => $label ) : ?>
-											<?php $is_swatch_active = ( '' !== $active_swatch_hex && strtolower( (string) $hex ) === $active_swatch_hex ); ?>
+								<?php if ( $has_font_picker ) : ?>
+									<?php $color_tray_id = 'mr-tee-color-tray-' . $idx; ?>
+									<div class="mr-tee-style-controls<?php echo $has_color_picker ? ' mr-tee-style-controls--dual' : ''; ?>">
+										<?php if ( $has_color_picker ) : ?>
 											<button
 												type="button"
-												class="mr-tee-color-swatch-pill <?php echo $is_swatch_active ? 'is-active' : ''; ?>"
-												data-color-hex="<?php echo esc_attr( $hex ); ?>"
-												data-color-name="<?php echo esc_attr( $label ); ?>"
-												aria-pressed="<?php echo $is_swatch_active ? 'true' : 'false'; ?>"
-												aria-label="<?php echo esc_attr( $label ); ?>"
-												style="background-color: <?php echo esc_attr( $hex ); ?>;"
-												title="<?php echo esc_attr( $label ); ?>"
-											></button>
-										<?php endforeach; ?>
-									</div>
-								</div>
-							<?php endif; ?>
-
-							<!-- Font Selector Pills (collapsible, hidden if only 1 font allowed) -->
-							<?php
-							$allowed_font_ids = ( ! empty( $line['allowed_fonts'] ) && is_array( $line['allowed_fonts'] ) )
-								? $line['allowed_fonts']
-								: array_keys( $fonts );
-							// Strictly filter to allowed fonts and keep order
-							$ordered_pills = array();
-							foreach ( $allowed_font_ids as $f_id ) {
-								if ( isset( $fonts[ $f_id ] ) ) {
-									$ordered_pills[ $f_id ] = $fonts[ $f_id ];
-								}
-							}
-							?>
-							<?php if ( ! empty( $line['allow_font_pick'] ) && count( $ordered_pills ) > 1 ) : ?>
-								<div class="mr-tee-font-selector-row">
-									<div class="mr-tee-font-pills" data-line-index="<?php echo esc_attr( $idx ); ?>">
-										<?php foreach ( $ordered_pills as $f_id => $f_data ) : ?>
-											<?php
-											$is_pill_ot_svg = ( ! empty( $f_data['font_type'] ) && 'opentype_svg' === $f_data['font_type'] ) || ! empty( $f_data['color_svg'] );
-											$pill_style     = $is_pill_ot_svg ? '' : "font-family: '" . esc_attr( $f_data['family'] ) . "', sans-serif;";
-											?>
-											<button
-												type="button"
-												class="mr-tee-font-pill <?php echo $line['font'] === $f_id ? 'is-active' : ''; ?>"
-												data-font-id="<?php echo esc_attr( $f_id ); ?>"
-												<?php if ( '' !== $pill_style ) : ?>
-													style="<?php echo $pill_style; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>"
-												<?php endif; ?>
-												title="<?php echo esc_attr( $f_data['name'] ); ?>"
+												class="mr-tee-color-trigger-btn"
+												aria-expanded="false"
+												aria-controls="<?php echo esc_attr( $color_tray_id ); ?>"
+												aria-label="<?php echo esc_attr( sprintf( __( 'Couleur : %s', 'mr-tee-editor' ), '' !== $active_swatch_name ? $active_swatch_name : __( 'Choisir', 'mr-tee-editor' ) ) ); ?>"
+												title="<?php echo esc_attr( '' !== $active_swatch_name ? $active_swatch_name : __( 'Couleur', 'mr-tee-editor' ) ); ?>"
+												<?php echo $hide_swatches ? 'style="display:none;"' : ''; ?>
 											>
-												<?php if ( ! empty( $f_data['thumb_url'] ) ) : ?>
-													<img src="<?php echo esc_url( $f_data['thumb_url'] ); ?>" alt="" class="mr-tee-pill-thumb" decoding="async" style="width:16px; height:16px; object-fit:contain; vertical-align:middle; margin-right:4px; display:inline-block;" />
-												<?php endif; ?>
-												<?php echo esc_html( $f_data['name'] ); ?>
+												<span
+													class="mr-tee-color-trigger-dot<?php echo $is_multi_active ? ' mr-tee-color-trigger-dot--multi' : ''; ?>"
+													<?php if ( ! $is_multi_active && '' !== $active_swatch_hex ) : ?>
+														style="background-color: <?php echo esc_attr( $active_swatch_hex ); ?>;"
+													<?php endif; ?>
+												></span>
+												<svg class="mr-tee-color-trigger-caret" width="11" height="11" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 7.5L10 12.5l5-5"/></svg>
 											</button>
-										<?php endforeach; ?>
+										<?php endif; ?>
+
+										<div class="mr-tee-font-selector-row">
+											<div class="mr-tee-font-pills" data-line-index="<?php echo esc_attr( $idx ); ?>">
+												<?php foreach ( $ordered_pills as $f_id => $f_data ) : ?>
+													<?php
+													$is_pill_ot_svg  = ( ! empty( $f_data['font_type'] ) && 'opentype_svg' === $f_data['font_type'] ) || ! empty( $f_data['color_svg'] );
+													$safe_family     = isset( $f_data['family'] ) ? preg_replace( '/["\'\\\\<>]/', '', (string) $f_data['family'] ) : '';
+													$is_pill_current = ( $active_font_id === (string) $f_id );
+													$clean_pill_name = self::format_clean_font_label( isset( $f_data['name'] ) ? (string) $f_data['name'] : (string) $f_id );
+													?>
+													<button
+														type="button"
+														class="mr-tee-font-pill<?php echo $is_pill_current ? ' is-active' : ''; ?>"
+														data-font-id="<?php echo esc_attr( $f_id ); ?>"
+														<?php if ( ! $is_pill_ot_svg && '' !== $safe_family ) : ?>
+															data-font-family="<?php echo esc_attr( $safe_family ); ?>"
+															<?php if ( $is_pill_current ) : ?>
+																style="<?php echo esc_attr( "font-family: '" . $safe_family . "', sans-serif;" ); ?>"
+															<?php endif; ?>
+														<?php endif; ?>
+														title="<?php echo esc_attr( $f_data['name'] ); ?>"
+													>
+														<?php if ( ! empty( $f_data['thumb_url'] ) ) : ?>
+															<img src="<?php echo esc_url( $f_data['thumb_url'] ); ?>" alt="" class="mr-tee-pill-thumb" decoding="async" />
+														<?php endif; ?>
+														<span class="mr-tee-font-pill-text"><?php echo esc_html( $clean_pill_name ); ?></span>
+													</button>
+												<?php endforeach; ?>
+											</div>
+										</div>
 									</div>
+								<?php endif; ?>
+
+								<!-- Color Swatch Selector Pills (shown ONLY when active font supports custom ink/thread colors; collapsible tray on mobile when paired with fonts) -->
+								<?php if ( $has_color_picker ) : ?>
+									<div
+										id="<?php echo esc_attr( 'mr-tee-color-tray-' . $idx ); ?>"
+										class="mr-tee-color-swatches-wrap<?php echo $has_font_picker ? ' mr-tee-color-swatches-wrap--collapsible' : ''; ?>"
+										data-color-ref-id="<?php echo esc_attr( ! empty( $line['color_ref_id'] ) ? $line['color_ref_id'] : 'id-ref-color-' . $idx ); ?>"
+										data-masked="<?php echo $is_masked_line ? '1' : '0'; ?>"
+										<?php echo $hide_swatches ? 'style="display:none;"' : ''; ?>
+									>
+										<div class="mr-tee-color-tray-head">
+											<label class="mr-tee-picker-label">
+												<?php esc_html_e( 'Couleur :', 'mr-tee-editor' ); ?>
+												<span class="mr-tee-active-color-name"><?php echo esc_html( $active_swatch_name ); ?></span>
+											</label>
+											<?php if ( $has_font_picker ) : ?>
+												<button type="button" class="mr-tee-color-tray-close" aria-label="<?php esc_attr_e( 'Fermer la palette', 'mr-tee-editor' ); ?>">&times;</button>
+											<?php endif; ?>
+										</div>
+										<div class="mr-tee-color-swatches-list">
+											<button
+												type="button"
+												class="mr-tee-color-swatch-pill mr-tee-color-swatch-pill--multi<?php echo $is_multi_active ? ' is-active' : ''; ?>"
+												data-color-hex="multi"
+												data-color-name="<?php esc_attr_e( 'Multicolore', 'mr-tee-editor' ); ?>"
+												aria-pressed="<?php echo $is_multi_active ? 'true' : 'false'; ?>"
+												aria-label="<?php esc_attr_e( 'Multicolore', 'mr-tee-editor' ); ?>"
+												title="<?php esc_attr_e( 'Multicolore', 'mr-tee-editor' ); ?>"
+												<?php echo $supports_multi ? '' : 'style="display:none;"'; ?>
+											></button>
+											<?php foreach ( $line_swatches as $hex => $label ) : ?>
+												<?php $is_swatch_active = ( ! $is_multi_active && '' !== $active_swatch_hex && strtolower( trim( (string) $hex ) ) === $active_swatch_hex ); ?>
+												<button
+													type="button"
+													class="mr-tee-color-swatch-pill<?php echo $is_swatch_active ? ' is-active' : ''; ?>"
+													data-color-hex="<?php echo esc_attr( $hex ); ?>"
+													data-color-name="<?php echo esc_attr( $label ); ?>"
+													aria-pressed="<?php echo $is_swatch_active ? 'true' : 'false'; ?>"
+													aria-label="<?php echo esc_attr( $label ); ?>"
+													style="background-color: <?php echo esc_attr( $hex ); ?>;"
+													title="<?php echo esc_attr( $label ); ?>"
+												></button>
+											<?php endforeach; ?>
+										</div>
+									</div>
+								<?php endif; ?>
+							</div>
+						<?php endforeach; ?>
+
+						<?php if ( $has_multiple_sides ) : ?>
 								</div>
-							<?php endif; ?>
-						</div>
+							</div>
+						<?php endif; ?>
 					<?php endforeach; ?>
 				</div>
 
 				<!-- Repeater Trigger Accordion: "Nombre de champignons" -->
-				<?php if ( ! empty( $rep['enabled'] ) ) : ?>
+				<?php if ( $rep_enabled ) : ?>
 					<?php
 					$rep_label      = ! empty( $rep['label'] ) ? (string) $rep['label'] : __( 'Nombre d\'éléments', 'mr-tee-editor' );
 					$rep_subtitle   = isset( $rep['subtitle'] ) ? (string) $rep['subtitle'] : '';
@@ -999,7 +1275,6 @@ class ProductPageRenderer {
 											type="text"
 											class="mr-tee-text-input mr-tee-rep-name-input"
 											id="mr_tee_rep_name_<?php echo esc_attr( $item_num ); ?>"
-											name="mr_tee_repeater[<?php echo esc_attr( $i ); ?>][name]"
 											value="<?php echo esc_attr( $def_item['name'] ); ?>"
 											maxlength="<?php echo esc_attr( $rep_max_chars ); ?>"
 											data-ref-id="id-ref-text-champ-<?php echo esc_attr( $item_num ); ?>"
@@ -1010,9 +1285,11 @@ class ProductPageRenderer {
 										<label for="mr_tee_rep_name_<?php echo esc_attr( $item_num ); ?>" class="mr-tee-floating-label">
 											<?php esc_html_e( 'Prénom', 'mr-tee-editor' ); ?>
 										</label>
-										<span class="mr-tee-char-counter">
-											<span class="mr-tee-char-count"><?php echo esc_html( (string) self::strlen_utf8( $def_item['name'] ) ); ?></span>/<?php echo esc_attr( $rep_max_chars ); ?>
-										</span>
+										<div class="mr-tee-input-meta-right">
+											<span class="mr-tee-char-counter">
+												<span class="mr-tee-char-count"><?php echo esc_html( (string) self::strlen_utf8( $def_item['name'] ) ); ?></span>/<?php echo esc_attr( $rep_max_chars ); ?>
+											</span>
+										</div>
 									</div>
 
 									<div class="mr-tee-icon-picker-wrap">
@@ -1022,7 +1299,7 @@ class ProductPageRenderer {
 												<label class="mr-tee-icon-option <?php echo $icon_key === $ic_id ? 'is-selected' : ''; ?>" title="<?php echo esc_attr( $ic_data['name'] ); ?>">
 													<input
 														type="radio"
-														name="mr_tee_repeater[<?php echo esc_attr( $i ); ?>][icon]"
+														name="mr_tee_repeater_icon_<?php echo esc_attr( $i ); ?>"
 														value="<?php echo esc_attr( $ic_id ); ?>"
 														<?php checked( $icon_key, $ic_id ); ?>
 													/>
@@ -1035,37 +1312,37 @@ class ProductPageRenderer {
 							</div>
 						<?php endfor; ?>
 					</div>
-				<?php endif; ?>
-			</div>
 
-			<!-- Count Selector Drawer / Modal (matches Monsieur TSHIRT's PersoVisualCfg dialog) -->
-			<div id="mr-tee-count-modal" class="mr-tee-modal-backdrop" style="display:none;">
-				<div class="mr-tee-modal-dialog">
-					<div class="mr-tee-modal-header">
-						<h4 class="mr-tee-modal-title"><?php echo esc_html( $rep['label'] ); ?></h4>
-						<button type="button" class="mr-tee-modal-close-btn" id="mr-tee-close-count-modal">&times;</button>
-					</div>
-					<div class="mr-tee-modal-body">
-						<p class="mr-tee-modal-desc"><?php esc_html_e( 'Combien de champignons souhaitez-vous afficher sur le t-shirt ?', 'mr-tee-editor' ); ?></p>
-						<div class="mr-tee-count-stepper">
-							<button type="button" class="mr-tee-step-btn" id="mr-tee-step-minus" aria-label="Moins">&minus;</button>
-							<div class="mr-tee-step-val-display" id="mr-tee-step-val"><?php echo esc_html( $def_count ); ?></div>
-							<button type="button" class="mr-tee-step-btn" id="mr-tee-step-plus" aria-label="Plus">&plus;</button>
-						</div>
-						<div class="mr-tee-count-dots">
-							<?php for ( $c = 0; $c <= $max_items; $c++ ) : ?>
-								<button type="button" class="mr-tee-count-dot-btn <?php echo $c === $def_count ? 'is-active' : ''; ?>" data-count="<?php echo esc_attr( $c ); ?>">
-									<?php echo esc_html( $c ); ?>
+					<!-- Count Selector Drawer / Modal (rendered strictly when Repeater is enabled) -->
+					<div id="mr-tee-count-modal" class="mr-tee-modal-backdrop" style="display:none;">
+						<div class="mr-tee-modal-dialog">
+							<div class="mr-tee-modal-header">
+								<h4 class="mr-tee-modal-title"><?php echo esc_html( $rep_label ); ?></h4>
+								<button type="button" class="mr-tee-modal-close-btn" id="mr-tee-close-count-modal">&times;</button>
+							</div>
+							<div class="mr-tee-modal-body">
+								<p class="mr-tee-modal-desc"><?php esc_html_e( 'Combien d\'éléments souhaitez-vous afficher ?', 'mr-tee-editor' ); ?></p>
+								<div class="mr-tee-count-stepper">
+									<button type="button" class="mr-tee-step-btn" id="mr-tee-step-minus" aria-label="Moins">&minus;</button>
+									<div class="mr-tee-step-val-display" id="mr-tee-step-val"><?php echo esc_html( $def_count ); ?></div>
+									<button type="button" class="mr-tee-step-btn" id="mr-tee-step-plus" aria-label="Plus">&plus;</button>
+								</div>
+								<div class="mr-tee-count-dots">
+									<?php for ( $c = $min_items; $c <= $max_items; $c++ ) : ?>
+										<button type="button" class="mr-tee-count-dot-btn <?php echo $c === $def_count ? 'is-active' : ''; ?>" data-count="<?php echo esc_attr( $c ); ?>">
+											<?php echo esc_html( $c ); ?>
+										</button>
+									<?php endfor; ?>
+								</div>
+							</div>
+							<div class="mr-tee-modal-footer">
+								<button type="button" class="button button-primary mr-tee-btn-confirm-count" id="mr-tee-confirm-count">
+									<?php esc_html_e( 'Valider', 'mr-tee-editor' ); ?>
 								</button>
-							<?php endfor; ?>
+							</div>
 						</div>
 					</div>
-					<div class="mr-tee-modal-footer">
-						<button type="button" class="button button-primary mr-tee-btn-confirm-count" id="mr-tee-confirm-count">
-							<?php esc_html_e( 'Valider', 'mr-tee-editor' ); ?>
-						</button>
-					</div>
-				</div>
+				<?php endif; ?>
 			</div>
 
 			<!-- Unedited Warning Modal (matches Monsieur TSHIRT's IGNORE_PERSO_WARNINGS_LABEL) -->

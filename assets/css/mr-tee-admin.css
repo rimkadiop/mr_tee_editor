@@ -1207,10 +1207,10 @@
 .mr-tee-stage-canvas-wrap {
 	position: relative;
 	background: #f1f5f9;
-	border: 1px solid var(--mt-border);
+	border: 0;
 	border-radius: 12px;
 	overflow: visible;
-	box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
+	box-shadow: 0 0 0 1px var(--mt-border), 0 4px 14px rgba(0, 0, 0, 0.05);
 	line-height: 0;
 	max-width: 520px;
 	margin: 0 auto;
@@ -1245,7 +1245,7 @@
 	width: 100%;
 	height: auto;
 	display: block;
-	border-radius: 11px;
+	border-radius: 12px;
 	user-select: none;
 	pointer-events: none;
 }
@@ -1358,7 +1358,7 @@
 /* Multi-Rectangle Per-Field Box */
 .mr-tee-field-box {
 	position: absolute;
-	border: 2px dashed var(--field-color, #2563eb);
+	border: 0;
 	background: rgba(37, 99, 235, 0.08);
 	box-sizing: border-box;
 	cursor: move;
@@ -1368,16 +1368,28 @@
 	transition: background-color 0.15s ease;
 }
 
+.mr-tee-field-box::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	border: 2px dashed var(--field-color, #2563eb);
+	box-sizing: border-box;
+	pointer-events: none;
+	z-index: 20;
+}
+
 .mr-tee-field-box:hover {
 	background: rgba(37, 99, 235, 0.14);
 }
 
 .mr-tee-field-box.is-active {
 	z-index: 25;
-	border-style: solid;
-	border-width: 2px;
 	background: rgba(37, 99, 235, 0.15);
 	box-shadow: 0 0 0 1px #ffffff, 0 4px 14px rgba(0, 0, 0, 0.15);
+}
+
+.mr-tee-field-box.is-active::after {
+	border-style: solid;
 }
 
 .mr-tee-field-box.is-interacting {

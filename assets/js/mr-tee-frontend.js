@@ -1,5 +1,5 @@
 /**
- * Mr. Tee Editor - Frontend Modular Orchestrator (v2.5.9)
+ * Mr. Tee Editor - Frontend Modular Orchestrator (v2.5.13)
  *
  * Bootstraps the client-side personalization application by interconnecting
  * StateStore, SceneGraphEngine, SvgRenderer, GalleryStage, FormController, and lazy-loaded PrintExporter
@@ -8,11 +8,11 @@
  * @package MrTeeEditor\Assets
  */
 
-import { StateStore } from './modules/state-store.js?v=2.5.9';
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.5.9';
-import { SvgRenderer } from './modules/svg-renderer.js?v=2.5.9';
-import { GalleryStage } from './modules/gallery-stage.js?v=2.5.9';
-import { FormController } from './modules/form-controller.js?v=2.5.9';
+import { StateStore } from './modules/state-store.js?v=2.5.13';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.5.13';
+import { SvgRenderer } from './modules/svg-renderer.js?v=2.5.13';
+import { GalleryStage } from './modules/gallery-stage.js?v=2.5.13';
+import { FormController } from './modules/form-controller.js?v=2.5.13';
 
 window.mrTeeSvgRenderer = SvgRenderer;
 window.mrTeeSceneGraphEngine = SceneGraphEngine;
@@ -44,7 +44,7 @@ class MrTeeFrontendApp {
 	 */
 	async loadPrintExporter() {
 		if (this._printExporterClass) return this._printExporterClass;
-		const mod = await import('./modules/print-exporter.js?v=2.5.9');
+		const mod = await import('./modules/print-exporter.js?v=2.5.13');
 		this._printExporterClass = mod.PrintExporter;
 		window.mrTeePrintExporter = mod.PrintExporter;
 		return this._printExporterClass;
@@ -264,7 +264,7 @@ class MrTeeFrontendApp {
 	 * @param {string} viewId Target view ID.
 	 * @return {number}
 	 */
-	computeAspectRatioForView(viewId = '') {
+	computeAspectRatioForView(viewId = '', extraOpts = null) {
 		const meta = this.getViewMeta(viewId);
 		const sideDef = this.getSideDef(meta && meta.sideId);
 		const isLocked = (sideDef && sideDef.lock_aspect_ratio !== undefined)
@@ -280,6 +280,14 @@ class MrTeeFrontendApp {
 			return parseFloat(this.config.print_aspect_ratio);
 		}
 
+		const dg = (this.stage && this.stage.isDedicated) ? this.stage.dedicatedGallery : null;
+		if (extraOpts && extraOpts.idPrefix === 'fs-' && dg && dg.isLightboxOpen && dg.lbImgEl && dg.lbImgEl.complete && dg.lbImgEl.naturalWidth > 2 && dg.lbImgEl.naturalHeight > 2) {
+			const lbSlide = dg.slides[dg.activeIndex];
+			if (!viewId || (lbSlide && lbSlide.viewId === viewId)) {
+				return dg.lbImgEl.naturalWidth / dg.lbImgEl.naturalHeight;
+			}
+		}
+
 		const img = (this.stage ? this.stage.getViewImageElement(viewId) : null)
 			|| document.querySelector('#mr-tee-gallery-root .mr-tee-slide.is-active img.mr-tee-slide-img, .woocommerce-product-gallery img.wp-post-image');
 		if (img) {
@@ -291,13 +299,20 @@ class MrTeeFrontendApp {
 			if (attrW > 2 && attrH > 2) {
 				return attrW / attrH;
 			}
-			if (img.offsetWidth > 2 && img.offsetHeight > 2) {
-				return img.offsetWidth / img.offsetHeight;
+		}
+
+		if (dg && dg.isLightboxOpen && dg.lbImgEl && dg.lbImgEl.complete && dg.lbImgEl.naturalWidth > 2 && dg.lbImgEl.naturalHeight > 2) {
+			const lbSlide = dg.slides[dg.activeIndex];
+			if (!viewId || (lbSlide && lbSlide.viewId === viewId)) {
+				return dg.lbImgEl.naturalWidth / dg.lbImgEl.naturalHeight;
 			}
 		}
 
 		if (meta && meta.aspectRatio > 0) {
 			return meta.aspectRatio;
+		}
+		if (img && img.offsetWidth > 2 && img.offsetHeight > 2) {
+			return img.offsetWidth / img.offsetHeight;
 		}
 		if (realW > 0 && realH > 0) {
 			return realW / realH;
@@ -418,7 +433,7 @@ class MrTeeFrontendApp {
 		const sideDef = this.getSideDef(meta && meta.sideId);
 		const ratio = (extraOpts && extraOpts.aspectRatio > 0)
 			? extraOpts.aspectRatio
-			: this.computeAspectRatioForView(viewId);
+			: this.computeAspectRatioForView(viewId, extraOpts);
 		const realW = (sideDef && parseFloat(sideDef.print_real_width)) || parseFloat(this.config.print_real_width) || 0;
 		const realH = (sideDef && parseFloat(sideDef.print_real_height)) || parseFloat(this.config.print_real_height) || 0;
 

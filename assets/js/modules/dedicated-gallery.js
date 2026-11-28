@@ -705,18 +705,19 @@ export class DedicatedGallery {
 		this.slides.forEach((slide) => {
 			if (!slide.customizable || !slide.imgEl) return;
 			const img = slide.imgEl;
-			if (!img.complete || img.naturalWidth <= 2) {
-				img.addEventListener('load', () => {
-					if (img.naturalWidth > 2 && img.naturalHeight > 2) {
-						slide.aspectRatio = img.naturalWidth / img.naturalHeight;
-						if (this.onSlideImageChanged) {
-							this.onSlideImageChanged(slide.viewId, img);
-						}
-					}
-				});
-			} else if (img.naturalWidth > 2 && img.naturalHeight > 2) {
+			if (img.complete && img.naturalWidth > 2 && img.naturalHeight > 2 && !slide.isLocked) {
 				slide.aspectRatio = img.naturalWidth / img.naturalHeight;
 			}
+			img.addEventListener('load', () => {
+				if (img.naturalWidth > 2 && img.naturalHeight > 2) {
+					if (!slide.isLocked) {
+						slide.aspectRatio = img.naturalWidth / img.naturalHeight;
+					}
+					if (this.onSlideImageChanged) {
+						this.onSlideImageChanged(slide.viewId, img);
+					}
+				}
+			});
 		});
 	}
 
@@ -767,6 +768,7 @@ export class DedicatedGallery {
 					this.onSlideImageChanged(targetSlide.viewId, imgEl);
 				}
 				if (this.isLightboxOpen && this.activeIndex === targetSlide.index && this.lbImgEl) {
+					this._lbTargetViewId = targetSlide.viewId;
 					this.lbImgEl.src = normalizedLarge;
 				}
 			};
@@ -1059,6 +1061,30 @@ export class DedicatedGallery {
 		this.lbNextBtn = lb.querySelector('.mr-tee-lb-arrow--next');
 		this.lbPills = Array.from(lb.querySelectorAll('.mr-tee-lb-pill'));
 
+		if (this.lbImgEl) {
+			this.lbImgEl.addEventListener('load', () => {
+				if (!this.isLightboxOpen || !this.lightboxEl || !this.lbImgEl) return;
+				const activeSlide = this.slides[this.activeIndex];
+				if (!activeSlide || (this._lbTargetViewId && activeSlide.viewId !== this._lbTargetViewId)) return;
+				if (this.lbImgEl.naturalWidth > 2 && this.lbImgEl.naturalHeight > 2) {
+					const loadedRatio = this.lbImgEl.naturalWidth / this.lbImgEl.naturalHeight;
+					this.lightboxEl.style.setProperty('--mr-tee-lb-ratio', String(Number(loadedRatio.toFixed(5))));
+					const prevRatio = activeSlide.aspectRatio || 0;
+					if (!activeSlide.isLocked) {
+						activeSlide.aspectRatio = loadedRatio;
+					}
+					if (activeSlide.customizable) {
+						if (this.onSlideImageChanged && Math.abs(loadedRatio - prevRatio) > 0.0005) {
+							this.onSlideImageChanged(activeSlide.viewId, this.lbImgEl);
+						}
+						if (this.getFullscreenSvg) {
+							this.syncFullscreenSvg(this.getFullscreenSvg(activeSlide.viewId));
+						}
+					}
+				}
+			});
+		}
+
 		this.lbPills.forEach((pill) => {
 			pill.addEventListener('click', (e) => {
 				e.stopPropagation();
@@ -1216,10 +1242,27 @@ export class DedicatedGallery {
 			});
 		}
 
-		const liveRatio = (slide.imgEl && slide.imgEl.naturalWidth > 2 && slide.imgEl.naturalHeight > 2)
-			? (slide.imgEl.naturalWidth / slide.imgEl.naturalHeight)
+		this._lbTargetViewId = slide.viewId;
+		if (this.lbImgEl && slide.imgEl) {
+			const src = slide.imgEl.getAttribute('data-large_image') || slide.imgEl.currentSrc || slide.imgEl.src || '';
+			this.lbImgEl.src = src;
+			this.lbImgEl.alt = slide.imgEl.alt || slide.label || '';
+		}
+
+		let measuredRatio = 0;
+		if (this.lbImgEl && this.lbImgEl.complete && this.lbImgEl.naturalWidth > 2 && this.lbImgEl.naturalHeight > 2) {
+			measuredRatio = this.lbImgEl.naturalWidth / this.lbImgEl.naturalHeight;
+		} else if (slide.imgEl && slide.imgEl.complete && slide.imgEl.naturalWidth > 2 && slide.imgEl.naturalHeight > 2) {
+			measuredRatio = slide.imgEl.naturalWidth / slide.imgEl.naturalHeight;
+		}
+
+		const liveRatio = measuredRatio > 0
+			? measuredRatio
 			: (slide.aspectRatio > 0 ? slide.aspectRatio : 0.82);
 		this.lightboxEl.style.setProperty('--mr-tee-lb-ratio', String(Number(liveRatio.toFixed(5))));
+		if (!slide.isLocked && measuredRatio > 0) {
+			slide.aspectRatio = measuredRatio;
+		}
 
 		if (this.lbStageEl) {
 			if (slide.isLocked) {
@@ -1233,12 +1276,6 @@ export class DedicatedGallery {
 				this.lbStageEl.style.removeProperty('--mr-tee-slide-ratio');
 				this.lbStageEl.style.aspectRatio = '';
 			}
-		}
-
-		if (this.lbImgEl && slide.imgEl) {
-			const src = slide.imgEl.getAttribute('data-large_image') || slide.imgEl.currentSrc || slide.imgEl.src || '';
-			this.lbImgEl.src = src;
-			this.lbImgEl.alt = slide.imgEl.alt || slide.label || '';
 		}
 
 		if (this.lbOverlayEl) {

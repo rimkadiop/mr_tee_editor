@@ -438,7 +438,7 @@ export class SvgRenderer {
 
 		// Combined uniform auto-fit scale factor (no lengthAdjust horizontal stretching!)
 		const autoFitScale = Math.min(1.0, scaleW, scaleH);
-		const effectiveFontSize = Math.max(1.5, baseFontSize * autoFitScale);
+		const effectiveFontSize = Math.max(0.25, baseFontSize * autoFitScale);
 
 		// Stroke styling (scaled proportionally to font size)
 		let baseStrokeWidth = 0;
@@ -475,21 +475,27 @@ export class SvgRenderer {
 		let tspans = '';
 		let charIndex = 0;
 
+		const TEXT_UNIT_MULT = 20;
+		const scaledFontSize = effectiveFontSize * TEXT_UNIT_MULT;
+		const rawEffectiveStroke = baseStrokeWidth * autoFitScale;
+		const scaledStrokeWidth = (rawEffectiveStroke * TEXT_UNIT_MULT).toFixed(3);
+
 		if (isMultiLine) {
 			const totalLines = lines.length;
-			const startYOffset = -((totalLines - 1) / 2) * (effectiveFontSize * lineHeight);
+			const stepY = scaledFontSize * lineHeight;
+			const startYOffset = -((totalLines - 1) / 2) * stepY;
 
 			for (let lineIdx = 0; lineIdx < totalLines; lineIdx++) {
 				const lineText = lines[lineIdx];
-				const dy = lineIdx === 0 ? startYOffset : (effectiveFontSize * lineHeight);
+				const dy = lineIdx === 0 ? startYOffset : stepY;
 
 				if (lineText === '') {
-					tspans += `<tspan x="${x}" dy="${dy.toFixed(2)}" fill="${solidFill}">&#160;</tspan>`;
+					tspans += `<tspan x="0" dy="${dy.toFixed(3)}" fill="${solidFill}">&#160;</tspan>`;
 					continue;
 				}
 
 				if (!isMulti) {
-					tspans += `<tspan x="${x}" dy="${dy.toFixed(2)}" fill="${solidFill}" xml:space="preserve">${this.escapeXml(lineText)}</tspan>`;
+					tspans += `<tspan x="0" dy="${dy.toFixed(3)}" fill="${solidFill}" xml:space="preserve">${this.escapeXml(lineText)}</tspan>`;
 				} else {
 					let lineTspans = '';
 					const chars = Array.from(lineText);
@@ -504,7 +510,7 @@ export class SvgRenderer {
 						}
 					}
 
-					tspans += `<tspan x="${x}" dy="${dy.toFixed(2)}">${lineTspans}</tspan>`;
+					tspans += `<tspan x="0" dy="${dy.toFixed(3)}">${lineTspans}</tspan>`;
 				}
 			}
 		} else if (!isMulti) {
@@ -525,23 +531,27 @@ export class SvgRenderer {
 
 		const safeFontFamily = String(fontFamily).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 		const rotateAngle = parseFloat(effRotate) || 0;
-		const transformAttr = (rotateAngle !== 0) ? `transform="rotate(${rotateAngle.toFixed(2)}, ${x.toFixed(2)}, ${y.toFixed(2)})"` : '';
+		const transformAttr = (rotateAngle !== 0) ? `transform="rotate(${rotateAngle.toFixed(2)}, ${x.toFixed(4)}, ${y.toFixed(4)})"` : '';
+		const invScale = (1 / TEXT_UNIT_MULT).toFixed(4);
 
 		return `
-		<text
-			x="${x}"
-			y="${y}"
-			font-family="${safeFontFamily}"
-			font-size="${effectiveFontSize.toFixed(2)}"
-			text-anchor="${node.textAnchor || 'middle'}"
-			dominant-baseline="central"
-			letter-spacing="${letterSpacing}"
-			stroke="${this.escapeXml(strokeColor)}"
-			stroke-width="${strokeWidth}"
-			style="${paintOrder}"
-			${transformAttr}
-			${filterAttr}
-		>${tspans}</text>`;
+		<g class="mrtee-ttf-text" ${transformAttr} ${filterAttr}>
+			<g transform="translate(${x.toFixed(4)}, ${y.toFixed(4)}) scale(${invScale})">
+				<text
+					x="0"
+					y="0"
+					font-family="${safeFontFamily}"
+					font-size="${scaledFontSize.toFixed(3)}"
+					text-anchor="${node.textAnchor || 'middle'}"
+					dominant-baseline="central"
+					text-rendering="geometricPrecision"
+					letter-spacing="${letterSpacing}"
+					stroke="${this.escapeXml(strokeColor)}"
+					stroke-width="${scaledStrokeWidth}"
+					style="${paintOrder} text-rendering: geometricPrecision; -webkit-text-size-adjust: none; text-size-adjust: none;"
+				>${tspans}</text>
+			</g>
+		</g>`;
 	}
 
 	/**
@@ -1735,7 +1745,7 @@ export class SvgRenderer {
 		}
 
 		const autoFitScale = Math.min(1.0, scaleW, scaleH);
-		const effectiveFontSize = Math.max(1.5, baseFontSize * autoFitScale);
+		const effectiveFontSize = Math.max(0.25, baseFontSize * autoFitScale);
 		const scale = effectiveFontSize / unitsPerEm;
 
 		const totalHeight = effectiveFontSize + (numLines - 1) * effectiveFontSize * lineHeight;
@@ -1774,7 +1784,7 @@ export class SvgRenderer {
 					const escapedCh = this.escapeXml(ch);
 					const fbCenterX = (eff.adv / 2).toFixed(1);
 					glyphsMarkup += `<g class="mrtee-ot-glyph mrtee-ot-glyph-fallback" data-glyph-key="${this.escapeXml(fId)}:fb:${escapedCh}" transform="translate(${cursorX.toFixed(3)}, ${baselineY.toFixed(3)}) scale(${scale.toFixed(5)})">` +
-						`<text x="${fbCenterX}" y="0" text-anchor="middle" font-family="${fbFontStack}" font-weight="900" font-size="${fbFontSize}" fill="#FFFFFF" stroke="#1E293B" stroke-width="${fbStrokeWidth}" stroke-linejoin="round" stroke-linecap="round" style="paint-order: stroke fill;" filter="url(#${idPrefix}mrtee-3d-shadow)">${escapedCh}</text>` +
+						`<text x="${fbCenterX}" y="0" text-anchor="middle" text-rendering="geometricPrecision" font-family="${fbFontStack}" font-weight="900" font-size="${fbFontSize}" fill="#FFFFFF" stroke="#1E293B" stroke-width="${fbStrokeWidth}" stroke-linejoin="round" stroke-linecap="round" style="paint-order: stroke fill; text-rendering: geometricPrecision;" filter="url(#${idPrefix}mrtee-3d-shadow)">${escapedCh}</text>` +
 						`</g>\n`;
 				}
 				cursorX += (eff.adv + letterSpacingUnits) * scale;

@@ -280,8 +280,9 @@
 			styleEl.textContent += css;
 
 			if (!opts.skipLoad && document.fonts && typeof document.fonts.load === 'function' && fontDef.family) {
-				document.fonts.load(`16px "${String(fontDef.family).replace(/["\\]/g, '')}"`).then(() => {
-					document.querySelectorAll('.mr-tee-field-box').forEach(el => { el._glyphsKey = ''; });
+				document.fonts.load(`100px "${String(fontDef.family).replace(/["\\]/g, '')}"`).then(() => {
+					if (this._adminTextWidthCache) this._adminTextWidthCache.clear();
+					document.querySelectorAll('.mr-tee-box-svg-holder').forEach(el => { el._glyphsKey = ''; });
 					this.renderAllBoxesPreviews();
 				}).catch(() => {});
 			}
@@ -553,18 +554,34 @@
 				}, 120);
 			});
 
+			if (typeof document !== 'undefined' && document.fonts) {
+				const refreshLoadedFonts = () => {
+					if (self._adminTextWidthCache) self._adminTextWidthCache.clear();
+					document.querySelectorAll('.mr-tee-box-svg-holder').forEach(el => {
+						if (el._renderMode === 'ttf') el._glyphsKey = '';
+					});
+					self.renderAllBoxesPreviews();
+				};
+				if (document.fonts.ready && typeof document.fonts.ready.then === 'function') {
+					document.fonts.ready.then(refreshLoadedFonts).catch(() => {});
+				}
+				if (typeof document.fonts.addEventListener === 'function') {
+					document.fonts.addEventListener('loadingdone', refreshLoadedFonts);
+				}
+			}
+
 			if (typeof window.ResizeObserver === 'function' && this.$canvasWrap && this.$canvasWrap[0]) {
 				let prevW = 0;
 				let prevH = 0;
 				const ro = new window.ResizeObserver(entries => {
 					const entry = entries && entries[0];
 					if (!entry || !entry.contentRect) return;
-					const w = Math.round(entry.contentRect.width);
-					const h = Math.round(entry.contentRect.height);
-					if (w > 20 && h > 20 && (Math.abs(w - prevW) > 1 || Math.abs(h - prevH) > 1)) {
+					const w = entry.contentRect.width;
+					const h = entry.contentRect.height;
+					if (w > 20 && h > 20 && (Math.abs(w - prevW) > 0.5 || Math.abs(h - prevH) > 0.5)) {
 						prevW = w;
 						prevH = h;
-						self._cachedStageRatio = w / h;
+						self._cachedStageRatio = 0;
 						self.renderAllBoxesPreviews();
 						self.updateFieldToolbarState();
 					}
@@ -771,8 +788,8 @@
 					self.setActiveField(currentIdx);
 				}
 
-				const wrapRect = self.$canvasWrap[0].getBoundingClientRect();
-				if (!wrapRect.width || !wrapRect.height) return;
+				const wrapRect = self.getStageInnerRect();
+				if (!wrapRect || !wrapRect.width || !wrapRect.height) return;
 
 				const leftInput = document.getElementById(`mr_tee_field_left_${currentIdx}`);
 				const topInput = document.getElementById(`mr_tee_field_top_${currentIdx}`);
@@ -923,8 +940,8 @@
 
 				const currentIdx = parseInt(boxEl.getAttribute('data-field-index'), 10);
 				const currentHandle = String($(this).data('handle') || '');
-				const wrapRect = self.$canvasWrap[0].getBoundingClientRect();
-				if (!wrapRect.width || !wrapRect.height) return;
+				const wrapRect = self.getStageInnerRect();
+				if (!wrapRect || !wrapRect.width || !wrapRect.height) return;
 				const stageRatio = self.getStageAspectRatio(wrapRect);
 
 				const leftInput = document.getElementById(`mr_tee_field_left_${currentIdx}`);
@@ -2397,21 +2414,144 @@
 		getBoxMetrics(fontDef) {
 			const f = String((fontDef && (fontDef.family || fontDef.id)) || '').toLowerCase();
 			let charRatio = 0.56;
-			if (f.includes('bebas')) charRatio = 0.42;
-			else if (f.includes('press start') || f.includes('pressstart') || f.includes('arcade')) charRatio = 0.72;
-			else if (f.includes('super mario') || f.includes('mario')) charRatio = 0.62;
-			else if (f.includes('luckiest')) charRatio = 0.64;
-			else if (f.includes('bungee')) charRatio = 0.65;
-			else if (f.includes('cocogoose')) charRatio = 0.60;
-			else if (f.includes('pacifico')) charRatio = 0.48;
-			else if (f.includes('cinzel')) charRatio = 0.62;
-			else if (f.includes('marker')) charRatio = 0.58;
-			else if (f.includes('abril')) charRatio = 0.55;
-			const letterSpacingEm = (fontDef && fontDef.letter_spacing !== undefined) ? parseFloat(fontDef.letter_spacing) : 0.05;
+			let defaultSpacing = 0.05;
+			if (f.includes('bebas')) { charRatio = 0.42; defaultSpacing = 0.10; }
+			else if (f.includes('press start') || f.includes('pressstart') || f.includes('arcade')) { charRatio = 0.72; defaultSpacing = 0.05; }
+			else if (f.includes('super mario') || f.includes('mario')) { charRatio = 0.62; defaultSpacing = 0.15; }
+			else if (f.includes('luckiest')) { charRatio = 0.64; defaultSpacing = 0.06; }
+			else if (f.includes('bungee')) { charRatio = 0.65; defaultSpacing = 0.08; }
+			else if (f.includes('cocogoose')) { charRatio = 0.60; defaultSpacing = 0.12; }
+			else if (f.includes('pacifico')) { charRatio = 0.48; defaultSpacing = 0.02; }
+			else if (f.includes('cinzel')) { charRatio = 0.62; defaultSpacing = 0.10; }
+			else if (f.includes('marker')) { charRatio = 0.58; defaultSpacing = 0.05; }
+			else if (f.includes('abril')) { charRatio = 0.55; defaultSpacing = 0.04; }
+			const letterSpacingEm = (fontDef && fontDef.letter_spacing !== undefined) ? parseFloat(fontDef.letter_spacing) : defaultSpacing;
 			return { charRatio, letterSpacingEm };
 		}
 
+		getAdminLineConfig(idx) {
+			const lines = (this.config && Array.isArray(this.config.text_lines)) ? this.config.text_lines : [];
+			if (!lines.length) return null;
+			const idEl = document.querySelector(`input[name="mr_tee_config[text_lines][${idx}][id]"]`);
+			const fieldId = idEl ? String(idEl.value || '').trim() : '';
+			if (fieldId) {
+				const found = lines.find(l => l && String(l.id || '') === fieldId);
+				if (found) return found;
+			}
+			return lines[idx] || null;
+		}
+
+		buildAdminFontStack(rawFont) {
+			const raw = String(rawFont || 'sans-serif');
+			if (raw.includes(',') || raw.includes('sans-serif') || raw.includes('serif') || raw.includes('cursive') || raw.includes('monospace')) {
+				return raw;
+			}
+			const fLower = raw.toLowerCase();
+			let genericFallback = 'sans-serif';
+			if (fLower.includes('pacifico') || fLower.includes('cursive') || fLower.includes('script') || fLower.includes('marker')) {
+				genericFallback = 'cursive, sans-serif';
+			} else if (fLower.includes('cinzel') || fLower.includes('abril') || fLower.includes('serif')) {
+				genericFallback = 'Georgia, serif';
+			} else if (fLower.includes('press start') || fLower.includes('monospace') || fLower.includes('arcade')) {
+				genericFallback = 'monospace';
+			} else if (fLower.includes('bebas') || fLower.includes('bungee') || fLower.includes('luckiest') || fLower.includes('cocogoose')) {
+				genericFallback = 'Impact, sans-serif';
+			}
+			return `'${raw}', ${genericFallback}`;
+		}
+
+		measureAdminTextWidthUnits(text, fontFamily, letterSpacingEm = 0, fontDef = null) {
+			const str = String(text || '');
+			if (!str) return 0;
+
+			const spacing = Number.isFinite(letterSpacingEm) ? letterSpacingEm : 0;
+			const charLen = Array.from(str).length;
+			const spacingUnits = Math.max(0, charLen - 1) * spacing;
+
+			if (typeof document !== 'undefined' && typeof document.createElement === 'function') {
+				const primaryFamily = String(fontFamily || '').split(',')[0].trim().replace(/^['"]+|['"]+$/g, '');
+				const isGeneric = /^(sans-serif|serif|monospace|cursive|fantasy|system-ui|arial|helvetica|georgia|impact)$/i.test(primaryFamily);
+				let fontReady = isGeneric;
+
+				if (!fontReady && primaryFamily && document.fonts && typeof document.fonts.check === 'function') {
+					try {
+						fontReady = document.fonts.check(`100px "${primaryFamily}"`);
+					} catch (e) {
+						fontReady = false;
+					}
+				}
+
+				if (fontReady) {
+					this._adminTextWidthCache = this._adminTextWidthCache || new Map();
+					const cacheKey = `${fontFamily}|${spacing.toFixed(4)}|${str}`;
+					if (this._adminTextWidthCache.has(cacheKey)) {
+						return this._adminTextWidthCache.get(cacheKey);
+					}
+
+					if (!this._adminMeasureCtx) {
+						const canvas = document.createElement('canvas');
+						this._adminMeasureCtx = canvas.getContext('2d');
+					}
+					if (this._adminMeasureCtx) {
+						const refPx = 100;
+						this._adminMeasureCtx.font = `${refPx}px ${fontFamily}`;
+						const measured = this._adminMeasureCtx.measureText(str).width;
+						if (measured > 0) {
+							const units = (measured / refPx) + spacingUnits;
+							if (this._adminTextWidthCache.size >= 500) {
+								this._adminTextWidthCache.clear();
+							}
+							this._adminTextWidthCache.set(cacheKey, units);
+							return units;
+						}
+					}
+				}
+			}
+
+			const metrics = this.getBoxMetrics(fontDef || { family: fontFamily });
+			return (charLen * metrics.charRatio) + spacingUnits;
+		}
+
+		getStageInnerRect() {
+			const wrapEl = this.$canvasWrap && this.$canvasWrap[0];
+			if (!wrapEl) return null;
+			const r = wrapEl.getBoundingClientRect();
+			const bl = wrapEl.clientLeft || 0;
+			const bt = wrapEl.clientTop || 0;
+			const cw = wrapEl.clientWidth || 0;
+			const ch = wrapEl.clientHeight || 0;
+			if (cw > 0 && ch > 0 && (bl > 0 || bt > 0)) {
+				const sx = r.width / (wrapEl.offsetWidth || cw);
+				const sy = r.height / (wrapEl.offsetHeight || ch);
+				return {
+					left: r.left + bl * sx,
+					top: r.top + bt * sy,
+					width: cw * sx,
+					height: ch * sy,
+				};
+			}
+			return r;
+		}
+
 		getStageAspectRatio(cachedWrapRect) {
+			const wrapEl = this.$canvasWrap && this.$canvasWrap[0];
+			const isLocked = Boolean(wrapEl && wrapEl.classList.contains('is-aspect-locked'));
+
+			if (isLocked) {
+				const rw = parseFloat($('#mr_tee_real_width').val()) || 0;
+				const rh = parseFloat($('#mr_tee_real_height').val()) || 0;
+				if (rw > 0 && rh > 0) {
+					this._cachedStageRatio = rw / rh;
+					return this._cachedStageRatio;
+				}
+			} else {
+				const imgEl = document.getElementById('mr-tee-stage-garment-img');
+				if (imgEl && imgEl.style.display !== 'none' && imgEl.complete && imgEl.naturalWidth > 2 && imgEl.naturalHeight > 2) {
+					this._cachedStageRatio = imgEl.naturalWidth / imgEl.naturalHeight;
+					return this._cachedStageRatio;
+				}
+			}
+
 			if (cachedWrapRect && cachedWrapRect.width > 0 && cachedWrapRect.height > 0) {
 				this._cachedStageRatio = cachedWrapRect.width / cachedWrapRect.height;
 				return this._cachedStageRatio;
@@ -2419,7 +2559,6 @@
 			if (this._cachedStageRatio && this._cachedStageRatio > 0) {
 				return this._cachedStageRatio;
 			}
-			const wrapEl = this.$canvasWrap && this.$canvasWrap[0];
 			if (wrapEl && wrapEl.clientWidth > 0 && wrapEl.clientHeight > 0) {
 				this._cachedStageRatio = wrapEl.clientWidth / wrapEl.clientHeight;
 				return this._cachedStageRatio;
@@ -2475,7 +2614,8 @@
 
 			// Text field branch: clearing default_text renders a clean empty preview (no fake "Texte N")
 			const rawTextVal = $(`[name="mr_tee_config[text_lines][${idx}][default_text]"]`).val();
-			const textVal = rawTextVal !== undefined ? String(rawTextVal) : '';
+			const normTextVal = rawTextVal !== undefined ? String(rawTextVal).replace(/\r\n?/g, '\n') : '';
+			const textVal = (typeof normTextVal.normalize === 'function') ? normTextVal.normalize('NFC') : normTextVal;
 			if (textVal.trim() === '') {
 				if (el._renderMode !== 'empty') {
 					el.innerHTML = '';
@@ -2492,30 +2632,35 @@
 			const bh = (opts && opts.bh > 0) ? opts.bh : (parseFloat((document.getElementById(`mr_tee_field_height_${idx}`) || {}).value) || 8.5);
 			const stageRatio = (opts && opts.stageRatio > 0) ? opts.stageRatio : this.getStageAspectRatio();
 			let boxRatio = (bw / Math.max(0.5, bh)) * stageRatio;
-			boxRatio = Math.max(0.2, Math.min(20, boxRatio || 1));
+			boxRatio = Math.max(0.05, Math.min(50, boxRatio || 1));
 			const vbH = 100;
-			const vbW = Number((vbH * boxRatio).toFixed(2));
+			const vbW = Number((vbH * boxRatio).toFixed(3));
+			const unitScaleK = vbW / Math.max(0.5, bw);
 
 			const fonts = (window.mrTeeAdminData && window.mrTeeAdminData.fonts) || {};
 			const allowed = this.getAllowedFonts();
 			const fallbackKey = allowed[0] || Object.keys(fonts)[0] || 'super_mario';
 			const fontId = $(`select[name="mr_tee_config[text_lines][${idx}][font]"]`).val() || fallbackKey;
 			const fontDef = fonts[fontId] || fonts[fallbackKey] || null;
+			const savedLine = this.getAdminLineConfig(idx);
+			const savedLineHeight = (savedLine && parseFloat(savedLine.line_height) > 0) ? parseFloat(savedLine.line_height) : 0.95;
+			const savedCasing = (savedLine && typeof savedLine.casing === 'string' && savedLine.casing) ? savedLine.casing : '';
+			const resolvedCasing = (fontDef && fontDef.uppercase) ? 'UPPER' : (savedCasing || 'ORIGINAL');
 
-			// Handle OpenType-SVG Vector Color Fonts
+			// Handle OpenType-SVG Vector Color Fonts (100% aligned with Storefront SvgRenderer.renderOpenTypeSvgTextNode)
 			if (this.isSvgFont(fontDef)) {
 				const svgFonts = (window.mrTeeAdminData && window.mrTeeAdminData.svgFonts) || {};
 				const svgData = svgFonts[fontId];
 
 				if (svgData && svgData.glyphs) {
-					const casing = fontDef.uppercase ? 'UPPER' : 'ORIGINAL';
-					const displayVal = (casing === 'UPPER') ? textVal.toUpperCase() : textVal;
-					const glyphsKey = `otsvg::${fontId}::${displayVal}`;
+					const displayVal = (resolvedCasing === 'UPPER') ? textVal.toUpperCase() : textVal;
+					const glyphsKey = `otsvg::${fontId}::${displayVal}::${savedLineHeight}`;
 
 					if (el._renderMode === 'otsvg' && el._glyphsKey === glyphsKey && el._svgEl && el._groupEl) {
 						if (el._lastVbW !== vbW) {
-							const maxDesignW = vbW * 0.92;
-							const autoScale = (el._rawW > maxDesignW && maxDesignW > 0) ? (maxDesignW / el._rawW) : 1.0;
+							const maxDesignW = vbW * 0.95;
+							const scaleW = (el._rawW > maxDesignW && maxDesignW > 0) ? (maxDesignW / el._rawW) : 1.0;
+							const autoScale = Math.min(1.0, scaleW, el._scaleH || 1.0);
 							el._svgEl.setAttribute('viewBox', `0 0 ${vbW} ${vbH}`);
 							el._groupEl.setAttribute('transform', `translate(${(vbW / 2).toFixed(2)}, 50) scale(${autoScale.toFixed(5)})`);
 							el._lastVbW = vbW;
@@ -2524,10 +2669,11 @@
 					}
 
 					const unitsPerEm = svgData.unitsPerEm || 1000;
-					const lines = displayVal.split(/\r?\n/);
+					const defaultAdv = svgData.defaultAdv || 500;
+					const lines = displayVal.split('\n');
 					const numLines = Math.max(1, lines.length);
-					const lineHeightRatio = 0.92;
-					const letterSpacingUnits = (fontDef.letter_spacing !== undefined ? fontDef.letter_spacing : 0.05) * unitsPerEm;
+					const lineHeightRatio = savedLineHeight;
+					const letterSpacingUnits = (fontDef.letter_spacing !== undefined ? parseFloat(fontDef.letter_spacing) : 0.05) * unitsPerEm;
 
 					const resolveAdminGlyph = (ch) => {
 						const isSpace = /^\s$/.test(ch);
@@ -2542,11 +2688,16 @@
 							if (entry) {
 								if (!firstHit) firstHit = entry;
 								if ((entry.svg && entry.svg.trim() !== '') || isSpace) {
+									const hasSvg = Boolean(entry.svg && entry.svg.trim() !== '');
+									const adv = (entry.adv > 0) ? entry.adv : (isSpace ? Math.round(unitsPerEm * 0.32) : defaultAdv);
+									const vBounds = hasSvg ? this.getAdminGlyphVisualXBounds(entry, unitsPerEm, adv) : { minX: 0, maxX: adv };
 									return {
 										svg: entry.svg || '',
-										hasSvg: Boolean(entry.svg && entry.svg.trim() !== ''),
+										hasSvg,
 										isSpace,
-										adv: (entry.adv > 0) ? entry.adv : (isSpace ? Math.round(unitsPerEm * 0.32) : (svgData.defaultAdv || 500)),
+										adv,
+										minX: vBounds.minX,
+										maxX: vBounds.maxX,
 									};
 								}
 							}
@@ -2557,31 +2708,52 @@
 						} else if (/^[&?%@MWmw#]$/.test(ch)) {
 							ratio = 0.66;
 						}
+						const fbAdv = isSpace ? ((firstHit && firstHit.adv > 0) ? firstHit.adv : Math.round(unitsPerEm * 0.32)) : Math.round(unitsPerEm * ratio);
 						return {
 							svg: '',
 							hasSvg: false,
 							isSpace,
-							adv: isSpace ? ((firstHit && firstHit.adv > 0) ? firstHit.adv : Math.round(unitsPerEm * 0.32)) : Math.round(unitsPerEm * ratio),
+							adv: fbAdv,
+							minX: 0,
+							maxX: fbAdv,
 						};
 					};
 
-					const lineWidths = [];
-					let maxWidthUnits = 0;
-					for (const lineStr of lines) {
-						let wUnits = 0;
-						for (let i = 0; i < lineStr.length; i++) {
-							const ch = lineStr[i];
-							const g = resolveAdminGlyph(ch);
-							wUnits += g.adv + (i < lineStr.length - 1 ? letterSpacingUnits : 0);
-						}
-						lineWidths.push(wUnits);
-						if (wUnits > maxWidthUnits) maxWidthUnits = wUnits;
-					}
+					let maxLineDesignWidth = 0;
+					const lineMetrics = lines.map((lineStr) => {
+						let penX = 0;
+						let minVisualX = Infinity;
+						let maxVisualX = -Infinity;
+						const chars = Array.from(lineStr);
 
-					const maxDesignW = vbW * 0.92;
-					const baseFontSize = (vbH * 0.84) / (1 + (numLines - 1) * lineHeightRatio);
-					const rawW = (maxWidthUnits / unitsPerEm) * baseFontSize;
-					const autoScale = (rawW > maxDesignW && maxDesignW > 0) ? (maxDesignW / rawW) : 1.0;
+						for (let i = 0; i < chars.length; i++) {
+							const g = resolveAdminGlyph(chars[i]);
+							if (!g.isSpace) {
+								const leftEdge = penX + g.minX;
+								const rightEdge = penX + g.maxX;
+								if (leftEdge < minVisualX) minVisualX = leftEdge;
+								if (rightEdge > maxVisualX) maxVisualX = rightEdge;
+							}
+							penX += g.adv + (i < chars.length - 1 ? letterSpacingUnits : 0);
+						}
+
+						if (minVisualX === Infinity || maxVisualX === -Infinity) {
+							minVisualX = 0;
+							maxVisualX = penX;
+						}
+						const visualWidthUnits = Math.max(penX, maxVisualX - minVisualX);
+						if (visualWidthUnits > maxLineDesignWidth) maxLineDesignWidth = visualWidthUnits;
+						return { chars, minVisualX, maxVisualX };
+					});
+
+					const maxDesignW = vbW * 0.95;
+					const maxDesignH = vbH * 0.92;
+					const baseFontSize = (vbH * 0.85) / (1 + (numLines - 1) * lineHeightRatio * 0.8);
+					const rawW = (maxLineDesignWidth / unitsPerEm) * baseFontSize;
+					const scaleW = (rawW > maxDesignW && maxDesignW > 0) ? (maxDesignW / rawW) : 1.0;
+					const rawTotalH = baseFontSize + ((numLines - 1) * baseFontSize * lineHeightRatio);
+					const scaleH = (rawTotalH > maxDesignH && maxDesignH > 0) ? (maxDesignH / rawTotalH) : 1.0;
+					const autoScale = Math.min(1.0, scaleW, scaleH);
 					const baseScale = baseFontSize / unitsPerEm;
 					const baseStepY = baseFontSize * lineHeightRatio;
 					const baseStartCenterY = -(((numLines - 1) * baseStepY) / 2);
@@ -2590,22 +2762,22 @@
 					const baselineOffsetUnits = this.getOpenTypeSvgBaselineOffset(svgData);
 
 					let glyphsMarkup = '';
-					for (let li = 0; li < lines.length; li++) {
-						const lineStr = lines[li];
-						const baseLineW = (lineWidths[li] / unitsPerEm) * baseFontSize;
-						let cursorX = -(baseLineW / 2);
+					for (let li = 0; li < lineMetrics.length; li++) {
+						const lm = lineMetrics[li];
+						const visualSpanW = (lm.maxVisualX - lm.minVisualX) * baseScale;
+						let cursorX = -(visualSpanW / 2) - (lm.minVisualX * baseScale);
 						const lineCenterY = baseStartCenterY + (li * baseStepY);
 						const baselineY = lineCenterY + (baselineOffsetUnits * baseScale);
 
-						for (let i = 0; i < lineStr.length; i++) {
-							const ch = lineStr[i];
+						for (let i = 0; i < lm.chars.length; i++) {
+							const ch = lm.chars[i];
 							const g = resolveAdminGlyph(ch);
 							if (g.hasSvg) {
 								glyphsMarkup += `<g class="mrtee-ot-glyph" transform="translate(${cursorX.toFixed(3)}, ${baselineY.toFixed(3)}) scale(${baseScale.toFixed(5)})">${g.svg}</g>\n`;
 							} else if (!g.isSpace) {
 								const escapedCh = this.escapeXml(ch);
 								const fbCenterX = (g.adv / 2).toFixed(1);
-								glyphsMarkup += `<g class="mrtee-ot-glyph mrtee-ot-glyph-fallback" transform="translate(${cursorX.toFixed(3)}, ${baselineY.toFixed(3)}) scale(${baseScale.toFixed(5)})"><text x="${fbCenterX}" y="0" text-anchor="middle" font-family="'Bungee', 'Luckiest Guy', 'Impact', sans-serif" font-weight="900" font-size="${fbFontSize}" fill="#FFFFFF" stroke="#1E293B" stroke-width="${fbStrokeWidth}" stroke-linejoin="round" stroke-linecap="round" style="paint-order: stroke fill; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.45));">${escapedCh}</text></g>\n`;
+								glyphsMarkup += `<g class="mrtee-ot-glyph mrtee-ot-glyph-fallback" transform="translate(${cursorX.toFixed(3)}, ${baselineY.toFixed(3)}) scale(${baseScale.toFixed(5)})"><text x="${fbCenterX}" y="0" text-anchor="middle" text-rendering="geometricPrecision" font-family="'Bungee', 'Luckiest Guy', 'Impact', sans-serif" font-weight="900" font-size="${fbFontSize}" fill="#FFFFFF" stroke="#1E293B" stroke-width="${fbStrokeWidth}" stroke-linejoin="round" stroke-linecap="round" style="paint-order: stroke fill; text-rendering: geometricPrecision; filter: drop-shadow(0 2px 3px rgba(0,0,0,0.45));">${escapedCh}</text></g>\n`;
 							}
 							cursorX += (g.adv + letterSpacingUnits) * baseScale;
 						}
@@ -2623,9 +2795,11 @@
 					el._renderMode = 'otsvg';
 					el._glyphsKey = glyphsKey;
 					el._rawW = rawW;
+					el._scaleH = scaleH;
 					el._lastVbW = vbW;
 					el._svgEl = el.querySelector('svg');
 					el._groupEl = el.querySelector('.mrtee-ot-admin-glyph-group');
+					el._textEl = null;
 					el._imgEl = null;
 					return;
 				}
@@ -2644,11 +2818,12 @@
 			// Lazy-inject @font-face for any unselected TTF font picked dynamically
 			this.ensureTtfFontLoaded(fontId);
 
-			const fontFamily = fontDef ? `'${fontDef.family}', sans-serif` : 'sans-serif';
+			const rawFamily = (fontDef && fontDef.family) ? fontDef.family : 'sans-serif';
+			const fontFamily = this.buildAdminFontStack(rawFamily);
 			const rawStrokeW = (fontDef && fontDef.stroke_width !== undefined) ? parseFloat(fontDef.stroke_width) : 0;
 			const strokeColor = (fontDef && fontDef.stroke && rawStrokeW > 0) ? fontDef.stroke : 'transparent';
-			const textTransform = (fontDef && fontDef.uppercase) ? 'uppercase' : 'none';
-			const displayVal = (fontDef && fontDef.uppercase) ? textVal.toUpperCase() : textVal;
+			const textTransform = (resolvedCasing === 'UPPER') ? 'uppercase' : 'none';
+			const displayVal = (resolvedCasing === 'UPPER') ? textVal.toUpperCase() : textVal;
 
 			// True WYSIWYG color resolution (fixes white-on-white bug for stroke-less TTF fonts!)
 			const colorMode = $(`select[name="mr_tee_config[text_lines][${idx}][color_mode]"]`).val() || 'multi';
@@ -2682,44 +2857,58 @@
 			}
 
 			const colorSig = `${colorMode}:${solidFill}:${resolvedPalette.join(',')}`;
-			const glyphsKey = `ttf::${fontId}::${displayVal}::${strokeColor}::${rawStrokeW}::${colorSig}`;
+			const glyphsKey = `ttf::${fontId}::${displayVal}::${savedLineHeight}::${strokeColor}::${rawStrokeW}::${colorSig}`;
+			const scaledStrokeW = rawStrokeW > 0 ? (rawStrokeW * unitScaleK).toFixed(3) : '0';
 
 			if (el._renderMode === 'ttf' && el._glyphsKey === glyphsKey && el._svgEl && el._groupEl) {
-				if (el._lastVbW !== vbW) {
-					const maxDesignW = vbW * 0.92;
-					const autoScale = (el._rawW > maxDesignW && maxDesignW > 0) ? (maxDesignW / el._rawW) : 1.0;
+				if (el._lastVbW !== vbW || el._lastUnitScaleK !== unitScaleK) {
+					const maxDesignW = vbW * 0.95;
+					const scaleW = (el._rawW > maxDesignW && maxDesignW > 0) ? (maxDesignW / el._rawW) : 1.0;
+					const autoScale = Math.min(1.0, scaleW, el._scaleH || 1.0);
 					el._svgEl.setAttribute('viewBox', `0 0 ${vbW} ${vbH}`);
 					el._groupEl.setAttribute('transform', `translate(${(vbW / 2).toFixed(2)}, 50) scale(${autoScale.toFixed(5)})`);
+					if (el._textEl && rawStrokeW > 0) {
+						el._textEl.setAttribute('stroke-width', scaledStrokeW);
+					}
 					el._lastVbW = vbW;
+					el._lastUnitScaleK = unitScaleK;
 				}
 				return;
 			}
 
-			const lines = displayVal.split(/\r?\n/);
+			const lines = displayVal.split('\n');
 			const numLines = Math.max(1, lines.length);
-			const lineHeightRatio = 0.92;
+			const lineHeightRatio = savedLineHeight;
 			const metrics = this.getBoxMetrics(fontDef);
 			const letterSpacing = `${metrics.letterSpacingEm}em`;
 
-			const maxDesignW = vbW * 0.92;
-			const baseFontSize = (vbH * 0.80) / (1 + (numLines - 1) * lineHeightRatio);
-			let maxEstW = 0;
+			const maxDesignW = vbW * 0.95;
+			const maxDesignH = vbH * 0.92;
+			const baseFontSize = (vbH * 0.85) / (1 + (numLines - 1) * lineHeightRatio * 0.8);
+			let maxLineWidthUnits = 0;
 			for (const l of lines) {
-				const estW = baseFontSize * (l.length * metrics.charRatio + Math.max(0, l.length - 1) * metrics.letterSpacingEm);
-				if (estW > maxEstW) maxEstW = estW;
+				const units = this.measureAdminTextWidthUnits(l, fontFamily, metrics.letterSpacingEm, fontDef);
+				if (units > maxLineWidthUnits) maxLineWidthUnits = units;
 			}
-			const autoScale = (maxEstW > maxDesignW && maxDesignW > 0) ? (maxDesignW / maxEstW) : 1.0;
-			const scaledStrokeW = rawStrokeW > 0 ? ((rawStrokeW * baseFontSize) / 16).toFixed(2) : '0';
+			const maxEstW = baseFontSize * maxLineWidthUnits;
+			const scaleW = (maxEstW > maxDesignW && maxDesignW > 0) ? (maxDesignW / maxEstW) : 1.0;
+			const rawTotalH = baseFontSize + ((numLines - 1) * baseFontSize * lineHeightRatio);
+			const scaleH = (rawTotalH > maxDesignH && maxDesignH > 0) ? (maxDesignH / rawTotalH) : 1.0;
+			const autoScale = Math.min(1.0, scaleW, scaleH);
 
 			const useMultiSpans = isMultiMode && resolvedPalette.length > 1;
 			let charIdx = 0;
 			const buildLineMarkup = (str) => {
+				if (str === '') {
+					return '&#160;';
+				}
 				if (!useMultiSpans) {
-					return this.escapeXml(str || ' ');
+					return this.escapeXml(str);
 				}
 				let out = '';
-				for (let ci = 0; ci < str.length; ci++) {
-					const ch = str[ci];
+				const chars = Array.from(str);
+				for (let ci = 0; ci < chars.length; ci++) {
+					const ch = chars[ci];
 					if (ch === ' ') {
 						out += '<tspan xml:space="preserve"> </tspan>';
 					} else {
@@ -2728,7 +2917,7 @@
 						charIdx++;
 					}
 				}
-				return out || ' ';
+				return out || '&#160;';
 			};
 
 			let textBody = '';
@@ -2737,15 +2926,19 @@
 				const startDy = -(((numLines - 1) * stepY) / 2);
 				lines.forEach((lineStr, li) => {
 					const dy = (li === 0) ? startDy : stepY;
-					textBody += `<tspan x="0" dy="${dy.toFixed(2)}">${buildLineMarkup(lineStr)}</tspan>`;
+					const xmlSpace = (!useMultiSpans && lineStr !== '') ? ' xml:space="preserve"' : '';
+					textBody += `<tspan x="0" dy="${dy.toFixed(2)}"${xmlSpace}>${buildLineMarkup(lineStr)}</tspan>`;
 				});
 			} else {
-				textBody = buildLineMarkup(displayVal);
+				textBody = !useMultiSpans
+					? `<tspan xml:space="preserve">${buildLineMarkup(displayVal)}</tspan>`
+					: buildLineMarkup(displayVal);
 			}
 
 			const shadowStyle = (rawStrokeW > 0 || solidFill.toLowerCase() === '#ffffff')
 				? 'filter: drop-shadow(0 1px 2px rgba(0,0,0,0.45));'
 				: 'filter: drop-shadow(0 1px 1px rgba(0,0,0,0.18));';
+			const safeFontAttr = fontFamily.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 			el.innerHTML = `
 				<svg viewBox="0 0 ${vbW} ${vbH}" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" style="overflow:visible;">
@@ -2753,15 +2946,16 @@
 						<text
 							x="0"
 							y="0"
-							font-family="${fontFamily}"
+							font-family="${safeFontAttr}"
 							font-size="${baseFontSize.toFixed(2)}"
 							letter-spacing="${letterSpacing}"
 							text-anchor="middle"
 							dominant-baseline="central"
+							text-rendering="geometricPrecision"
 							fill="${this.escapeXml(solidFill)}"
 							stroke="${strokeColor}"
 							stroke-width="${scaledStrokeW}"
-							style="paint-order: stroke fill; stroke-linejoin: round; text-transform: ${textTransform}; ${shadowStyle}"
+							style="paint-order: stroke fill; stroke-linejoin: round; stroke-linecap: round; text-rendering: geometricPrecision; -webkit-text-size-adjust: none; text-size-adjust: none; text-transform: ${textTransform}; ${shadowStyle}"
 						>${textBody}</text>
 					</g>
 				</svg>
@@ -2769,14 +2963,17 @@
 			el._renderMode = 'ttf';
 			el._glyphsKey = glyphsKey;
 			el._rawW = maxEstW;
+			el._scaleH = scaleH;
 			el._lastVbW = vbW;
+			el._lastUnitScaleK = unitScaleK;
 			el._svgEl = el.querySelector('svg');
 			el._groupEl = el.querySelector('.mrtee-ttf-admin-glyph-group');
+			el._textEl = el.querySelector('text');
 			el._imgEl = null;
 		}
 
 		/**
-		 * Extract the transformed vertical [minY, maxY] bounds (in font design units)
+		 * Extract the transformed [minX, maxX, minY, maxY] bounds (in font design units)
 		 * of the primary <image> inside an OpenType-SVG glyph markup string.
 		 */
 		extractGlyphImageYBounds(svgStr) {
@@ -2801,12 +2998,18 @@
 					}
 				} else if (tag === 'image' && !isClose) {
 					const hm = attrs.match(/\bheight\s*=\s*(?:"([+-]?[\d.]+)"|'([+-]?[\d.]+)')/i);
+					const wm = attrs.match(/\bwidth\s*=\s*(?:"([+-]?[\d.]+)"|'([+-]?[\d.]+)')/i);
 					const h = hm ? parseFloat(hm[1] || hm[2]) : NaN;
+					const w = wm ? parseFloat(wm[1] || wm[2]) : 0;
 					if (!Number.isFinite(h) || h <= 0) continue;
 
+					const xm = attrs.match(/\bx\s*=\s*(?:"([+-]?[\d.]+)"|'([+-]?[\d.]+)')/i);
 					const ym = attrs.match(/\by\s*=\s*(?:"([+-]?[\d.]+)"|'([+-]?[\d.]+)')/i);
+					let x0 = xm ? parseFloat(xm[1] || xm[2]) : 0;
 					let y0 = ym ? parseFloat(ym[1] || ym[2]) : 0;
+					if (!Number.isFinite(x0)) x0 = 0;
 					if (!Number.isFinite(y0)) y0 = 0;
+					let x1 = x0 + (Number.isFinite(w) ? w : 0);
 					let y1 = y0 + h;
 
 					for (let si = stack.length - 1; si >= 0; si--) {
@@ -2822,29 +3025,123 @@
 						}
 						for (let oi = ops.length - 1; oi >= 0; oi--) {
 							const { fn, nums } = ops[oi];
-							if (fn === 'translate' && nums.length >= 2) {
-								y0 += nums[1];
-								y1 += nums[1];
+							if (fn === 'translate' && nums.length >= 1) {
+								const dx = nums[0];
+								const dy = nums.length >= 2 ? nums[1] : 0;
+								x0 += dx;
+								x1 += dx;
+								y0 += dy;
+								y1 += dy;
 							} else if (fn === 'scale' && nums.length >= 1) {
+								const sx = nums[0];
 								const sy = nums.length >= 2 ? nums[1] : nums[0];
+								x0 *= sx;
+								x1 *= sx;
 								y0 *= sy;
 								y1 *= sy;
 							} else if (fn === 'matrix' && nums.length >= 6) {
+								x0 = nums[0] * x0 + nums[4];
+								x1 = nums[0] * x1 + nums[4];
 								y0 = nums[3] * y0 + nums[5];
 								y1 = nums[3] * y1 + nums[5];
 							}
 						}
 					}
 
+					const minX = Math.min(x0, x1);
+					const maxX = Math.max(x0, x1);
 					const minY = Math.min(y0, y1);
 					const maxY = Math.max(y0, y1);
 					if (!best || (maxY - minY) > (best.maxY - best.minY)) {
-						best = { minY, maxY };
+						best = { minX, maxX, minY, maxY };
 					}
 				}
 			}
 
 			return best;
+		}
+
+		parseAdminVectorPathBoundsX(svgStr) {
+			if (!svgStr || !svgStr.includes('<path')) return null;
+			let minX = Infinity;
+			let maxX = -Infinity;
+			const pathRe = /\bd\s*=\s*["']([^"']+)["']/gi;
+			let pm;
+
+			while ((pm = pathRe.exec(svgStr)) !== null) {
+				const d = pm[1];
+				const tokenRe = /([MLCQSTHVZmlcqsthvz])|(-?\d*\.?\d+(?:e[-+]?\d+)?)/g;
+				let cmd = '';
+				let argIdx = 0;
+				let curX = 0;
+				let tm;
+
+				while ((tm = tokenRe.exec(d)) !== null) {
+					if (tm[1]) {
+						cmd = tm[1];
+						argIdx = 0;
+						continue;
+					}
+					const val = parseFloat(tm[2]);
+					if (isNaN(val)) continue;
+
+					if (cmd === 'M' || cmd === 'L' || cmd === 'T' || cmd === 'C' || cmd === 'Q' || cmd === 'S') {
+						if (argIdx % 2 === 0) {
+							curX = val;
+							if (val < minX) minX = val;
+							if (val > maxX) maxX = val;
+						}
+						argIdx++;
+					} else if (cmd === 'H') {
+						curX = val;
+						if (val < minX) minX = val;
+						if (val > maxX) maxX = val;
+						argIdx++;
+					} else if (cmd === 'm' || cmd === 'l' || cmd === 't') {
+						if (argIdx % 2 === 0) {
+							curX += val;
+							if (curX < minX) minX = curX;
+							if (curX > maxX) maxX = curX;
+						}
+						argIdx++;
+					} else if (cmd === 'h') {
+						curX += val;
+						if (curX < minX) minX = curX;
+						if (curX > maxX) maxX = curX;
+						argIdx++;
+					} else {
+						argIdx++;
+					}
+				}
+			}
+
+			return (minX < Infinity && maxX > -Infinity) ? { minX, maxX } : null;
+		}
+
+		getAdminGlyphVisualXBounds(entry, unitsPerEm, adv) {
+			if (!entry) return { minX: 0, maxX: adv };
+			if (typeof entry._visualMinX === 'number' && typeof entry._visualMaxX === 'number') {
+				return { minX: entry._visualMinX, maxX: entry._visualMaxX };
+			}
+			let visualMinX = 0;
+			let visualMaxX = adv;
+			const svgStr = entry.svg || '';
+			if (svgStr.includes('<image')) {
+				const geom = this.extractGlyphImageYBounds(svgStr);
+				if (geom && Number.isFinite(geom.minX) && Number.isFinite(geom.maxX) && geom.maxX > geom.minX) {
+					visualMinX = Math.max(-unitsPerEm * 0.25, Math.min(0, geom.minX));
+					visualMaxX = Math.max(adv, Math.min(adv + unitsPerEm * 0.6, geom.maxX));
+				}
+			} else if (svgStr.includes('<path')) {
+				const bounds = this.parseAdminVectorPathBoundsX(svgStr);
+				if (bounds) {
+					visualMinX = Math.max(-unitsPerEm * 0.25, Math.min(adv * 0.4, bounds.minX));
+					visualMaxX = Math.max(adv, Math.min(adv + unitsPerEm * 0.65, bounds.maxX));
+				}
+			}
+			entry._visualMinX = visualMinX;
+			entry._visualMaxX = visualMaxX;
+			return { minX: visualMinX, maxX: visualMaxX };
 		}
 
 		getOpenTypeSvgBaselineOffset(svgData) {
@@ -2853,44 +3150,33 @@
 				return svgData._opticalBaselineOffset;
 			}
 
-			const unitsPerEm = svgData.unitsPerEm || 1000;
 			const ascent = svgData.ascent || 800;
 			const glyphs = svgData.glyphs || {};
-			const refChars = ['H', 'E', 'A', 'M', 'O', 'T', 'B', 'R', 'S', 'N', 'D', 'P'];
-			const offsets = [];
+			const sampleChars = ['A', 'B', 'E', 'H', 'M', 'O', 'S', 'T', 'N', 'R'];
+			const factors = [];
 
-			for (let i = 0; i < refChars.length; i++) {
-				const ch = refChars[i];
+			for (let i = 0; i < sampleChars.length; i++) {
+				const ch = sampleChars[i];
 				const g = glyphs[ch] || glyphs[ch.toLowerCase()];
 				if (g && g.svg) {
 					const bounds = this.extractGlyphImageYBounds(g.svg);
-					if (bounds) {
-						offsets.push(-((bounds.minY + bounds.maxY) / 2));
-					}
-				}
-			}
-
-			if (!offsets.length) {
-				const keys = Object.keys(glyphs);
-				for (let i = 0; i < keys.length && offsets.length < 10; i++) {
-					const g = glyphs[keys[i]];
-					if (g && g.svg) {
-						const bounds = this.extractGlyphImageYBounds(g.svg);
-						if (bounds) {
-							offsets.push(-((bounds.minY + bounds.maxY) / 2));
+					if (bounds && ascent > 0) {
+						const midY = (bounds.minY + bounds.maxY) / 2;
+						const factor = (-midY) / ascent;
+						if (Number.isFinite(factor) && factor >= 0.15 && factor <= 0.85) {
+							factors.push(factor);
 						}
 					}
 				}
 			}
 
-			let computed = ascent * 0.42;
-			if (offsets.length) {
-				const avg = offsets.reduce((sum, val) => sum + val, 0) / offsets.length;
-				if (Number.isFinite(avg) && avg > 0 && avg < unitsPerEm * 1.5) {
-					computed = avg;
-				}
+			let visualCenterFactor = 0.42;
+			if (factors.length > 0) {
+				const sum = factors.reduce((acc, v) => acc + v, 0);
+				visualCenterFactor = Math.max(0.2, Math.min(0.75, sum / factors.length));
 			}
 
+			const computed = ascent * visualCenterFactor;
 			svgData._opticalBaselineOffset = computed;
 			return computed;
 		}

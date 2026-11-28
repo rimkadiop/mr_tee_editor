@@ -12,8 +12,8 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { DedicatedGallery } from './dedicated-gallery.js?v=2.5.9';
-import { SvgRenderer } from './svg-renderer.js?v=2.5.9';
+import { DedicatedGallery } from './dedicated-gallery.js?v=2.5.13';
+import { SvgRenderer } from './svg-renderer.js?v=2.5.13';
 
 export class GalleryStage {
 	constructor(config, options = {}) {

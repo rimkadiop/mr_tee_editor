@@ -11,7 +11,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.5.9';
+import { SvgRenderer } from './svg-renderer.js?v=2.5.13';
 
 const SVG_PLACEHOLDER_IMAGE = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
 const ALLOWED_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml']);
@@ -90,7 +90,7 @@ export class FormController {
 	 */
 	async loadPrintExporter() {
 		if (this._printExporterClass) return this._printExporterClass;
-		const mod = await import('./print-exporter.js?v=2.5.9');
+		const mod = await import('./print-exporter.js?v=2.5.13');
 		this._printExporterClass = mod.PrintExporter;
 		if (typeof window !== 'undefined') {
 			window.mrTeePrintExporter = mod.PrintExporter;
@@ -1123,6 +1123,207 @@ export class FormController {
 			if (this.warningModal && this.warningModal.style.display !== 'none') {
 				this.warningModal.style.display = 'none';
 			}
+		});
+
+		this.initFreeScrollWhileTyping();
+	}
+
+	/**
+	 * Let shoppers scroll freely anywhere (for example, up to the live garment preview) while typing
+	 * with the mobile keyboard open, preventing Blink/WebKit caret-reveal from yanking the viewport
+	 * back down to the focused text input on every keystroke.
+	 */
+	initFreeScrollWhileTyping() {
+		if (typeof window === 'undefined' || !this.container) return;
+
+		let activeInput = null;
+		let activeWrap = null;
+		let focusAt = 0;
+		let userScrolledSinceFocus = false;
+		let isUserTouchDragging = false;
+		let typingGuardUntil = 0;
+		let lockedScrollY = 0;
+		let lockedScrollX = 0;
+		let restoreRafId = 0;
+
+		const getVisibleBand = () => {
+			const vv = window.visualViewport;
+			const top = vv ? vv.offsetTop : 0;
+			const height = vv ? vv.height : (window.innerHeight || document.documentElement.clientHeight || 0);
+			return { top, bottom: top + height, height };
+		};
+
+		const unpinInput = (input, wrap) => {
+			if (input) {
+				input.classList.remove('is-offscreen-typing');
+				input.style.top = '';
+			}
+			if (wrap && wrap.dataset && wrap.dataset.mrTeeLockedMinH) {
+				wrap.style.minHeight = '';
+				delete wrap.dataset.mrTeeLockedMinH;
+			}
+		};
+
+		const isWrapOffscreen = (wrap) => {
+			const { top: visTop, bottom: visBottom, height: visH } = getVisibleBand();
+			if (visH <= 0 || !wrap) return false;
+			const r = wrap.getBoundingClientRect();
+			return (r.bottom <= visTop + 6 || r.top >= visBottom - 6);
+		};
+
+		const syncOffscreenPin = () => {
+			if (!activeInput || !activeWrap || document.activeElement !== activeInput) {
+				unpinInput(activeInput, activeWrap);
+				return;
+			}
+			if (!userScrolledSinceFocus) {
+				unpinInput(activeInput, activeWrap);
+				return;
+			}
+
+			const { top: visTop, height: visH } = getVisibleBand();
+			if (visH <= 0) return;
+
+			if (isWrapOffscreen(activeWrap)) {
+				if (!activeInput.classList.contains('is-offscreen-typing')) {
+					const h = activeWrap.offsetHeight;
+					if (h > 0) {
+						activeWrap.dataset.mrTeeLockedMinH = '1';
+						activeWrap.style.minHeight = `${h}px`;
+					}
+					activeInput.classList.add('is-offscreen-typing');
+				}
+				activeInput.style.top = `${Math.round(visTop + Math.min(24, visH * 0.12))}px`;
+			} else {
+				unpinInput(activeInput, activeWrap);
+			}
+		};
+
+		const restoreLockedScroll = () => {
+			if (isUserTouchDragging) return;
+			if (performance.now() > typingGuardUntil) return;
+			const dy = Math.abs(window.scrollY - lockedScrollY);
+			const dx = Math.abs(window.scrollX - lockedScrollX);
+			if (dy > 1 || dx > 1) {
+				try {
+					window.scrollTo({ top: lockedScrollY, left: lockedScrollX, behavior: 'instant' });
+				} catch (e) {
+					window.scrollTo(lockedScrollX, lockedScrollY);
+				}
+			}
+		};
+
+		const armTypingScrollGuard = () => {
+			if (!activeInput || !userScrolledSinceFocus || isUserTouchDragging) return;
+			const now = performance.now();
+			if (now > typingGuardUntil) {
+				lockedScrollY = window.scrollY;
+				lockedScrollX = window.scrollX;
+			}
+			typingGuardUntil = now + 260;
+			syncOffscreenPin();
+			if (restoreRafId) cancelAnimationFrame(restoreRafId);
+			restoreRafId = requestAnimationFrame(() => {
+				restoreRafId = 0;
+				restoreLockedScroll();
+			});
+		};
+
+		const markUserScrollIntent = () => {
+			typingGuardUntil = 0;
+			if (activeInput && document.activeElement === activeInput) {
+				userScrolledSinceFocus = true;
+			}
+		};
+
+		window.addEventListener('touchstart', () => {
+			isUserTouchDragging = true;
+			typingGuardUntil = 0;
+		}, { passive: true });
+
+		window.addEventListener('touchmove', () => {
+			isUserTouchDragging = true;
+			markUserScrollIntent();
+		}, { passive: true });
+
+		const endTouchDrag = () => {
+			isUserTouchDragging = false;
+			if (activeInput) syncOffscreenPin();
+		};
+		window.addEventListener('touchend', endTouchDrag, { passive: true });
+		window.addEventListener('touchcancel', endTouchDrag, { passive: true });
+
+		window.addEventListener('wheel', () => {
+			markUserScrollIntent();
+		}, { passive: true });
+
+		window.addEventListener('scroll', () => {
+			if (!activeInput || document.activeElement !== activeInput) return;
+			const now = performance.now();
+			if (now <= typingGuardUntil && !isUserTouchDragging) {
+				restoreLockedScroll();
+				return;
+			}
+			if (isUserTouchDragging || (now - focusAt) > 350 || isWrapOffscreen(activeWrap)) {
+				userScrolledSinceFocus = true;
+			}
+			syncOffscreenPin();
+		}, { passive: true });
+
+		if (window.visualViewport) {
+			window.visualViewport.addEventListener('scroll', () => {
+				if (!activeInput || document.activeElement !== activeInput) return;
+				if (performance.now() <= typingGuardUntil && !isUserTouchDragging) {
+					restoreLockedScroll();
+					return;
+				}
+				if (isUserTouchDragging || isWrapOffscreen(activeWrap)) {
+					userScrolledSinceFocus = true;
+				}
+				syncOffscreenPin();
+			}, { passive: true });
+
+			window.visualViewport.addEventListener('resize', () => {
+				if (activeInput && document.activeElement === activeInput) {
+					syncOffscreenPin();
+				}
+			}, { passive: true });
+		}
+
+		this.container.querySelectorAll('.mr-tee-text-input').forEach((input) => {
+			const wrap = input.closest('.mr-tee-floating-label-wrap');
+			if (!wrap) return;
+
+			input.addEventListener('focus', () => {
+				if (activeInput && activeInput !== input) {
+					unpinInput(activeInput, activeWrap);
+				}
+				activeInput = input;
+				activeWrap = wrap;
+				focusAt = performance.now();
+				userScrolledSinceFocus = false;
+				typingGuardUntil = 0;
+			});
+
+			input.addEventListener('blur', () => {
+				unpinInput(input, wrap);
+				if (activeInput === input) {
+					activeInput = null;
+					activeWrap = null;
+					userScrolledSinceFocus = false;
+					typingGuardUntil = 0;
+				}
+			});
+
+			['keydown', 'beforeinput', 'compositionstart', 'compositionupdate'].forEach((evt) => {
+				input.addEventListener(evt, armTypingScrollGuard);
+			});
+
+			input.addEventListener('input', () => {
+				if (userScrolledSinceFocus && !isUserTouchDragging) {
+					restoreLockedScroll();
+				}
+			});
 		});
 	}
 

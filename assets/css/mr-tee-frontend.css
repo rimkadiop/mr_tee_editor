@@ -287,6 +287,23 @@
 	}
 }
 
+/* Keep focused inputs silently inside the active visual viewport when the user scrolls away to watch live rendering */
+.mr-tee-text-input.is-offscreen-typing {
+	position: fixed !important;
+	left: 0 !important;
+	width: 1px !important;
+	height: 1px !important;
+	min-height: 1px !important;
+	padding: 0 !important;
+	margin: 0 !important;
+	border: 0 !important;
+	opacity: 0 !important;
+	pointer-events: none !important;
+	overflow: hidden !important;
+	caret-color: transparent !important;
+	z-index: -1 !important;
+}
+
 .mr-tee-floating-label {
 	position: absolute;
 	left: 12px;
@@ -1285,6 +1302,14 @@
 	max-height: none !important;
 	display: block !important;
 	overflow: visible !important;
+	-webkit-text-size-adjust: none !important;
+	text-size-adjust: none !important;
+}
+
+.mr-tee-live-svg text {
+	text-rendering: geometricPrecision;
+	-webkit-text-size-adjust: none !important;
+	text-size-adjust: none !important;
 }
 
 /* PhotoSwipe Fullscreen Zoom Integration */

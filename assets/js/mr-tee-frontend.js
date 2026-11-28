@@ -1,18 +1,18 @@
 /**
- * Mr. Tee Editor - Frontend Modular Orchestrator (v2.5.13)
+ * Mr. Tee Editor - Frontend Modular Orchestrator (v2.6.0)
  *
  * Bootstraps the client-side personalization application by interconnecting
  * StateStore, SceneGraphEngine, SvgRenderer, GalleryStage, FormController, and lazy-loaded PrintExporter
- * with dirty-tracked lazy multi-view SVG rendering at 60 FPS.
+ * with side-scoped dirty-tracked lazy multi-view SVG rendering at 60 FPS.
  *
  * @package MrTeeEditor\Assets
  */
 
-import { StateStore } from './modules/state-store.js?v=2.5.13';
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.5.13';
-import { SvgRenderer } from './modules/svg-renderer.js?v=2.5.13';
-import { GalleryStage } from './modules/gallery-stage.js?v=2.5.13';
-import { FormController } from './modules/form-controller.js?v=2.5.13';
+import { StateStore } from './modules/state-store.js?v=2.6.0';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.6.0';
+import { SvgRenderer } from './modules/svg-renderer.js?v=2.6.0';
+import { GalleryStage } from './modules/gallery-stage.js?v=2.6.0';
+import { FormController } from './modules/form-controller.js?v=2.6.0';
 
 window.mrTeeSvgRenderer = SvgRenderer;
 window.mrTeeSceneGraphEngine = SceneGraphEngine;
@@ -31,23 +31,41 @@ class MrTeeFrontendApp {
 		this.dirtyViews = new Set();
 		this.renderedViews = new Set();
 		this._pendingFontUpgrades = new Set();
+		this._pendingChangedSides = new Set();
+		this._pendingAllSidesDirty = false;
+		this._hasUserInteracted = false;
 		this._siblingSyncTimer = null;
 		this._printExporterClass = null;
+		this._printExporterPromise = null;
 
 		this.init();
 	}
 
 	/**
-	 * Dynamically import PrintExporter strictly on demand (Add-to-Cart) to keep initial page load lean.
+	 * Dynamically import PrintExporter strictly on demand (Add-to-Cart or prefetched on edit/hover)
+	 * to keep initial page load lean, deduplicating concurrent requests and sharing `window.mrTeePrintExporter`.
 	 *
 	 * @return {Promise<Function>}
 	 */
 	async loadPrintExporter() {
 		if (this._printExporterClass) return this._printExporterClass;
-		const mod = await import('./modules/print-exporter.js?v=2.5.13');
-		this._printExporterClass = mod.PrintExporter;
-		window.mrTeePrintExporter = mod.PrintExporter;
-		return this._printExporterClass;
+		if (typeof window !== 'undefined' && window.mrTeePrintExporter) {
+			this._printExporterClass = window.mrTeePrintExporter;
+			return this._printExporterClass;
+		}
+		if (!this._printExporterPromise) {
+			this._printExporterPromise = import('./modules/print-exporter.js?v=2.6.0')
+				.then((mod) => {
+					this._printExporterClass = mod.PrintExporter;
+					window.mrTeePrintExporter = mod.PrintExporter;
+					return this._printExporterClass;
+				})
+				.catch((err) => {
+					this._printExporterPromise = null;
+					throw err;
+				});
+		}
+		return this._printExporterPromise;
 	}
 
 	init() {
@@ -71,10 +89,11 @@ class MrTeeFrontendApp {
 		// 1. Initialize State Store with localized productId
 		this.store = new StateStore(this.config, this.data.productId || 0);
 
-		// 2. Initialize Gallery Stage (Dedicated multi-view gallery with legacy fallback)
+		// 2. Initialize Gallery Stage (Dedicated multi-view gallery with lazy legacy fallback)
 		this.stage = new GalleryStage(this.config, {
 			renderSvgWithPrefix: (idPrefix, viewId) => this.renderViewSvg(viewId || this.stage.getActiveViewId(), { idPrefix }),
 			onViewChange: (viewId, slideIdx, slideMeta) => {
+				this._hasUserInteracted = true;
 				this.renderActiveViewIfNeeded(viewId, false);
 				if (this.formController && typeof this.formController.setActiveSide === 'function') {
 					const meta = slideMeta || this.getViewMeta(viewId);
@@ -82,6 +101,7 @@ class MrTeeFrontendApp {
 				}
 			},
 			onSwipeStart: (neighborViewIds) => {
+				this._hasUserInteracted = true;
 				if (Array.isArray(neighborViewIds)) {
 					for (const vid of neighborViewIds) {
 						this.renderActiveViewIfNeeded(vid, false);
@@ -95,7 +115,7 @@ class MrTeeFrontendApp {
 						this.renderActiveViewIfNeeded(viewId, true);
 					}
 				} else {
-					this.renderSceneGraph();
+					this.renderSceneGraph(null);
 				}
 			},
 		});
@@ -107,6 +127,7 @@ class MrTeeFrontendApp {
 			(onDone) => this.handleExport(onDone),
 			{
 				onFieldSideFocus: (sideId) => {
+					this._hasUserInteracted = true;
 					if (this.stage) {
 						this.stage.focusSide(sideId);
 					}
@@ -121,34 +142,63 @@ class MrTeeFrontendApp {
 			}
 		}
 
-		// 4. Subscribe to Store State Changes (RAF throttled for buttery-smooth 60 FPS typing)
+		// 4. Subscribe to Store State Changes (side-scoped & RAF throttled for 60 FPS typing)
 		this._rafRenderId = null;
-		this.store.subscribe(() => {
+		this.store.subscribe((state, changeType, changedSideId) => {
+			this._hasUserInteracted = true;
+			const resolvedSide = changedSideId !== undefined ? changedSideId : this.store.lastChangedSideId;
+			if (!resolvedSide) {
+				this._pendingAllSidesDirty = true;
+			} else {
+				this._pendingChangedSides.add(String(resolvedSide));
+			}
+
 			if (this._rafRenderId) {
 				cancelAnimationFrame(this._rafRenderId);
 			}
 			this._rafRenderId = requestAnimationFrame(() => {
 				this._rafRenderId = null;
-				this.renderSceneGraph();
+				const sidesToRender = this._pendingAllSidesDirty
+					? null
+					: (this._pendingChangedSides.size > 0 ? new Set(this._pendingChangedSides) : null);
+				this._pendingAllSidesDirty = false;
+				this._pendingChangedSides.clear();
+				this.renderSceneGraph(sidesToRender);
 			});
 		});
 
-		// Initial Render (renders ONLY the active visible view immediately; sibling views sync quietly after idle)
-		this.renderSceneGraph();
+		// Initial Render (renders ONLY the active visible view immediately; same-side siblings sync quietly after idle)
+		this.renderSceneGraph(null);
 
 		// Re-sync SVG aspect ratio once legacy gallery image finishes loading if running in legacy mode
 		if (!this.stage.isDedicated) {
 			const galleryImg = this.stage.getViewImageElement();
 			if (galleryImg && (!galleryImg.complete || galleryImg.naturalWidth <= 2)) {
 				galleryImg.addEventListener('load', () => {
-					this.renderSceneGraph();
+					this.renderSceneGraph(null);
 				}, { once: true });
 			}
 		}
 
-		// Re-measure standard TTF text widths once custom @font-face fonts finish loading
+		// Re-measure standard TTF text widths ONLY when a newly loaded font matches a family used in currentLayers
 		if (typeof document !== 'undefined' && document.fonts) {
-			const onFontsLoaded = () => {
+			const normalizeFamily = (raw) => String(raw || '').trim().replace(/^['"]+|['"]+$/g, '').trim().toLowerCase();
+			const onFontsLoaded = (evt) => {
+				const usedFamilies = this.getActiveLayerFontFamilies();
+				if (usedFamilies.size === 0) return;
+
+				if (evt && evt.fontfaces) {
+					let matchedUsed = false;
+					for (const ff of evt.fontfaces) {
+						const fam = normalizeFamily(ff && ff.family);
+						if (fam && usedFamilies.has(fam)) {
+							matchedUsed = true;
+							break;
+						}
+					}
+					if (!matchedUsed) return;
+				}
+
 				if (SvgRenderer._textWidthCache) {
 					SvgRenderer._textWidthCache.clear();
 				}
@@ -156,11 +206,11 @@ class MrTeeFrontendApp {
 				if (this.stage && this.stage.isDedicated) {
 					this.renderActiveViewIfNeeded(this.stage.getActiveViewId(), true);
 				} else {
-					this.renderSceneGraph();
+					this.renderSceneGraph(null);
 				}
 			};
 			if (document.fonts.ready && typeof document.fonts.ready.then === 'function') {
-				document.fonts.ready.then(onFontsLoaded).catch(() => {});
+				document.fonts.ready.then(() => onFontsLoaded(null)).catch(() => {});
 			}
 			if (typeof document.fonts.addEventListener === 'function') {
 				document.fonts.addEventListener('loadingdone', onFontsLoaded);
@@ -171,12 +221,46 @@ class MrTeeFrontendApp {
 		//    so the visible product preview renders with 0ms delay and zero bandwidth contention.
 		this.prewarmDefaultTextGlyphs();
 
-		// 6. Post-Paint Off-Screen Default Text (~550ms): Quietly decode off-screen sides' default_text
-		//    glyphs (e.g. Verso ~8 WebP letters) so tapping Verso renders 100% crisp 3D text instantly.
-		setTimeout(() => this.prewarmActiveLineFonts(), 550);
-
-		// 7. Stage 2 (On First Interaction): Lazy-fetch secondary unselected OpenType-SVG manifests.
+		// 6. Stage 2 (On First Interaction OR Idle Post-Load): Upgrade partial bootstrap fonts,
+		//    warm off-screen active line manifests, and idle-prefetch secondary manifests with max concurrency 2.
 		this.scheduleStageTwoWarmup();
+	}
+
+	/**
+	 * Collect normalized lowercase font-family names actually used by standard (non-OpenType-SVG)
+	 * visible TEXT nodes in `this.currentLayers` so `document.fonts` events from font-pill
+	 * previews never trigger redundant canvas text re-measurement or SVG re-renders.
+	 *
+	 * @return {Set<string>}
+	 */
+	getActiveLayerFontFamilies() {
+		const families = new Set();
+		const fonts = (this.data && this.data.fonts) || {};
+		const walk = (nodes) => {
+			if (!Array.isArray(nodes)) return;
+			for (const node of nodes) {
+				if (!node || node.hide) continue;
+				if (node.type === 'TEXT') {
+					const fId = node.fontId || '';
+					const fDef = fId ? fonts[fId] : null;
+					const isLoadedOtSvg = Boolean(
+						(node.fontType === 'opentype_svg' || (fDef && (fDef.font_type === 'opentype_svg' || fDef.color_svg)))
+						&& SvgRenderer.getSvgFontData(fId || node.fontFamily)
+					);
+					if (!isLoadedOtSvg && node.fontFamily) {
+						for (const part of String(node.fontFamily).split(',')) {
+							const cleaned = part.trim().replace(/^['"]+|['"]+$/g, '').trim().toLowerCase();
+							if (cleaned) families.add(cleaned);
+						}
+					}
+				}
+				if (Array.isArray(node.items)) {
+					walk(node.items);
+				}
+			}
+		};
+		walk(this.currentLayers);
+		return families;
 	}
 
 	/**
@@ -240,6 +324,35 @@ class MrTeeFrontendApp {
 		for (const v of cfgViews) {
 			const vid = v && (v.id || v.view_id);
 			if (vid) this.dirtyViews.add(String(vid));
+		}
+	}
+
+	/**
+	 * Mark ONLY customizable views belonging to `sideId` dirty (`null` / empty marks all views).
+	 *
+	 * @param {string|null} sideId Target print side ID.
+	 */
+	markSideViewsDirty(sideId = null) {
+		if (!sideId) {
+			this.markAllViewsDirty();
+			return;
+		}
+		const target = String(sideId);
+		if (this.stage && this.stage.isDedicated) {
+			const views = this.stage.getCustomizableViews();
+			for (const v of views) {
+				if (v && v.viewId && String(v.sideId || 'front') === target) {
+					this.dirtyViews.add(v.viewId);
+				}
+			}
+			return;
+		}
+		const cfgViews = Array.isArray(this.config.preview_views) ? this.config.preview_views : [];
+		for (const v of cfgViews) {
+			const vid = v && (v.id || v.view_id);
+			if (vid && String(v.side_id || 'front') === target) {
+				this.dirtyViews.add(String(vid));
+			}
 		}
 	}
 
@@ -326,8 +439,8 @@ class MrTeeFrontendApp {
 	computeMergedScene() {
 		const state = this.store.state;
 
-		// 1. Merge references into declarative scene-graph layers
-		let mergedLayers = SceneGraphEngine.getLayersMergedWithRefs(state.layers, state.references);
+		// 1. Merge references into declarative scene-graph layers (reusing Store's refMap)
+		let mergedLayers = SceneGraphEngine.getLayersMergedWithRefs(state.layers, state.references, this.store.refMap);
 
 		// 2. Apply 2-row dynamic centering (Ligne 1: 1..3, Ligne 2: 4..6)
 		mergedLayers = SceneGraphEngine.applyRowCentering(mergedLayers, state.activeCount);
@@ -349,8 +462,9 @@ class MrTeeFrontendApp {
 	}
 
 	/**
-	 * Ensure any OpenType-SVG fonts used by layers on `sideId` are loaded in memory,
-	 * and trigger an automatic view re-render the moment a lazy manifest finishes loading.
+	 * Ensure any OpenType-SVG fonts used by layers on `sideId` are loaded in memory
+	 * (or upgraded from a `partial: true` bootstrap when a typed character is missing),
+	 * triggering an automatic side-scoped re-render the moment the manifest finishes loading.
 	 *
 	 * @param {string} sideId Target print side identifier (empty string checks all layers).
 	 */
@@ -360,6 +474,17 @@ class MrTeeFrontendApp {
 			? SvgRenderer.filterLayersBySide(this.currentLayers || [], sideId)
 			: (this.currentLayers || []);
 		if (!Array.isArray(targetLayers) || targetLayers.length === 0) return;
+
+		const hasMissingPartialChar = (fontData, text) => {
+			if (!fontData || !fontData.partial || !text) return false;
+			const glyphs = fontData.glyphs || {};
+			for (const ch of Array.from(String(text))) {
+				if (/^\s$/.test(ch)) continue;
+				const g = SvgRenderer.resolveSvgGlyph(glyphs, ch, fontData.defaultAdv || 500);
+				if (!g || !g.svg) return true;
+			}
+			return false;
+		};
 
 		const inspectNodes = (nodes) => {
 			if (!Array.isArray(nodes)) return;
@@ -372,31 +497,35 @@ class MrTeeFrontendApp {
 						node.fontType === 'opentype_svg'
 						|| (fDef && (fDef.font_type === 'opentype_svg' || fDef.color_svg))
 					);
-					if (isOt && fId && !SvgRenderer.getSvgFontData(fId)) {
-						const upgradeKey = String(fId).toLowerCase().replace(/[\s\-]+/g, '_');
-						if (!this._pendingFontUpgrades.has(upgradeKey)) {
-							this._pendingFontUpgrades.add(upgradeKey);
-							const rawText = String(node.value || '');
-							const isUpper = (node.casing === 'UPPER') || Boolean(fDef && fDef.uppercase);
-							const warmText = isUpper ? rawText.toUpperCase() : rawText;
-							SvgRenderer.ensureSvgFontLoaded(fId, fDef, {
-								prewarmGlyphs: false,
-								priorityText: warmText,
-							})
-								.then((loaded) => {
-									this._pendingFontUpgrades.delete(upgradeKey);
-									if (!loaded) return;
-									this.markAllViewsDirty();
-									if (this.stage && this.stage.isDedicated) {
-										this.renderActiveViewIfNeeded(this.stage.getActiveViewId(), true);
-										this.scheduleSiblingViewsSync();
-									} else {
-										this.renderSceneGraph();
-									}
+					if (isOt && fId) {
+						const currentData = SvgRenderer.getSvgFontData(fId);
+						const rawText = String(node.value || '');
+						const isUpper = (node.casing === 'UPPER') || Boolean(fDef && fDef.uppercase);
+						const warmText = isUpper ? rawText.toUpperCase() : rawText;
+						const needsLoad = !currentData || hasMissingPartialChar(currentData, warmText);
+						if (needsLoad) {
+							const upgradeKey = String(fId).toLowerCase().replace(/[\s\-]+/g, '_');
+							if (!this._pendingFontUpgrades.has(upgradeKey)) {
+								this._pendingFontUpgrades.add(upgradeKey);
+								SvgRenderer.ensureSvgFontLoaded(fId, fDef, {
+									prewarmGlyphs: false,
+									priorityText: warmText,
 								})
-								.catch(() => {
-									this._pendingFontUpgrades.delete(upgradeKey);
-								});
+									.then((loaded) => {
+										this._pendingFontUpgrades.delete(upgradeKey);
+										if (!loaded) return;
+										this.markSideViewsDirty(sideId || null);
+										if (this.stage && this.stage.isDedicated) {
+											this.renderActiveViewIfNeeded(this.stage.getActiveViewId(), false);
+											this.scheduleSiblingViewsSync();
+										} else {
+											this.renderSceneGraph(sideId || null);
+										}
+									})
+									.catch(() => {
+										this._pendingFontUpgrades.delete(upgradeKey);
+									});
+							}
 						}
 					}
 				}
@@ -516,38 +645,106 @@ class MrTeeFrontendApp {
 	}
 
 	/**
-	 * Schedule Stage 2 manifest & default-text glyph warmup upon first user interaction with
-	 * the editor/gallery so initial page load downloads zero unused off-screen assets, and
-	 * gallery swiping only fetches lightweight ~4 KB manifests + off-screen default_text glyphs
-	 * (full A-Z/0-9 alphabet prewarming occurs on input focus in FormController).
+	 * Upgrade any `partial: true` OpenType-SVG bootstrap font on the currently active side
+	 * so full-alphabet glyph definitions are already in RAM before the customer starts typing.
+	 */
+	upgradePartialActiveSideFonts() {
+		const fonts = (this.data && this.data.fonts) || {};
+		const textLines = this.config.text_lines || [];
+		const activeViewId = this.stage ? this.stage.getActiveViewId() : '';
+		const activeMeta = activeViewId ? this.getViewMeta(activeViewId) : null;
+		const activeSideId = (activeMeta && activeMeta.sideId) ? String(activeMeta.sideId) : '';
+
+		for (const line of textLines) {
+			if (line.field_type === 'image') continue;
+			const lineSide = String(line.side_id || 'front');
+			if (activeSideId && lineSide !== activeSideId) continue;
+			const ref = (this.store && line.ref_id) ? this.store.getReference(line.ref_id) : null;
+			const activeFontId = (ref && ref.fontId) || line.font || (Array.isArray(line.allowed_fonts) && line.allowed_fonts[0]);
+			if (!activeFontId) continue;
+			const existing = SvgRenderer.getSvgFontData(activeFontId);
+			if (!existing || !existing.partial) continue;
+
+			const fDef = fonts[activeFontId];
+			if (!fDef) continue;
+			let priorityText = (ref && ref.value !== undefined) ? String(ref.value) : (line.default_text || '');
+			const isUpper = (line.casing === 'UPPER') || Boolean(fDef.uppercase);
+			if (isUpper) priorityText = priorityText.toUpperCase();
+
+			SvgRenderer.ensureSvgFontLoaded(activeFontId, fDef, {
+				prewarmGlyphs: false,
+				priorityText,
+			})
+				.then((loaded) => {
+					if (loaded && !loaded.partial) {
+						this.markSideViewsDirty(lineSide);
+						if (this.stage && this.stage.isDedicated) {
+							this.renderActiveViewIfNeeded(this.stage.getActiveViewId(), false);
+						}
+					}
+				})
+				.catch(() => {});
+		}
+	}
+
+	/**
+	 * Schedule Stage 2 warmup on first user interaction OR quietly after `window.load` + `requestIdleCallback`
+	 * (2000ms fallback) — completely off the initial LCP critical path.
+	 * Upgrades any `partial: true` active-side font, warms active line manifests, and gates
+	 * secondary manifest prefetch behind `requestIdleCallback` with max concurrency 2.
 	 */
 	scheduleStageTwoWarmup() {
 		let warmed = false;
-		const triggerWarmup = () => {
-			if (warmed) return;
-			warmed = true;
-			targets.forEach((el) => {
-				if (!el) return;
-				events.forEach((evt) => el.removeEventListener(evt, triggerWarmup));
-			});
-			this.prewarmActiveLineFonts();
-			setTimeout(() => this.prefetchAllowedSvgFonts(), 300);
-		};
-
 		const events = ['pointerdown', 'touchstart', 'focusin', 'mouseenter', 'keydown'];
 		const targets = [
 			document.getElementById('mr-tee-editor-container'),
 			document.getElementById('mr-tee-gallery-root'),
 		];
+
+		const runWarmup = (fromUserInteraction = false) => {
+			if (fromUserInteraction) {
+				this._hasUserInteracted = true;
+				this.prefetchAllowedSvgFonts();
+			}
+			if (warmed) return;
+			warmed = true;
+			this.upgradePartialActiveSideFonts();
+			this.prewarmActiveLineFonts();
+		};
+
+		const onInteraction = () => {
+			targets.forEach((el) => {
+				if (!el) return;
+				events.forEach((evt) => el.removeEventListener(evt, onInteraction));
+			});
+			runWarmup(true);
+		};
 		targets.forEach((el) => {
 			if (!el) return;
-			events.forEach((evt) => el.addEventListener(evt, triggerWarmup, { once: true, passive: true }));
+			events.forEach((evt) => el.addEventListener(evt, onInteraction, { once: true, passive: true }));
 		});
+
+		// Quiet idle post-load fallback so typing/swiping is warm even if user reads before interacting
+		if (typeof window !== 'undefined') {
+			const queueIdleWarmup = () => {
+				if (warmed) return;
+				if (typeof window.requestIdleCallback === 'function') {
+					window.requestIdleCallback(() => runWarmup(false), { timeout: 2000 });
+				} else {
+					setTimeout(() => runWarmup(false), 2000);
+				}
+			};
+			if (document.readyState === 'complete') {
+				queueIdleWarmup();
+			} else {
+				window.addEventListener('load', queueIdleWarmup, { once: true });
+			}
+		}
 	}
 
 	/**
-	 * Stage 2: Load off-screen active OpenType-SVG manifests and pre-decode ONLY their default_text
-	 * glyphs (saving ~70–100 unused alphabet image requests when browsing views).
+	 * Stage 2: Load off-screen active OpenType-SVG manifests (and upgrade any partial bootstrap fonts)
+	 * and pre-decode ONLY their default_text glyphs (saving ~70–100 unused alphabet image requests).
 	 */
 	prewarmActiveLineFonts() {
 		const fonts = (this.data && this.data.fonts) || {};
@@ -563,16 +760,19 @@ class MrTeeFrontendApp {
 				if (isUpper) {
 					defaultText = defaultText.toUpperCase();
 				}
-				const alreadyLoaded = Boolean(SvgRenderer.getSvgFontData(activeFontId));
+				const existingData = SvgRenderer.getSvgFontData(activeFontId);
+				const needsFullLoad = !existingData || Boolean(existingData.partial);
+				if (!needsFullLoad && !defaultText) continue;
+				const lineSide = String(line.side_id || 'front');
 				SvgRenderer.ensureSvgFontLoaded(activeFontId, fDef, {
 					prewarmGlyphs: false,
 					priorityText: defaultText,
 				})
 					.then((loaded) => {
-						if (!alreadyLoaded && loaded) {
-							this.markAllViewsDirty();
+						if (needsFullLoad && loaded) {
+							this.markSideViewsDirty(lineSide);
 							if (this.stage && this.stage.isDedicated) {
-								this.renderActiveViewIfNeeded(this.stage.getActiveViewId(), true);
+								this.renderActiveViewIfNeeded(this.stage.getActiveViewId(), false);
 								this.scheduleSiblingViewsSync();
 							}
 						}
@@ -584,8 +784,8 @@ class MrTeeFrontendApp {
 
 	/**
 	 * Debounced (~180ms) background sync of dirty customizable sibling views so adjacent
-	 * slides (e.g. Full T-Shirt view paired with Cut-Area Closeup) are already fresh before swiping,
-	 * while keeping active keystroke rendering strictly 1-view at 60 FPS.
+	 * slides on the same side are fresh before swiping. During initial boot (before user interaction),
+	 * ONLY pre-syncs `isSameSide` views and never renders different-side neighbors (e.g. Verso).
 	 */
 	scheduleSiblingViewsSync() {
 		if (!this.stage || !this.stage.isDedicated) return;
@@ -602,7 +802,7 @@ class MrTeeFrontendApp {
 			for (const v of customViews) {
 				if (!v || !v.viewId || v.viewId === activeViewId) continue;
 				const isSameSide = Boolean(activeSideId && v.sideId === activeSideId);
-				const isImmediateNeighbor = activeSlide && Math.abs(v.index - activeSlide.index) === 1;
+				const isImmediateNeighbor = this._hasUserInteracted && activeSlide && Math.abs(v.index - activeSlide.index) === 1;
 				if ((isSameSide || isImmediateNeighbor) && (this.dirtyViews.has(v.viewId) || !this.renderedViews.has(v.viewId))) {
 					this.renderActiveViewIfNeeded(v.viewId, false);
 				}
@@ -611,16 +811,32 @@ class MrTeeFrontendApp {
 	}
 
 	/**
-	 * Compute scene-graph layout, mark customizable views dirty, and immediately update
-	 * ONLY the currently visible view (60 FPS lazy multi-view rendering), scheduling
-	 * a debounced background sync for sibling/neighbor slides.
+	 * Compute scene-graph layout, mark affected customizable views dirty (side-scoped when known),
+	 * and immediately update ONLY the currently visible view if dirty (60 FPS lazy multi-view rendering),
+	 * scheduling a debounced background sync for sibling slides.
+	 *
+	 * @param {string|Set<string>|null} changedSides Specific side ID(s) modified, or `null` for all sides.
 	 */
-	renderSceneGraph() {
+	renderSceneGraph(changedSides = null) {
 		this.computeMergedScene();
 
 		if (this.stage && this.stage.isDedicated) {
-			this.markAllViewsDirty();
-			this.renderActiveViewIfNeeded(this.stage.getActiveViewId(), true);
+			if (changedSides === null) {
+				this.markAllViewsDirty();
+			} else if (typeof changedSides === 'string') {
+				this.markSideViewsDirty(changedSides);
+			} else if (changedSides instanceof Set) {
+				if (changedSides.size === 0) {
+					this.markAllViewsDirty();
+				} else {
+					for (const sid of changedSides) {
+						this.markSideViewsDirty(sid);
+					}
+				}
+			} else {
+				this.markAllViewsDirty();
+			}
+			this.renderActiveViewIfNeeded(this.stage.getActiveViewId(), false);
 			this.scheduleSiblingViewsSync();
 			return;
 		}
@@ -633,30 +849,62 @@ class MrTeeFrontendApp {
 
 	/**
 	 * Idle-prefetch secondary allowed OpenType-SVG font manifests (~4 KB JSON only, without
-	 * downloading glyph bitmaps) so tapping any font pill is instant.
+	 * downloading glyph bitmaps) gated behind `requestIdleCallback` with max concurrency 2,
+	 * strictly skipping constrained networks and any font lacking a fresh `manifest_url`.
 	 */
 	prefetchAllowedSvgFonts() {
-		const saveData = Boolean(typeof navigator !== 'undefined' && navigator.connection && navigator.connection.saveData);
-		if (saveData) return;
+		const conn = typeof navigator !== 'undefined' ? navigator.connection : null;
+		if (conn && (conn.saveData || conn.effectiveType === '2g' || conn.effectiveType === 'slow-2g')) {
+			return;
+		}
+		if (this._allowedFontsPrefetched) return;
+		this._allowedFontsPrefetched = true;
 
 		const fonts = (this.data && this.data.fonts) || {};
 		const textLines = this.config.text_lines || [];
-		const toPrefetch = new Set();
+		const queue = [];
+		const seen = new Set();
 
 		for (const line of textLines) {
 			if (line.field_type === 'image') continue;
 			const allowed = Array.isArray(line.allowed_fonts) ? line.allowed_fonts : Object.keys(fonts);
 			for (const fId of allowed) {
+				if (!fId || seen.has(fId)) continue;
 				const fDef = fonts[fId];
-				if (fDef && (fDef.font_type === 'opentype_svg' || fDef.color_svg)) {
-					toPrefetch.add(fId);
-				}
+				if (!fDef || (fDef.font_type !== 'opentype_svg' && !fDef.color_svg)) continue;
+				if (!fDef.manifest_url) continue;
+				if (String(fId).startsWith('use_your_imagination_')) continue;
+				const existing = SvgRenderer.getSvgFontData(fId);
+				if (existing && !existing.partial) continue;
+				seen.add(fId);
+				queue.push({ fId, fDef });
 			}
 		}
 
-		for (const fId of toPrefetch) {
-			const fDef = fonts[fId];
-			SvgRenderer.ensureSvgFontLoaded(fId, fDef, { prewarmGlyphs: false }).catch(() => {});
+		if (queue.length === 0) return;
+
+		const runPrefetchQueue = () => {
+			let cursor = 0;
+			const maxConcurrency = 2;
+			const worker = async () => {
+				while (cursor < queue.length) {
+					const item = queue[cursor++];
+					if (!item) break;
+					try {
+						await SvgRenderer.ensureSvgFontLoaded(item.fId, item.fDef, { prewarmGlyphs: false });
+					} catch (e) {}
+				}
+			};
+			const workers = Math.min(maxConcurrency, queue.length);
+			for (let i = 0; i < workers; i++) {
+				worker();
+			}
+		};
+
+		if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+			window.requestIdleCallback(runPrefetchQueue, { timeout: 2500 });
+		} else {
+			setTimeout(runPrefetchQueue, 400);
 		}
 	}
 
@@ -669,11 +917,19 @@ class MrTeeFrontendApp {
 		let ok = false;
 		let exportErr = null;
 		try {
+			const hadPendingRaf = Boolean(this._rafRenderId);
 			if (this._rafRenderId) {
 				cancelAnimationFrame(this._rafRenderId);
 				this._rafRenderId = null;
 			}
-			this.renderSceneGraph();
+			if (hadPendingRaf || !this.currentLayers || this.currentLayers.length === 0) {
+				const pendingSides = this._pendingAllSidesDirty
+					? null
+					: (this._pendingChangedSides.size > 0 ? new Set(this._pendingChangedSides) : null);
+				this._pendingAllSidesDirty = false;
+				this._pendingChangedSides.clear();
+				this.renderSceneGraph(pendingSides);
+			}
 
 			const PrintExporter = await this.loadPrintExporter();
 			await PrintExporter.prepareExport(

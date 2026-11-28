@@ -99,6 +99,133 @@ class SceneGraphSchema {
 	}
 
 	/**
+	 * Per-request cache mapping local attachment URLs to WordPress attachment IDs.
+	 *
+	 * @var array<string, int>
+	 */
+	private static $url_attachment_id_cache = array();
+
+	/**
+	 * Resolve a safe storefront preview URL (`default_image_preview`) and 150px card thumbnail
+	 * (`default_image_thumb`) for an image field while keeping full-res `default_image` untouched
+	 * for 300 DPI print export.
+	 *
+	 * WYSIWYG safeguard: an intermediate WordPress size (`medium_large` or `medium`) is selected
+	 * for `preview` ONLY when its width >= 300 px AND its aspect ratio matches the original image
+	 * within 2%, ensuring non-square artwork is never cropped.
+	 *
+	 * @param int    $attachment_id     Optional WP attachment ID (`default_image_id`).
+	 * @param string $default_image_url Normalized full-res default image URL.
+	 * @return array{preview: string, thumb: string}
+	 */
+	private static function resolve_image_field_variants( $attachment_id, $default_image_url ) {
+		$url = is_string( $default_image_url ) ? trim( $default_image_url ) : '';
+		if ( '' === $url ) {
+			return array(
+				'preview' => '',
+				'thumb'   => '',
+			);
+		}
+
+		$result = array(
+			'preview' => $url,
+			'thumb'   => $url,
+		);
+
+		// Skip inline data URIs and SVG vector files (no raster intermediate sizes needed).
+		if ( 0 === stripos( $url, 'data:' ) ) {
+			return $result;
+		}
+		$url_path = function_exists( 'wp_parse_url' ) ? (string) wp_parse_url( $url, PHP_URL_PATH ) : '';
+		if ( '' !== $url_path && '.svg' === strtolower( substr( $url_path, -4 ) ) ) {
+			return $result;
+		}
+
+		if ( ! function_exists( 'wp_get_attachment_image_src' ) ) {
+			return $result;
+		}
+
+		$att_id   = absint( $attachment_id );
+		$full_src = false;
+
+		// Verify explicit attachment ID matches the saved URL's base filename (guards against stale IDs).
+		if ( $att_id > 0 ) {
+			$full_src = wp_get_attachment_image_src( $att_id, 'full' );
+			if ( ! is_array( $full_src ) || empty( $full_src[0] ) ) {
+				$att_id   = 0;
+				$full_src = false;
+			} else {
+				$full_path = function_exists( 'wp_parse_url' ) ? (string) wp_parse_url( (string) $full_src[0], PHP_URL_PATH ) : '';
+				$norm_base = static function ( $p ) {
+					$base = strtolower( basename( (string) $p ) );
+					return (string) preg_replace( '/(?:-scaled|-\d+x\d+)+(?=\.[a-z0-9]+$)/i', '', $base );
+				};
+				if ( '' !== $url_path && '' !== $full_path && $norm_base( $url_path ) !== $norm_base( $full_path ) ) {
+					$att_id   = 0;
+					$full_src = false;
+				}
+			}
+		}
+
+		// Safely resolve attachment ID from local WP uploads URL when default_image_id was not saved.
+		if ( $att_id <= 0 && function_exists( 'attachment_url_to_postid' ) && '' !== $url_path ) {
+			$up           = function_exists( 'wp_upload_dir' ) ? wp_upload_dir() : array();
+			$uploads_base = ! empty( $up['baseurl'] ) ? (string) $up['baseurl'] : '';
+			$uploads_path = '' !== $uploads_base && function_exists( 'wp_parse_url' )
+				? rtrim( (string) wp_parse_url( $uploads_base, PHP_URL_PATH ), '/' )
+				: '/wp-content/uploads';
+			if ( '' !== $uploads_path && false !== strpos( $url_path, $uploads_path . '/' ) ) {
+				if ( ! array_key_exists( $url, self::$url_attachment_id_cache ) ) {
+					self::$url_attachment_id_cache[ $url ] = absint( attachment_url_to_postid( $url ) );
+				}
+				$att_id = self::$url_attachment_id_cache[ $url ];
+				if ( $att_id > 0 ) {
+					$full_src = wp_get_attachment_image_src( $att_id, 'full' );
+					if ( ! is_array( $full_src ) || empty( $full_src[0] ) ) {
+						$att_id   = 0;
+						$full_src = false;
+					}
+				}
+			}
+		}
+
+		if ( $att_id <= 0 || ! is_array( $full_src ) ) {
+			return $result;
+		}
+
+		$orig_w = ! empty( $full_src[1] ) ? (int) $full_src[1] : 0;
+		$orig_h = ! empty( $full_src[2] ) ? (int) $full_src[2] : 0;
+
+		if ( $orig_w > 0 && $orig_h > 0 ) {
+			$orig_ratio = $orig_w / $orig_h;
+			foreach ( array( 'medium_large', 'medium' ) as $size_name ) {
+				$cand = wp_get_attachment_image_src( $att_id, $size_name );
+				if ( ! is_array( $cand ) || empty( $cand[0] ) || empty( $cand[1] ) || empty( $cand[2] ) ) {
+					continue;
+				}
+				$cand_w = (int) $cand[1];
+				$cand_h = (int) $cand[2];
+				if ( ( empty( $cand[3] ) && $cand_w >= $orig_w ) || $cand_w < 300 || $cand_h <= 0 ) {
+					continue;
+				}
+				$cand_ratio = $cand_w / $cand_h;
+				if ( abs( $cand_ratio - $orig_ratio ) / $orig_ratio <= 0.02 ) {
+					$result['preview'] = self::normalize_url_scheme( (string) $cand[0] );
+					break;
+				}
+			}
+		}
+
+		// 150x150 WP thumbnail is always safe for the 44x44 object-fit:cover form card thumbnail.
+		$thumb_src = wp_get_attachment_image_src( $att_id, 'thumbnail' );
+		if ( is_array( $thumb_src ) && ! empty( $thumb_src[0] ) ) {
+			$result['thumb'] = self::normalize_url_scheme( (string) $thumb_src[0] );
+		}
+
+		return $result;
+	}
+
+	/**
 	 * Return the complete canonical structural defaults for the 2-row Avatar / Icon Repeater module.
 	 * Ensures enabling the repeater on any preset never hits missing keys or zero font sizes.
 	 *
@@ -743,21 +870,23 @@ class SceneGraphSchema {
 
 			if ( 'image' === $field_type ) {
 				$def_line = array(
-					'id'                 => 'custom_line_' . $line_num,
-					'ref_id'             => 'id-ref-image-line-' . $line_num,
-					'color_ref_id'       => 'id-ref-color-line-' . $line_num,
-					'field_type'         => 'image',
-					'label'              => sprintf( __( 'Image %d', 'mr-tee-editor' ), $line_num ),
-					'default_text'       => '',
-					'default_image'      => '',
-					'default_image_id'   => 0,
-					'image_fit'          => 'contain',
-					'allow_image_upload' => true,
-					'box_left'           => 30.0,
-					'box_top'            => 25.0 + ( $line_index * 12.0 ),
-					'box_width'          => 40.0,
-					'box_height'         => 30.0,
-					'warning_unedited'   => false,
+					'id'                    => 'custom_line_' . $line_num,
+					'ref_id'                => 'id-ref-image-line-' . $line_num,
+					'color_ref_id'          => 'id-ref-color-line-' . $line_num,
+					'field_type'            => 'image',
+					'label'                 => sprintf( __( 'Image %d', 'mr-tee-editor' ), $line_num ),
+					'default_text'          => '',
+					'default_image'         => '',
+					'default_image_id'      => 0,
+					'default_image_preview' => '',
+					'default_image_thumb'   => '',
+					'image_fit'             => 'contain',
+					'allow_image_upload'    => true,
+					'box_left'              => 30.0,
+					'box_top'               => 25.0 + ( $line_index * 12.0 ),
+					'box_width'             => 40.0,
+					'box_height'            => 30.0,
+					'warning_unedited'      => false,
 				);
 			} else {
 				$def_line = isset( $defaults['text_lines'][ $line_index ] ) ? $defaults['text_lines'][ $line_index ] : array(
@@ -785,10 +914,13 @@ class SceneGraphSchema {
 			$merged['field_type'] = $field_type;
 
 			if ( 'image' === $field_type ) {
-				$merged['default_image']      = ! empty( $merged['default_image'] ) ? self::normalize_url_scheme( esc_url_raw( $merged['default_image'] ) ) : '';
-				$merged['default_image_id']   = ! empty( $merged['default_image_id'] ) ? absint( $merged['default_image_id'] ) : 0;
-				$merged['image_fit']          = ( isset( $merged['image_fit'] ) && 'cover' === $merged['image_fit'] ) ? 'cover' : 'contain';
-				$merged['allow_image_upload'] = isset( $merged['allow_image_upload'] ) ? (bool) $merged['allow_image_upload'] : true;
+				$merged['default_image']         = ! empty( $merged['default_image'] ) ? self::normalize_url_scheme( esc_url_raw( $merged['default_image'] ) ) : '';
+				$merged['default_image_id']      = ! empty( $merged['default_image_id'] ) ? absint( $merged['default_image_id'] ) : 0;
+				$merged['image_fit']             = ( isset( $merged['image_fit'] ) && 'cover' === $merged['image_fit'] ) ? 'cover' : 'contain';
+				$merged['allow_image_upload']    = isset( $merged['allow_image_upload'] ) ? (bool) $merged['allow_image_upload'] : true;
+				$img_variants                    = self::resolve_image_field_variants( $merged['default_image_id'], $merged['default_image'] );
+				$merged['default_image_preview'] = $img_variants['preview'];
+				$merged['default_image_thumb']   = $img_variants['thumb'];
 			} else {
 				$line_font = ! empty( $merged['font'] ) ? sanitize_key( $merged['font'] ) : '';
 				if ( '' !== $line_font && ! isset( $registered_fonts[ $line_font ] ) ) {
@@ -1778,9 +1910,11 @@ class SceneGraphSchema {
 			if ( 'image' === $field_type ) {
 				$img_ref_id      = ! empty( $line['ref_id'] ) ? $line['ref_id'] : 'id-ref-image-line-' . $line_num;
 				$default_img_url = ! empty( $line['default_image'] ) ? $line['default_image'] : '';
+				$preview_img_url = ! empty( $line['default_image_preview'] ) ? $line['default_image_preview'] : '';
+				$has_preview_url = ( '' !== $preview_img_url && $preview_img_url !== $default_img_url );
 				$image_fit       = ( isset( $line['image_fit'] ) && 'cover' === $line['image_fit'] ) ? 'cover' : 'contain';
 
-				$references[] = array(
+				$image_ref = array(
 					'id'               => $img_ref_id,
 					'type'             => 'IMAGE',
 					'name'             => $line['label'],
@@ -1796,6 +1930,10 @@ class SceneGraphSchema {
 						array( 'key' => 'fileName', 'value' => '' ),
 					),
 				);
+				if ( $has_preview_url ) {
+					$image_ref['previewUrl'] = $preview_img_url;
+				}
+				$references[] = $image_ref;
 
 				$image_layer = array(
 					'type'         => 'IMAGE',
@@ -1818,6 +1956,9 @@ class SceneGraphSchema {
 					'box_rotate'   => $box_r,
 					'rotate'       => $box_r,
 				);
+				if ( $has_preview_url ) {
+					$image_layer['previewUrl'] = $preview_img_url;
+				}
 
 				$layers[] = array(
 					'type'    => 'GROUP',

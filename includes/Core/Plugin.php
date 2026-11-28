@@ -79,11 +79,15 @@ final class Plugin {
 	 * Initialize domain and commerce subsystems.
 	 */
 	private function init_services() {
-		EngineSelectorMetabox::init();
+		if ( is_admin() ) {
+			EngineSelectorMetabox::init();
+			OrderAdminPanel::init();
+		}
 		ProductPageRenderer::init();
 		CartIntegration::init();
-		OrderAdminPanel::init();
 		\MrTeeEditor\Registry\FontRegistry::register_hooks();
+
+		add_action( 'mr_tee_build_svg_font_packages', array( 'MrTeeEditor\\Registry\\SvgFontPackager', 'build_all' ) );
 
 		add_action( 'wp_ajax_mr_tee_upload_customer_image', array( $this, 'handle_customer_image_upload' ) );
 		add_action( 'wp_ajax_nopriv_mr_tee_upload_customer_image', array( $this, 'handle_customer_image_upload' ) );
@@ -702,7 +706,8 @@ final class Plugin {
 	}
 
 	/**
-	 * Collect all font IDs/family identifiers referenced by an order item payload and product config.
+	 * Collect ONLY font IDs/family identifiers actually used by an order item payload
+	 * (falling back to configured default line fonts only if the payload omits them).
 	 *
 	 * @param array<string, mixed> $data   Order item _mr_tee_editor_data.
 	 * @param array<string, mixed> $config Product config.
@@ -712,10 +717,50 @@ final class Plugin {
 		$ids     = array();
 		$payload = ! empty( $data['payload'] ) && is_array( $data['payload'] ) ? $data['payload'] : array();
 
+		$config_lines_by_id  = array();
+		$config_lines_by_ref = array();
+		$config_lines_list   = array();
+		if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
+			foreach ( array_values( $config['text_lines'] ) as $c_idx => $c_tl ) {
+				if ( ! is_array( $c_tl ) || ( isset( $c_tl['field_type'] ) && 'image' === $c_tl['field_type'] ) ) {
+					continue;
+				}
+				$config_lines_list[ $c_idx ] = $c_tl;
+				if ( ! empty( $c_tl['id'] ) ) {
+					$config_lines_by_id[ (string) $c_tl['id'] ] = $c_tl;
+				}
+				if ( ! empty( $c_tl['ref_id'] ) ) {
+					$config_lines_by_ref[ (string) $c_tl['ref_id'] ] = $c_tl;
+				}
+			}
+		}
+
 		if ( ! empty( $payload['text_lines'] ) && is_array( $payload['text_lines'] ) ) {
-			foreach ( $payload['text_lines'] as $tl ) {
+			foreach ( array_values( $payload['text_lines'] ) as $p_idx => $tl ) {
+				if ( ! is_array( $tl ) ) {
+					continue;
+				}
+				if ( ( isset( $tl['fieldType'] ) && 'image' === $tl['fieldType'] ) || ( isset( $tl['field_type'] ) && 'image' === $tl['field_type'] ) ) {
+					continue;
+				}
 				if ( ! empty( $tl['fontId'] ) ) {
 					$ids[] = (string) $tl['fontId'];
+				} elseif ( ! empty( $tl['font'] ) ) {
+					$ids[] = (string) $tl['font'];
+				} else {
+					$matched_cfg = null;
+					if ( ! empty( $tl['id'] ) && isset( $config_lines_by_id[ (string) $tl['id'] ] ) ) {
+						$matched_cfg = $config_lines_by_id[ (string) $tl['id'] ];
+					} elseif ( ! empty( $tl['refId'] ) && isset( $config_lines_by_ref[ (string) $tl['refId'] ] ) ) {
+						$matched_cfg = $config_lines_by_ref[ (string) $tl['refId'] ];
+					} elseif ( ! empty( $tl['ref_id'] ) && isset( $config_lines_by_ref[ (string) $tl['ref_id'] ] ) ) {
+						$matched_cfg = $config_lines_by_ref[ (string) $tl['ref_id'] ];
+					} elseif ( isset( $config_lines_list[ $p_idx ] ) ) {
+						$matched_cfg = $config_lines_list[ $p_idx ];
+					}
+					if ( $matched_cfg && ! empty( $matched_cfg['font'] ) ) {
+						$ids[] = (string) $matched_cfg['font'];
+					}
 				}
 			}
 		}
@@ -747,13 +792,8 @@ final class Plugin {
 			$walk( $pv['layers'] );
 		}
 
-		if ( ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] ) ) {
-			foreach ( $config['allowed_fonts'] as $fid ) {
-				$ids[] = (string) $fid;
-			}
-		}
-		if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
-			foreach ( $config['text_lines'] as $tl ) {
+		if ( empty( $ids ) && ! empty( $config_lines_list ) ) {
+			foreach ( $config_lines_list as $tl ) {
 				if ( ! empty( $tl['font'] ) ) {
 					$ids[] = (string) $tl['font'];
 				}
@@ -784,7 +824,7 @@ final class Plugin {
 				continue;
 			}
 			if ( ! isset( $svg_fonts[ $resolved_id ] ) ) {
-				$svg_data = \MrTeeEditor\Registry\FontRegistry::get_svg_font_data( $resolved_id );
+				$svg_data = \MrTeeEditor\Registry\FontRegistry::get_svg_font_data( $resolved_id, true, true );
 				if ( $svg_data ) {
 					$svg_fonts[ $resolved_id ] = $svg_data;
 				}
@@ -1394,7 +1434,7 @@ final class Plugin {
 				}
 				$f_def = isset( $all_fonts[ $line['font'] ] ) ? $all_fonts[ $line['font'] ] : null;
 				if ( $f_def && ( ( ! empty( $f_def['font_type'] ) && 'opentype_svg' === $f_def['font_type'] ) || ! empty( $f_def['color_svg'] ) ) ) {
-					$svg_data = \MrTeeEditor\Registry\FontRegistry::get_svg_font_data( $line['font'] );
+					$svg_data = \MrTeeEditor\Registry\FontRegistry::get_svg_font_data( $line['font'], false, true );
 					if ( $svg_data ) {
 						// Omit 300-DPI fullMap from admin placement stage payload (saves ~15.5 KB per font)
 						unset( $svg_data['fullMap'] );

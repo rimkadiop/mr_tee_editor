@@ -11,7 +11,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.5.13';
+import { SvgRenderer } from './svg-renderer.js?v=2.6.0';
 
 const SVG_PLACEHOLDER_IMAGE = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
 const ALLOWED_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml']);
@@ -78,24 +78,86 @@ export class FormController {
 		this.isSubmitting = false;
 		this.pendingUploads = [];
 		this._printExporterClass = null;
+		this._printExporterPromise = null;
+		this._printExporterPrefetched = false;
+		this._pillFontsReadyHooked = false;
 
 		this.initDom();
 		this.bindEvents();
 	}
 
 	/**
-	 * Dynamically load PrintExporter module strictly on demand (e.g., large chunked customer uploads).
+	 * Dynamically load PrintExporter module strictly on demand (with Promise deduplication).
 	 *
 	 * @return {Promise<Function>}
 	 */
 	async loadPrintExporter() {
 		if (this._printExporterClass) return this._printExporterClass;
-		const mod = await import('./print-exporter.js?v=2.5.13');
-		this._printExporterClass = mod.PrintExporter;
-		if (typeof window !== 'undefined') {
-			window.mrTeePrintExporter = mod.PrintExporter;
+		if (typeof window !== 'undefined' && window.mrTeePrintExporter) {
+			this._printExporterClass = window.mrTeePrintExporter;
+			return this._printExporterClass;
 		}
-		return this._printExporterClass;
+		if (!this._printExporterPromise) {
+			this._printExporterPromise = import('./print-exporter.js?v=2.6.0')
+				.then((mod) => {
+					this._printExporterClass = mod.PrintExporter;
+					if (typeof window !== 'undefined') {
+						window.mrTeePrintExporter = mod.PrintExporter;
+					}
+					return this._printExporterClass;
+				})
+				.catch((err) => {
+					this._printExporterPromise = null;
+					throw err;
+				});
+		}
+		return this._printExporterPromise;
+	}
+
+	/**
+	 * Quietly prefetch `print-exporter.js` after first field edit or Add-to-Cart button hover/touch
+	 * so clicking Add-to-Cart has zero module-download latency.
+	 *
+	 * @param {boolean} immediate When true (hover/touch on Add-to-Cart), start import immediately.
+	 */
+	prefetchPrintExporter(immediate = false) {
+		if (this._printExporterClass || this._printExporterPromise) return;
+		if (immediate) {
+			this._printExporterPrefetched = true;
+			this.loadPrintExporter().catch(() => {
+				this._printExporterPrefetched = false;
+			});
+			return;
+		}
+		if (this._printExporterPrefetched) return;
+		this._printExporterPrefetched = true;
+		const conn = typeof navigator !== 'undefined' ? navigator.connection : null;
+		if (conn && (conn.saveData || conn.effectiveType === '2g' || conn.effectiveType === 'slow-2g')) {
+			return;
+		}
+		const run = () => {
+			this.loadPrintExporter().catch(() => {
+				this._printExporterPrefetched = false;
+			});
+		};
+		if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
+			window.requestIdleCallback(run, { timeout: 1500 });
+		} else {
+			setTimeout(run, 150);
+		}
+	}
+
+	/**
+	 * Portal a modal element directly to `document.body` lazily on first open so ancestor
+	 * `overflow:hidden` / transforms / stacking contexts never clip dialogs without mutating
+	 * `document.body` during initial boot.
+	 *
+	 * @param {HTMLElement|null} modal Modal root element.
+	 */
+	ensureModalPortaled(modal) {
+		if (modal && document.body && modal.parentElement !== document.body) {
+			document.body.appendChild(modal);
+		}
 	}
 
 	/**
@@ -120,7 +182,8 @@ export class FormController {
 	}
 
 	/**
-	 * Highlight side sections and field groups belonging to the currently active gallery side on multi-side products.
+	 * Highlight side sections and field groups belonging to the currently active gallery side on multi-side products,
+	 * and enable lazy visible-pill font hydration for the newly shown side's font rails.
 	 *
 	 * @param {string} sideId Active print side identifier.
 	 */
@@ -134,10 +197,18 @@ export class FormController {
 		if (distinctSides.size <= 1) return;
 		const target = sideId ? String(sideId) : '';
 		sections.forEach((sec) => {
-			sec.classList.toggle('is-active-side', Boolean(target && sec.getAttribute('data-side-id') === target));
+			const isActive = Boolean(target && sec.getAttribute('data-side-id') === target);
+			sec.classList.toggle('is-active-side', isActive);
+			if (isActive && this._pillIdleHydrationReady) {
+				sec.querySelectorAll('.mr-tee-font-pills').forEach((sc) => this.hydrateFontPillsInScroller(sc));
+			}
 		});
 		groups.forEach((g) => {
-			g.classList.toggle('is-active-side', Boolean(target && g.getAttribute('data-side-id') === target));
+			const isActive = Boolean(target && g.getAttribute('data-side-id') === target);
+			g.classList.toggle('is-active-side', isActive);
+			if (isActive && this._pillIdleHydrationReady) {
+				g.querySelectorAll('.mr-tee-font-pills').forEach((sc) => this.hydrateFontPillsInScroller(sc));
+			}
 		});
 	}
 
@@ -302,25 +373,63 @@ export class FormController {
 	}
 
 	/**
-	 * Lazily apply inline `font-family` previews onto inactive `.mr-tee-font-pill` buttons
-	 * after initial paint or on user interaction so every font pill displays its real typeface.
+	 * Apply inline `font-family` preview to a single `.mr-tee-font-pill` button once so
+	 * browsers only download `.woff2` preview fonts for pills that actually become visible.
+	 *
+	 * @param {Element|null} pill `.mr-tee-font-pill` element.
+	 * @return {boolean}
+	 */
+	hydrateSingleFontPill(pill) {
+		if (!pill || pill._mrTeeFontHydrated) return false;
+		pill._mrTeeFontHydrated = true;
+		const fam = pill.getAttribute('data-font-family');
+		if (fam && !pill.style.fontFamily) {
+			pill.style.fontFamily = `'${fam}', sans-serif`;
+			if (!this._pillFontsReadyHooked && typeof document !== 'undefined' && document.fonts && document.fonts.ready && typeof document.fonts.ready.then === 'function') {
+				this._pillFontsReadyHooked = true;
+				document.fonts.ready.then(() => {
+					this._pillFontsReadyHooked = false;
+					this.scrollActiveFontPillsIntoView();
+				}).catch(() => {
+					this._pillFontsReadyHooked = false;
+				});
+			}
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Lazily attach a per-scroller IntersectionObserver to a `.mr-tee-font-pills` rail so ONLY
+	 * visible font pills in the rail load their `.woff2` preview font (off-screen overflow pills
+	 * hydrate dynamically as the user scrolls horizontally).
 	 *
 	 * @param {Element|null} scroller `.mr-tee-font-pills` container element.
 	 */
 	hydrateFontPillsInScroller(scroller) {
 		if (!scroller || scroller._mrTeeFontsHydrated) return;
 		scroller._mrTeeFontsHydrated = true;
-		let appliedAny = false;
-		scroller.querySelectorAll('.mr-tee-font-pill[data-font-family]').forEach((pill) => {
-			const fam = pill.getAttribute('data-font-family');
-			if (fam && !pill.style.fontFamily) {
-				pill.style.fontFamily = `'${fam}', sans-serif`;
-				appliedAny = true;
-			}
-		});
-		if (appliedAny && typeof document !== 'undefined' && document.fonts && document.fonts.ready && typeof document.fonts.ready.then === 'function') {
-			document.fonts.ready.then(() => this.scrollActiveFontPillsIntoView()).catch(() => {});
+		const pills = Array.from(scroller.querySelectorAll('.mr-tee-font-pill[data-font-family]'));
+		if (pills.length === 0) return;
+
+		if (typeof window !== 'undefined' && 'IntersectionObserver' in window) {
+			const pillObserver = new window.IntersectionObserver((entries) => {
+				for (const entry of entries) {
+					if (!entry.isIntersecting) continue;
+					this.hydrateSingleFontPill(entry.target);
+					pillObserver.unobserve(entry.target);
+				}
+			}, {
+				root: scroller,
+				rootMargin: '0px 48px 0px 48px',
+				threshold: 0.01,
+			});
+			pills.forEach((pill) => pillObserver.observe(pill));
+			scroller._mrTeePillObserver = pillObserver;
+			return;
 		}
+
+		pills.forEach((pill) => this.hydrateSingleFontPill(pill));
 	}
 
 	/**
@@ -386,13 +495,6 @@ export class FormController {
 		this.countModal = document.getElementById('mr-tee-count-modal');
 		this.warningModal = document.getElementById('mr-tee-warning-modal');
 
-		// Portal modals directly to document.body so ancestor overflow:hidden / transforms / stacking contexts never clip dialogs
-		[this.countModal, this.warningModal].forEach((modal) => {
-			if (modal && document.body && modal.parentElement !== document.body) {
-				document.body.appendChild(modal);
-			}
-		});
-
 		this.activeCountDisplay = document.getElementById('mr-tee-active-count-display');
 		this.stepVal = document.getElementById('mr-tee-step-val');
 		const parentCartForm = this.container ? this.container.closest('form.cart') : null;
@@ -407,6 +509,7 @@ export class FormController {
 			pillScrollers.forEach((scroller) => {
 				scroller.addEventListener('scroll', () => {
 					scroller.classList.toggle('is-scrolled-left', Math.abs(scroller.scrollLeft) > 4);
+					this.hydrateFontPillsInScroller(scroller);
 				}, { passive: true });
 				scroller.addEventListener('pointerdown', () => {
 					scroller._mrTeeUserScrolled = true;
@@ -421,14 +524,56 @@ export class FormController {
 				});
 			});
 
-			// Hydrate real visual typeface previews on all font pills right after first paint (unless user enabled Data-Saver)
-			const saveData = Boolean(typeof navigator !== 'undefined' && navigator.connection && navigator.connection.saveData);
-			if (!saveData && pillScrollers.length > 0) {
-				const hydrateAllIdle = () => pillScrollers.forEach((s) => this.hydrateFontPillsInScroller(s));
-				if (typeof window !== 'undefined' && typeof window.requestIdleCallback === 'function') {
-					setTimeout(() => window.requestIdleCallback(hydrateAllIdle, { timeout: 800 }), 250);
+			// Defer font-pill hydration until window.load + requestIdleCallback (or first rail interaction),
+			// hydrating ONLY visible rails on the active side while off-screen/inactive sides wait until shown.
+			const conn = typeof navigator !== 'undefined' ? navigator.connection : null;
+			const isConstrained = Boolean(conn && (conn.saveData || conn.effectiveType === '2g' || conn.effectiveType === 'slow-2g'));
+			if (!isConstrained && pillScrollers.length > 0 && typeof window !== 'undefined') {
+				const sideSections = this.container.querySelectorAll('.mr-tee-side-section[data-side-id]');
+				const hasMultiSides = sideSections.length > 1;
+				const isInactiveSideScroller = (sc) => {
+					if (!hasMultiSides) return false;
+					const sec = sc.closest('.mr-tee-side-section[data-side-id]');
+					return Boolean(sec && !sec.classList.contains('is-active-side'));
+				};
+
+				const startIdlePillHydration = () => {
+					this._pillIdleHydrationReady = true;
+					if ('IntersectionObserver' in window) {
+						const viewportObserver = new window.IntersectionObserver((entries) => {
+							for (const entry of entries) {
+								if (!entry.isIntersecting) continue;
+								if (isInactiveSideScroller(entry.target)) continue;
+								this.hydrateFontPillsInScroller(entry.target);
+								viewportObserver.unobserve(entry.target);
+							}
+						}, { rootMargin: '80px 0px', threshold: 0.01 });
+						pillScrollers.forEach((sc) => {
+							if (!sc._mrTeeFontsHydrated) {
+								viewportObserver.observe(sc);
+							}
+						});
+					} else {
+						pillScrollers.forEach((sc) => {
+							if (!isInactiveSideScroller(sc)) {
+								this.hydrateFontPillsInScroller(sc);
+							}
+						});
+					}
+				};
+
+				const queueIdle = () => {
+					if (typeof window.requestIdleCallback === 'function') {
+						window.requestIdleCallback(startIdlePillHydration, { timeout: 2000 });
+					} else {
+						setTimeout(startIdlePillHydration, 800);
+					}
+				};
+
+				if (document.readyState === 'complete') {
+					queueIdle();
 				} else {
-					setTimeout(hydrateAllIdle, 350);
+					window.addEventListener('load', queueIdle, { once: true });
 				}
 			}
 
@@ -610,6 +755,7 @@ export class FormController {
 				clearBtn.addEventListener('click', (e) => {
 					e.preventDefault();
 					this.notifySideFocus(input);
+					this.prefetchPrintExporter();
 					input.value = '';
 					this.updateCharCounter(counterWrap, charCounter, '', maxChars);
 					syncClearState('');
@@ -621,14 +767,39 @@ export class FormController {
 			}
 
 			const warmLineFont = () => {
-				const { fontId: activeFontId, fontDef } = this.resolveFieldActiveFont(group);
-				if (activeFontId) {
-					const sData = SvgRenderer.getSvgFontData(activeFontId);
-					if (sData) {
-						SvgRenderer.prewarmFontGlyphs(sData, { immediate: true });
-					} else if (fontDef && (fontDef.font_type === 'opentype_svg' || fontDef.color_svg)) {
-						SvgRenderer.ensureSvgFontLoaded(activeFontId, fontDef, { prewarmGlyphs: true }).catch(() => {});
-					}
+				const { fontId: activeFontId, fontDef, isOtSvg } = this.resolveFieldActiveFont(group);
+				if (!activeFontId) return;
+				const sData = SvgRenderer.getSvgFontData(activeFontId);
+				const rawVal = String(input.value || lineConfig.default_text || '');
+				const isUpper = (lineConfig.casing === 'UPPER') || Boolean(fontDef && fontDef.uppercase);
+				const priorityText = isUpper ? rawVal.toUpperCase() : rawVal;
+
+				if (sData && !sData.partial) {
+					SvgRenderer.prewarmFontGlyphs(sData, {
+						fontDef,
+						uppercaseOnly: Boolean(fontDef && fontDef.uppercase),
+					});
+				} else if ((sData && sData.partial) || isOtSvg) {
+					const wasPartial = Boolean(sData && sData.partial);
+					SvgRenderer.ensureSvgFontLoaded(activeFontId, fontDef, {
+						prewarmGlyphs: true,
+						priorityText,
+						uppercaseOnly: Boolean(fontDef && fontDef.uppercase),
+					}).then((loaded) => {
+						if (loaded && wasPartial && typeof window !== 'undefined' && window.mrTeeApp) {
+							const sideId = lineConfig.side_id || group.getAttribute('data-side-id') || null;
+							if (typeof window.mrTeeApp.markSideViewsDirty === 'function') {
+								window.mrTeeApp.markSideViewsDirty(sideId);
+							} else {
+								window.mrTeeApp.markAllViewsDirty();
+							}
+							if (window.mrTeeApp.stage && window.mrTeeApp.stage.isDedicated) {
+								window.mrTeeApp.renderActiveViewIfNeeded(window.mrTeeApp.stage.getActiveViewId(), false);
+							} else {
+								window.mrTeeApp.renderSceneGraph(sideId);
+							}
+						}
+					}).catch(() => {});
 				}
 			};
 
@@ -656,6 +827,7 @@ export class FormController {
 
 			input.addEventListener('input', () => {
 				this.notifySideFocus(input);
+				this.prefetchPrintExporter();
 				let val = input.value;
 				if (maxLines > 0) {
 					const normalized = val.replace(/\r\n?/g, '\n');
@@ -693,6 +865,7 @@ export class FormController {
 
 			pill.addEventListener('click', () => {
 				this.notifySideFocus(pill);
+				this.prefetchPrintExporter();
 				const pillsContainer = pill.closest('.mr-tee-font-pills');
 				if (pillsContainer) this.hydrateFontPillsInScroller(pillsContainer);
 				const fieldGroup = pill.closest('.mr-tee-field-group');
@@ -735,7 +908,8 @@ export class FormController {
 				const currentText = currentInput ? currentInput.value : (lineConfig.default_text || '');
 
 				if (isOtSvg) {
-					const isAlreadyLoaded = Boolean(SvgRenderer.getSvgFontData(fontId));
+					const existingFontData = SvgRenderer.getSvgFontData(fontId);
+					const isAlreadyLoaded = Boolean(existingFontData && !existingFontData.partial);
 					if (!isAlreadyLoaded) {
 						pill.classList.add('is-loading');
 						pill.setAttribute('aria-busy', 'true');
@@ -754,7 +928,11 @@ export class FormController {
 						const prevIsOt = Boolean(prevDef && (prevDef.font_type === 'opentype_svg' || prevDef.color_svg));
 						this.syncSwatchesForLine(fieldGroup, prevIsOt, prevDef);
 					};
-					SvgRenderer.ensureSvgFontLoaded(fontId, fontDef, { prewarmGlyphs: true, priorityText: warmText })
+					SvgRenderer.ensureSvgFontLoaded(fontId, fontDef, {
+						prewarmGlyphs: true,
+						priorityText: warmText,
+						uppercaseOnly: Boolean(fontDef && fontDef.uppercase),
+					})
 						.then((loadedData) => {
 							pill.classList.remove('is-loading');
 							pill.removeAttribute('aria-busy');
@@ -813,6 +991,7 @@ export class FormController {
 		this.container.querySelectorAll('.mr-tee-color-swatch-pill').forEach((pill) => {
 			pill.addEventListener('click', () => {
 				this.notifySideFocus(pill);
+				this.prefetchPrintExporter();
 				const group = pill.closest('.mr-tee-color-swatches-wrap');
 				const fieldGroup = pill.closest('.mr-tee-field-group');
 				const colorRefId = group ? group.getAttribute('data-color-ref-id') : 'id-ref-color-selector';
@@ -867,6 +1046,7 @@ export class FormController {
 
 		if (openCountBtn && this.countModal) {
 			openCountBtn.addEventListener('click', () => {
+				this.ensureModalPortaled(this.countModal);
 				tempCount = Math.max(minItems, Math.min(maxItems, this.store.state.activeCount));
 				this.updateModalCountDisplay(tempCount);
 				this.countModal.style.display = 'flex';
@@ -882,6 +1062,7 @@ export class FormController {
 		if (confirmCountBtn && this.countModal) {
 			confirmCountBtn.addEventListener('click', () => {
 				this.notifySideFocus('front');
+				this.prefetchPrintExporter();
 				this.store.updateVisibilityFromCount(tempCount, true);
 				this.countModal.style.display = 'none';
 				this.updateAccordionCardsVisibility(tempCount);
@@ -959,6 +1140,7 @@ export class FormController {
 			if (nameInput) {
 				nameInput.addEventListener('input', () => {
 					this.notifySideFocus('front');
+					this.prefetchPrintExporter();
 					const val = nameInput.value;
 					this.updateCharCounter(counterWrap, charCounter, val, repMaxChars);
 					if (summaryText) summaryText.textContent = val || (i18n.unnamed || 'Sans nom');
@@ -970,6 +1152,7 @@ export class FormController {
 			card.querySelectorAll('.mr-tee-icon-option input[type="radio"]').forEach((radio) => {
 				radio.addEventListener('change', () => {
 					this.notifySideFocus('front');
+					this.prefetchPrintExporter();
 					card.querySelectorAll('.mr-tee-icon-option').forEach(o => o.classList.remove('is-selected'));
 					const parentOption = radio.closest('.mr-tee-icon-option');
 					if (parentOption) parentOption.classList.add('is-selected');
@@ -1024,9 +1207,17 @@ export class FormController {
 			this.runExportAndSubmit();
 		};
 
+		const prefetchBtnTargets = new Set();
 		if (this.addToCartBtn) {
 			this.addToCartBtn.addEventListener('click', handleAddToCartIntercept, { capture: true });
+			prefetchBtnTargets.add(this.addToCartBtn);
 		}
+		document.querySelectorAll('.single_add_to_cart_button').forEach((btn) => prefetchBtnTargets.add(btn));
+		prefetchBtnTargets.forEach((btn) => {
+			btn.addEventListener('pointerenter', () => this.prefetchPrintExporter(true), { once: true, passive: true });
+			btn.addEventListener('touchstart', () => this.prefetchPrintExporter(true), { once: true, passive: true });
+		});
+
 		const targetForm = (this.addToCartBtn && this.addToCartBtn.closest('form')) || this.cartForm;
 		if (targetForm) {
 			targetForm.addEventListener('submit', handleAddToCartIntercept, { capture: true });
@@ -1516,6 +1707,7 @@ export class FormController {
 
 					// Automatically focus the corresponding garment view once a new image is actually added
 					this.notifySideFocus(fileInput);
+					this.prefetchPrintExporter();
 
 					// Immediate 0ms local preview in SVG scene graph
 					if (refId) {
@@ -1722,6 +1914,7 @@ export class FormController {
 
 	showWarningModal() {
 		if (!this.warningModal) return;
+		this.ensureModalPortaled(this.warningModal);
 		const i18n = (window.mrTeeProductData && window.mrTeeProductData.i18n) || {};
 		const textEl = document.getElementById('mr-tee-warning-text');
 		const warnings = (this.store && this.store.state && Array.isArray(this.store.state.warnings)) ? this.store.state.warnings : [];

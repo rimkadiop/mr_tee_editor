@@ -35,19 +35,29 @@ export class StateStore {
 			warnings: [],
 		};
 
+		this.lastChangedSideId = null;
 		this.initReferencesIndex();
 		this.updateVisibilityFromCount(this.state.activeCount, false);
 	}
 
 	/**
-	 * Build fast ID lookup index for references.
+	 * Build fast ID lookup index for references and resolve each reference to its print side.
 	 */
 	initReferencesIndex() {
 		this.refMap = new Map();
+		this.refSideMap = new Map();
 		const indexRefs = (list) => {
 			if (!Array.isArray(list)) return;
 			for (const ref of list) {
 				if (ref && ref.id) {
+					if (ref.type === 'IMAGE') {
+						if (ref._defaultUrl === undefined) {
+							ref._defaultUrl = ref.url || '';
+						}
+						if (ref._defaultPreviewUrl === undefined && ref.previewUrl) {
+							ref._defaultPreviewUrl = ref.previewUrl;
+						}
+					}
 					this.refMap.set(ref.id, ref);
 				}
 				if (ref && Array.isArray(ref.items)) {
@@ -56,12 +66,75 @@ export class StateStore {
 			}
 		};
 		indexRefs(this.state.references);
+
+		const registerRefSide = (id, sideId) => {
+			if (!id || !sideId) return;
+			const key = String(id);
+			const sid = String(sideId);
+			if (!this.refSideMap.has(key)) {
+				this.refSideMap.set(key, sid);
+			} else if (this.refSideMap.get(key) !== sid) {
+				// Shared across multiple sides -> invalidate all sides
+				this.refSideMap.set(key, null);
+			}
+		};
+
+		if (Array.isArray(this.config.text_lines)) {
+			for (const line of this.config.text_lines) {
+				if (!line) continue;
+				const sid = line.side_id || line.sideId || 'front';
+				if (line.ref_id) {
+					registerRefSide(line.ref_id, sid);
+					const ref = this.refMap.get(line.ref_id);
+					if (ref && ref.colorRefId) {
+						registerRefSide(ref.colorRefId, sid);
+					}
+				}
+				if (line.color_ref_id) {
+					registerRefSide(line.color_ref_id, sid);
+				}
+			}
+		}
+
+		const indexLayerSides = (nodes, inheritedSide = null) => {
+			if (!Array.isArray(nodes)) return;
+			for (const node of nodes) {
+				if (!node || typeof node !== 'object') continue;
+				const nodeSide = node.side_id || node.sideId || inheritedSide || 'front';
+				if (node.reference) {
+					registerRefSide(node.reference, nodeSide);
+				}
+				const cKey = node.colorReference || node.colorRefId;
+				if (cKey) {
+					registerRefSide(cKey, nodeSide);
+				}
+				if (Array.isArray(node.items)) {
+					indexLayerSides(node.items, node.side_id || node.sideId || inheritedSide);
+				}
+			}
+		};
+		indexLayerSides(this.state.layers, null);
+	}
+
+	/**
+	 * Resolve print side ID affected by a given reference ID (`null` means all sides).
+	 *
+	 * @param {string} refId Reference ID.
+	 * @return {string|null}
+	 */
+	resolveSideIdForRef(refId) {
+		if (!refId || !this.refSideMap) return null;
+		const key = String(refId);
+		if (this.refSideMap.has(key)) {
+			return this.refSideMap.get(key);
+		}
+		return null;
 	}
 
 	/**
 	 * Subscribe to state changes.
 	 *
-	 * @param {Function} listener Callback receiving (state, changeType).
+	 * @param {Function} listener Callback receiving (state, changeType, sideId).
 	 * @return {Function} Unsubscribe function.
 	 */
 	subscribe(listener) {
@@ -72,12 +145,14 @@ export class StateStore {
 	/**
 	 * Notify all subscribers of state mutation.
 	 *
-	 * @param {string} changeType Identifier for the change event.
+	 * @param {string}      changeType Identifier for the change event.
+	 * @param {string|null} sideId     Affected print side ID (`null` means all sides).
 	 */
-	notify(changeType) {
+	notify(changeType, sideId = null) {
+		this.lastChangedSideId = sideId || null;
 		for (const listener of this.listeners) {
 			try {
-				listener(this.state, changeType);
+				listener(this.state, changeType, this.lastChangedSideId);
 			} catch (err) {
 				console.error('[MrTee StateStore] Listener error:', err);
 			}
@@ -97,10 +172,11 @@ export class StateStore {
 	/**
 	 * Update text reference value and mark as edited.
 	 *
-	 * @param {string} refId Reference ID.
-	 * @param {string} value New text value.
+	 * @param {string}      refId  Reference ID.
+	 * @param {string}      value  New text value.
+	 * @param {string|null} sideId Optional explicit print side ID.
 	 */
-	setTextValue(refId, value) {
+	setTextValue(refId, value, sideId = null) {
 		const ref = this.getReference(refId);
 		if (!ref) return;
 		if (ref.value === value) return;
@@ -117,19 +193,19 @@ export class StateStore {
 		}
 
 		this.state.isDirty = true;
-		this.validateWarnings();
-		this.notify('text_change');
+		this.notify('text_change', sideId || this.resolveSideIdForRef(refId));
 	}
 
 	/**
 	 * Update image reference URL and track customization state.
 	 *
-	 * @param {string}  refId    Reference ID.
-	 * @param {string}  imageUrl New image URL or data URI.
-	 * @param {string}  fileName Optional uploaded file name.
-	 * @param {boolean} isCustom Whether customer uploaded/changed from default.
+	 * @param {string}      refId    Reference ID.
+	 * @param {string}      imageUrl New image URL or data URI.
+	 * @param {string}      fileName Optional uploaded file name.
+	 * @param {boolean}     isCustom Whether customer uploaded/changed from default.
+	 * @param {string|null} sideId   Optional explicit print side ID.
 	 */
-	setImageValue(refId, imageUrl, fileName = '', isCustom = true) {
+	setImageValue(refId, imageUrl, fileName = '', isCustom = true, sideId = null) {
 		const ref = this.getReference(refId);
 		if (!ref) return;
 
@@ -142,6 +218,11 @@ export class StateStore {
 		if (ref.url === nextUrl && wasEdited === nextEdited) return;
 
 		ref.url = nextUrl;
+		if (nextEdited || (ref._defaultUrl !== undefined && nextUrl !== ref._defaultUrl)) {
+			delete ref.previewUrl;
+		} else if (ref._defaultPreviewUrl) {
+			ref.previewUrl = ref._defaultPreviewUrl;
+		}
 
 		if (editedProp) {
 			editedProp.value = nextEdited;
@@ -159,18 +240,18 @@ export class StateStore {
 		if (nextEdited) {
 			this.state.isDirty = true;
 		}
-		this.validateWarnings();
-		this.notify('image_change');
+		this.notify('image_change', sideId || this.resolveSideIdForRef(refId));
 	}
 
 	/**
 	 * Update font family for a text line.
 	 *
-	 * @param {string} refId Reference ID.
-	 * @param {string} fontId Font key.
-	 * @param {Object} fontDef Font definition.
+	 * @param {string}      refId   Reference ID.
+	 * @param {string}      fontId  Font key.
+	 * @param {Object|null} fontDef Font definition.
+	 * @param {string|null} sideId  Optional explicit print side ID.
 	 */
-	setTextFont(refId, fontId, fontDef = null) {
+	setTextFont(refId, fontId, fontDef = null, sideId = null) {
 		const ref = this.getReference(refId);
 		if (!ref) return;
 		if (ref.fontId === fontId) return;
@@ -237,7 +318,7 @@ export class StateStore {
 		}
 
 		this.state.isDirty = true;
-		this.notify('font_change');
+		this.notify('font_change', sideId || this.resolveSideIdForRef(refId));
 	}
 
 	/**
@@ -246,14 +327,17 @@ export class StateStore {
 	 * @param {string}      colorRefId COLOR_SET reference ID.
 	 * @param {string}      colorHex   Selected color hex code (e.g. '#08086d') or 'multi'.
 	 * @param {Object|null} fontDef    Optional active font definition when restoring 'multi' palette.
+	 * @param {string|null} sideId     Optional explicit print side ID.
 	 */
-	setColorSelection(colorRefId, colorHex, fontDef = null) {
+	setColorSelection(colorRefId, colorHex, fontDef = null, sideId = null) {
 		const colorRef = this.getReference(colorRefId);
 		if (!colorRef) return;
 
 		if (colorRef._initialMultiPalette === undefined && Array.isArray(colorRef.palette) && colorRef.palette.length > 1) {
 			colorRef._initialMultiPalette = colorRef.palette.slice();
 		}
+
+		const resolvedSide = sideId || this.resolveSideIdForRef(colorRefId);
 
 		if (String(colorHex).toLowerCase() === 'multi') {
 			if (colorRef.colorMode === 'multi') return;
@@ -272,7 +356,7 @@ export class StateStore {
 				colorRef.color = { hex: colorRef.colorHex };
 			}
 			this.state.isDirty = true;
-			this.notify('color_change');
+			this.notify('color_change', resolvedSide);
 			return;
 		}
 
@@ -290,7 +374,7 @@ export class StateStore {
 			}
 		}
 		this.state.isDirty = true;
-		this.notify('color_change');
+		this.notify('color_change', resolvedSide);
 	}
 
 	/**
@@ -307,7 +391,7 @@ export class StateStore {
 			ref.iconKey = iconKey;
 			ref.url = iconUrl;
 		}
-		this.notify('icon_change');
+		this.notify('icon_change', this.resolveSideIdForRef(imgRefId) || 'front');
 	}
 
 	/**
@@ -350,9 +434,8 @@ export class StateStore {
 			if (grpRef) grpRef.editable = isActive;
 		}
 
-		this.validateWarnings();
 		if (triggerNotify) {
-			this.notify('count_change');
+			this.notify('count_change', null);
 		}
 	}
 

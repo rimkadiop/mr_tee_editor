@@ -32,6 +32,20 @@ class FontRegistry {
 	private static $svg_data_cache = array();
 
 	/**
+	 * Per-request memoized filemtime() cache (0 = missing/unreadable) for font binaries and .woff2 companions.
+	 *
+	 * @var array<string, int>
+	 */
+	private static $file_stat_cache = array();
+
+	/**
+	 * Per-request memoized site host and HTTP host pair for same-origin URL normalization.
+	 *
+	 * @var array{site_host: string, http_host: string}|null
+	 */
+	private static $host_cache = null;
+
+	/**
 	 * Return all built-in bundled font definitions (cannot be overwritten or deleted by custom uploads).
 	 *
 	 * @return array<string, array<string, mixed>>
@@ -289,6 +303,7 @@ class FontRegistry {
 				'data_url'          => MR_TEE_EDITOR_URL . 'assets/fonts/cache/palestine_1445.json',
 				'font_type'         => 'opentype_svg',
 				'color_svg'         => true,
+				'colr_hybrid'       => true,
 				'category'          => 'color_svg',
 				'letter_spacing'    => 0.06,
 				'uppercase'         => false,
@@ -419,20 +434,24 @@ class FontRegistry {
 			}
 		}
 
-		// Enrich OpenType-SVG fonts with lightweight package URLs (manifest & thumbnail)
-		foreach ( $fonts as $f_id => &$f_data ) {
-			if ( ! empty( $f_data['font_type'] ) && 'opentype_svg' === $f_data['font_type'] ) {
-				$manifest_url = SvgFontPackager::manifest_url( $f_id );
-				if ( $manifest_url ) {
-					$f_data['manifest_url'] = $manifest_url;
+		// Enrich OpenType-SVG fonts from the persistent package index (zero disk I/O in steady state)
+		$svg_font_ids = array();
+		foreach ( $fonts as $f_id => $f_data ) {
+			if ( ( ! empty( $f_data['font_type'] ) && 'opentype_svg' === $f_data['font_type'] ) || ! empty( $f_data['color_svg'] ) ) {
+				$svg_font_ids[] = $f_id;
+			}
+		}
+		if ( ! empty( $svg_font_ids ) ) {
+			$pkg_urls = SvgFontPackager::get_indexed_package_urls( $svg_font_ids );
+			foreach ( $pkg_urls as $f_id => $meta ) {
+				if ( ! empty( $meta['manifest_url'] ) ) {
+					$fonts[ $f_id ]['manifest_url'] = $meta['manifest_url'];
 				}
-				$thumb_url = SvgFontPackager::thumb_url( $f_id );
-				if ( $thumb_url ) {
-					$f_data['thumb_url'] = $thumb_url;
+				if ( ! empty( $meta['thumb_url'] ) ) {
+					$fonts[ $f_id ]['thumb_url'] = $meta['thumb_url'];
 				}
 			}
 		}
-		unset( $f_data );
 
 		self::$fonts_cache = $fonts;
 
@@ -440,12 +459,13 @@ class FontRegistry {
 	}
 
 	/**
-	 * Register WordPress AJAX endpoints for font management.
+	 * Register WordPress AJAX and WP-Cron hooks for font management and background packaging.
 	 */
 	public static function register_hooks() {
 		add_action( 'wp_ajax_mr_tee_upload_font', array( __CLASS__, 'ajax_upload_font' ) );
 		add_action( 'wp_ajax_mr_tee_get_svg_font_data', array( __CLASS__, 'ajax_get_svg_font_data' ) );
 		add_action( 'wp_ajax_nopriv_mr_tee_get_svg_font_data', array( __CLASS__, 'ajax_get_svg_font_data' ) );
+		add_action( SvgFontPackager::CRON_HOOK, array( SvgFontPackager::class, 'build_all' ) );
 	}
 
 	/**
@@ -472,6 +492,49 @@ class FontRegistry {
 		fclose( $fh ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
 
 		return in_array( $magic, array( "\x00\x01\x00\x00", 'OTTO', 'true', 'typ1' ), true );
+	}
+
+	/**
+	 * Check whether an SFNT font binary contains both `COLR` and `CPAL` color tables
+	 * (true hybrid COLR/CPAL font such as Palestine 1445).
+	 *
+	 * @param string $file_path Absolute path to font binary.
+	 * @return bool
+	 */
+	private static function has_colr_cpal_tables( $file_path ) {
+		if ( ! is_string( $file_path ) || '' === $file_path || ! file_exists( $file_path ) || ! is_readable( $file_path ) ) {
+			return false;
+		}
+		$fh = @fopen( $file_path, 'rb' ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fopen, WordPress.PHP.NoSilencedErrors.Discouraged
+		if ( ! $fh ) {
+			return false;
+		}
+		$header = fread( $fh, 12 ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fread
+		if ( strlen( $header ) < 12 ) {
+			fclose( $fh ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+			return false;
+		}
+		$num_tables = unpack( 'n', substr( $header, 4, 2 ) )[1];
+		$has_colr   = false;
+		$has_cpal   = false;
+		for ( $i = 0; $i < $num_tables; $i++ ) {
+			$entry = fread( $fh, 16 ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fread
+			if ( strlen( $entry ) < 16 ) {
+				break;
+			}
+			$tag = substr( $entry, 0, 4 );
+			if ( 'COLR' === $tag ) {
+				$has_colr = true;
+			} elseif ( 'CPAL' === $tag ) {
+				$has_cpal = true;
+			}
+			if ( $has_colr && $has_cpal ) {
+				fclose( $fh ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+				return true;
+			}
+		}
+		fclose( $fh ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_fclose
+		return false;
 	}
 
 	/**
@@ -690,12 +753,17 @@ class FontRegistry {
 			}
 
 			if ( $is_ot_svg ) {
+				if ( self::has_colr_cpal_tables( $font_path ) ) {
+					$font_def['colr_hybrid'] = true;
+				}
+				SvgFontPackager::invalidate_index( $font_id );
 				$manifest = SvgFontPackager::build( $font_path, $font_id, $font_name );
 				if ( ! empty( $manifest ) ) {
 					$font_def['manifest_url'] = SvgFontPackager::manifest_url( $font_id );
 					$font_def['thumb_url']    = SvgFontPackager::thumb_url( $font_id );
 					$font_def['glyph_count']  = ! empty( $manifest['glyphs'] ) ? count( (array) $manifest['glyphs'] ) : 0;
 				} else {
+					SvgFontPackager::invalidate_index( $font_id );
 					$cache_data              = OpenTypeSvgParser::get_or_create_cache( $font_path, $font_id, $font_name );
 					$font_def['data_url']    = $fonts_url . 'cache/' . $font_id . '.json';
 					$font_def['glyph_count'] = ! empty( $cache_data['glyphs'] ) ? count( $cache_data['glyphs'] ) : 0;
@@ -710,8 +778,9 @@ class FontRegistry {
 		}
 
 		update_option( 'mr_tee_custom_fonts', $custom_fonts, false );
-		self::$fonts_cache    = null;
-		self::$svg_data_cache = array();
+		self::$fonts_cache     = null;
+		self::$svg_data_cache  = array();
+		self::$file_stat_cache = array();
 
 		wp_send_json_success(
 			array(
@@ -725,7 +794,8 @@ class FontRegistry {
 	 * Handle admin AJAX deletion of a merchant-uploaded custom font.
 	 *
 	 * Refuses deletion of built-in bundled fonts, removes the font from `mr_tee_custom_fonts`,
-	 * unlinks the uploaded font file and its font-cache directory, and returns the updated font registry.
+	 * unlinks the uploaded font file and its font-cache directory, invalidates the package index,
+	 * and returns the updated font registry.
 	 */
 	public static function ajax_delete_custom_font() {
 		if ( false === check_ajax_referer( 'mr_tee_admin_nonce', 'nonce', false ) ) {
@@ -754,11 +824,10 @@ class FontRegistry {
 
 		$target = $custom_fonts[ $font_id ];
 
-		// Safely unlink custom font binary only if strictly inside uploads/mr_tee_editor/fonts/.
-		$wp_up          = wp_upload_dir();
-		$uploads_root   = ! empty( $wp_up['basedir'] ) ? trailingslashit( $wp_up['basedir'] ) . 'mr_tee_editor/' : '';
-		$uploads_fonts  = $uploads_root ? $uploads_root . 'fonts/' : '';
-		$uploads_fcache = SvgFontPackager::uploads_cache_base_dir();
+		// Safely unlink custom font binary (and any companion .woff2) only if strictly inside uploads/mr_tee_editor/fonts/.
+		$wp_up         = wp_upload_dir();
+		$uploads_root  = ! empty( $wp_up['basedir'] ) ? trailingslashit( $wp_up['basedir'] ) . 'mr_tee_editor/' : '';
+		$uploads_fonts = $uploads_root ? $uploads_root . 'fonts/' : '';
 
 		if ( ! empty( $target['path'] ) && is_string( $target['path'] ) && file_exists( $target['path'] ) && '' !== $uploads_fonts && is_dir( $uploads_fonts ) ) {
 			$real_file = realpath( $target['path'] );
@@ -768,35 +837,26 @@ class FontRegistry {
 				$norm_dir  = trailingslashit( wp_normalize_path( $real_dir ) );
 				if ( 0 === strpos( $norm_file, $norm_dir ) ) {
 					@unlink( $real_file ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+					$woff2_companion = (string) preg_replace( '/\.(?:ttf|otf)$/i', '.woff2', $real_file );
+					if ( $woff2_companion !== $real_file && file_exists( $woff2_companion ) ) {
+						@unlink( $woff2_companion ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+					}
 				}
 			}
 		}
 
-		// Clean up uploads font-cache directory and legacy JSON caches for this custom font.
-		if ( is_dir( $uploads_fcache ) ) {
-			self::recursive_rmdir_inside( $uploads_fcache . $font_id, $uploads_fcache );
-			$legacy_json = $uploads_fcache . $font_id . '.json';
-			if ( file_exists( $legacy_json ) ) {
-				@unlink( $legacy_json ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
-			}
-		}
+		// Clean up packaged cache directories, static memo caches, and persistent WP option index.
+		SvgFontPackager::delete_package( $font_id );
 		if ( '' !== $uploads_fonts && file_exists( $uploads_fonts . 'cache/' . $font_id . '.json' ) ) {
 			@unlink( $uploads_fonts . 'cache/' . $font_id . '.json' ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
-		}
-		// Also clean any non-builtin cache folder/json created inside plugin cache dir if present.
-		$plugin_cache_base = SvgFontPackager::get_plugin_dir() . 'assets/fonts/cache/';
-		if ( is_dir( $plugin_cache_base . $font_id ) ) {
-			self::recursive_rmdir_inside( $plugin_cache_base . $font_id, $plugin_cache_base );
-		}
-		if ( file_exists( $plugin_cache_base . $font_id . '.json' ) ) {
-			@unlink( $plugin_cache_base . $font_id . '.json' ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
 		}
 
 		unset( $custom_fonts[ $font_id ] );
 		update_option( 'mr_tee_custom_fonts', $custom_fonts, false );
 
-		self::$fonts_cache    = null;
-		self::$svg_data_cache = array();
+		self::$fonts_cache     = null;
+		self::$svg_data_cache  = array();
+		self::$file_stat_cache = array();
 
 		$updated_fonts = array();
 		foreach ( self::get_fonts() as $fid => $fmeta ) {
@@ -823,11 +883,49 @@ class FontRegistry {
 	}
 
 	/**
+	 * Read a small legacy monolithic JSON font cache only when its file size is within `$max_bytes`.
+	 * Prevents storefront memory/TTFB spikes from 9–27 MB legacy bitmap JSON caches.
+	 *
+	 * @param string $font_path Absolute path to source font binary.
+	 * @param string $font_id   Sanitized font identifier.
+	 * @param int    $max_bytes Maximum allowed legacy JSON file size in bytes.
+	 * @return array<string, mixed>|null
+	 */
+	private static function read_small_legacy_json( $font_path, $font_id, $max_bytes ) {
+		$clean_id          = sanitize_key( (string) $font_id );
+		$legacy_candidates = array(
+			dirname( (string) $font_path ) . '/cache/' . $clean_id . '.json',
+			SvgFontPackager::uploads_cache_base_dir() . $clean_id . '.json',
+		);
+
+		foreach ( array_values( array_unique( $legacy_candidates ) ) as $cand ) {
+			if ( ! file_exists( $cand ) || ! is_readable( $cand ) ) {
+				continue;
+			}
+			$size = @filesize( $cand ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+			if ( false === $size || $size <= 0 || $size > $max_bytes ) {
+				continue;
+			}
+			$cached = @file_get_contents( $cand ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents, WordPress.PHP.NoSilencedErrors.Discouraged
+			if ( false === $cached || '' === $cached ) {
+				continue;
+			}
+			$parsed = json_decode( $cached, true );
+			if ( is_array( $parsed ) && ! empty( $parsed['glyphs'] ) ) {
+				return $parsed;
+			}
+		}
+
+		return null;
+	}
+
+	/**
 	 * AJAX endpoint to return parsed SVG font data by font ID.
 	 *
 	 * Strictly validates `$font_id` against registered fonts (returns 404 if unknown, no fallback),
 	 * restricts `fullMap` to privileged staff (`manage_woocommerce`, `edit_products`, `edit_shop_orders`),
-	 * and never triggers synchronous `SvgFontPackager::build()` for unauthenticated visitors.
+	 * never triggers synchronous `SvgFontPackager::build()` for unauthenticated visitors, and
+	 * refuses decoding legacy monolithic `.json` files larger than 1 MB for storefront visitors.
 	 */
 	public static function ajax_get_svg_font_data() {
 		$raw_id  = ! empty( $_GET['font_id'] ) ? wp_unslash( $_GET['font_id'] ) : ( ! empty( $_POST['font_id'] ) ? wp_unslash( $_POST['font_id'] ) : '' ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended,WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
@@ -850,32 +948,21 @@ class FontRegistry {
 		$can_admin_export = current_user_can( 'manage_woocommerce' ) || current_user_can( 'edit_products' ) || current_user_can( 'edit_shop_orders' );
 
 		if ( ! $can_admin_export ) {
-			// Unauthenticated / customer request: serve ONLY pre-cached package data; never invoke synchronous build().
-			$data          = null;
-			$manifest_file = SvgFontPackager::manifest_path( $font_id );
-			if ( file_exists( $manifest_file ) ) {
-				$json     = @file_get_contents( $manifest_file ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents, WordPress.PHP.NoSilencedErrors.Discouraged
-				$manifest = json_decode( (string) $json, true );
-				if ( is_array( $manifest ) && ! empty( $manifest['glyphs'] ) ) {
-					$data = SvgFontPackager::hydrate( $manifest, $font_id );
-				}
+			// Unauthenticated / customer request: verify manifest freshness non-blockingly (schedules cron if stale;
+			// falls back to readable v2.1-v2.3 manifests) and never decodes legacy monolithic .json > 1 MB.
+			$data     = null;
+			$manifest = SvgFontPackager::get_manifest(
+				$font['path'],
+				$font_id,
+				isset( $font['name'] ) ? $font['name'] : $font_id,
+				false
+			);
+			if ( ! empty( $manifest ) ) {
+				$data = SvgFontPackager::hydrate( $manifest, $font_id, false );
 			}
 
 			if ( empty( $data ) ) {
-				$legacy_candidates = array(
-					dirname( $font['path'] ) . '/cache/' . $font_id . '.json',
-					SvgFontPackager::uploads_cache_base_dir() . $font_id . '.json',
-				);
-				foreach ( $legacy_candidates as $cand ) {
-					if ( file_exists( $cand ) ) {
-						$cached = @file_get_contents( $cand ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents, WordPress.PHP.NoSilencedErrors.Discouraged
-						$parsed = json_decode( (string) $cached, true );
-						if ( is_array( $parsed ) && ! empty( $parsed['glyphs'] ) ) {
-							$data = $parsed;
-							break;
-						}
-					}
-				}
+				$data = self::read_small_legacy_json( $font['path'], $font_id, 1048576 ); // 1 MB hard cap
 			}
 
 			if ( empty( $data ) ) {
@@ -887,7 +974,7 @@ class FontRegistry {
 			wp_send_json_success( $data );
 		}
 
-		$data = self::get_svg_font_data( $font_id );
+		$data = self::get_svg_font_data( $font_id, true, true );
 		if ( ! empty( $data ) ) {
 			wp_send_json_success( $data );
 		} else {
@@ -898,43 +985,73 @@ class FontRegistry {
 	/**
 	 * Get parsed OpenType-SVG glyph and metrics dataset for an OpenType-SVG font.
 	 *
-	 * @param string $font_id Font identifier.
+	 * @param string $font_id          Font identifier.
+	 * @param bool   $include_full_map Whether to include 300 DPI `fullMap` URLs (default false on storefront).
+	 * @param bool   $allow_build      Whether synchronous package building is permitted when stale/missing.
 	 * @return array<string, mixed>|null
 	 */
-	public static function get_svg_font_data( $font_id ) {
-		if ( array_key_exists( $font_id, self::$svg_data_cache ) ) {
-			return self::$svg_data_cache[ $font_id ];
+	public static function get_svg_font_data( $font_id, $include_full_map = false, $allow_build = true ) {
+		// Preserve 300 DPI fullMap for legacy 1-arg privileged admin export callers (e.g. Plugin::load_svg_fonts_for_ids).
+		if ( func_num_args() < 2 ) {
+			$effective_full_map = (
+				function_exists( 'is_admin' )
+				&& is_admin()
+				&& function_exists( 'current_user_can' )
+				&& ( current_user_can( 'manage_woocommerce' ) || current_user_can( 'edit_products' ) || current_user_can( 'edit_shop_orders' ) )
+			);
+		} else {
+			$effective_full_map = (bool) $include_full_map;
+		}
+		$allow_build = (bool) $allow_build;
+
+		$cache_key = $font_id . '|' . ( $effective_full_map ? '1' : '0' ) . '|' . ( $allow_build ? '1' : '0' );
+		if ( array_key_exists( $cache_key, self::$svg_data_cache ) ) {
+			return self::$svg_data_cache[ $cache_key ];
 		}
 
 		$font = self::get_font( $font_id );
 		if ( empty( $font ) || empty( $font['path'] ) || ! file_exists( $font['path'] ) ) {
-			self::$svg_data_cache[ $font_id ] = null;
+			self::$svg_data_cache[ $cache_key ] = null;
 			return null;
 		}
 
-		if ( ! empty( $font['font_type'] ) && 'opentype_svg' === $font['font_type'] ) {
-			$manifest = SvgFontPackager::get_manifest( $font['path'], $font['id'], $font['name'] );
-			if ( ! empty( $manifest ) ) {
-				self::$svg_data_cache[ $font_id ] = SvgFontPackager::hydrate( $manifest, $font['id'] );
-				return self::$svg_data_cache[ $font_id ];
-			}
-			self::$svg_data_cache[ $font_id ] = OpenTypeSvgParser::get_or_create_cache( $font['path'], $font['id'], $font['name'] );
-			return self::$svg_data_cache[ $font_id ];
+		$is_known_ot_svg = ( ! empty( $font['font_type'] ) && 'opentype_svg' === $font['font_type'] ) || ! empty( $font['color_svg'] );
+		$is_ot_svg       = $is_known_ot_svg || OpenTypeSvgParser::is_opentype_svg( $font['path'] );
+
+		if ( ! $is_ot_svg ) {
+			self::$svg_data_cache[ $cache_key ] = null;
+			return null;
 		}
 
-		// Check dynamically if the font file is an OpenType-SVG font
-		if ( OpenTypeSvgParser::is_opentype_svg( $font['path'] ) ) {
-			$manifest = SvgFontPackager::get_manifest( $font['path'], $font['id'], $font['name'] );
-			if ( ! empty( $manifest ) ) {
-				self::$svg_data_cache[ $font_id ] = SvgFontPackager::hydrate( $manifest, $font['id'] );
-				return self::$svg_data_cache[ $font_id ];
-			}
-			self::$svg_data_cache[ $font_id ] = OpenTypeSvgParser::get_or_create_cache( $font['path'], $font['id'], $font['name'] );
-			return self::$svg_data_cache[ $font_id ];
+		$manifest = SvgFontPackager::get_manifest(
+			$font['path'],
+			$font['id'],
+			isset( $font['name'] ) ? $font['name'] : $font['id'],
+			$allow_build
+		);
+		if ( ! empty( $manifest ) ) {
+			self::$svg_data_cache[ $cache_key ] = SvgFontPackager::hydrate( $manifest, $font['id'], $effective_full_map );
+			return self::$svg_data_cache[ $cache_key ];
 		}
 
-		self::$svg_data_cache[ $font_id ] = null;
-		return null;
+		if ( ! $allow_build ) {
+			// Storefront non-blocking fallback: NEVER decode legacy monolithic .json files larger than 512 KB.
+			$legacy = self::read_small_legacy_json( $font['path'], $font['id'], 524288 ); // 512 KB hard cap
+			if ( is_array( $legacy ) && ! $effective_full_map ) {
+				unset( $legacy['fullMap'] );
+				$legacy['preview'] = false;
+			}
+			self::$svg_data_cache[ $cache_key ] = $legacy;
+			return self::$svg_data_cache[ $cache_key ];
+		}
+
+		$legacy = OpenTypeSvgParser::get_or_create_cache( $font['path'], $font['id'], isset( $font['name'] ) ? $font['name'] : $font['id'] );
+		if ( is_array( $legacy ) && ! $effective_full_map ) {
+			unset( $legacy['fullMap'] );
+			$legacy['preview'] = false;
+		}
+		self::$svg_data_cache[ $cache_key ] = ! empty( $legacy ) ? $legacy : null;
+		return self::$svg_data_cache[ $cache_key ];
 	}
 
 	/**
@@ -963,23 +1080,213 @@ class FontRegistry {
 	}
 
 	/**
-	 * Build clean inline @font-face CSS declarations for registered standard vector fonts.
+	 * Determine whether a registered font should receive browser `@font-face` rules.
 	 *
-	 * Skips large bitmap OpenType-SVG color fonts (> 768 KB) because those are rendered via
-	 * SvgRenderer WebP/PNG glyph packages and browsers ignore SVG color tables in standard
-	 * HTML buttons/spans—preventing 9 MB to 26+ MB of wasted raw .otf binary downloads on page load.
+	 * Emits `@font-face` ONLY for standard vector TTF/OTF fonts and true COLR/CPAL hybrids
+	 * (such as `palestine_1445`). Skips both bitmap OpenType-SVG fonts and pure-vector
+	 * OpenType-SVG fonts (`use_your_imagination_blue/green/red`), which render via inline SVG paths.
 	 *
-	 * @param array<int, string>|null $allowed_font_ids Optional array of allowed font IDs to filter by.
+	 * @param array<string, mixed> $font Font definition.
+	 * @return bool
+	 */
+	private static function is_font_face_eligible( array $font ) {
+		$is_ot_svg = ( ! empty( $font['font_type'] ) && 'opentype_svg' === $font['font_type'] ) || ! empty( $font['color_svg'] );
+		if ( ! $is_ot_svg ) {
+			return true;
+		}
+		return ! empty( $font['colr_hybrid'] ) || ( ! empty( $font['id'] ) && 'palestine_1445' === $font['id'] );
+	}
+
+	/**
+	 * Cached filemtime() lookup for font binaries and `.woff2` companions (0 = missing/unreadable).
+	 *
+	 * @param string $path Absolute filesystem path.
+	 * @return int
+	 */
+	private static function get_file_mtime_cached( $path ) {
+		if ( ! is_string( $path ) || '' === $path ) {
+			return 0;
+		}
+		if ( ! array_key_exists( $path, self::$file_stat_cache ) ) {
+			self::$file_stat_cache[ $path ] = file_exists( $path ) ? (int) @filemtime( $path ) : 0; // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		}
+		return self::$file_stat_cache[ $path ];
+	}
+
+	/**
+	 * Append a `?v=<mtime>` (or `&v=<mtime>`) cache-busting parameter to a font URL.
+	 *
+	 * @param string $url   Font URL.
+	 * @param int    $mtime File modification timestamp.
 	 * @return string
 	 */
-	public static function get_font_face_css( $allowed_font_ids = null ) {
+	private static function append_version_query( $url, $mtime ) {
+		if ( '' === $url || $mtime <= 0 ) {
+			return $url;
+		}
+		if ( false !== strpos( $url, '?v=' ) || false !== strpos( $url, '&v=' ) ) {
+			return $url;
+		}
+		$sep = ( false === strpos( $url, '?' ) ) ? '?' : '&';
+		return $url . $sep . 'v=' . $mtime;
+	}
+
+	/**
+	 * Resolve normalized, versioned `.woff2` (if companion exists on disk) and `.ttf`/`.otf`
+	 * asset URLs for a `@font-face`-eligible font definition.
+	 *
+	 * Shared by `get_font_face_css()` and `get_primary_woff2_or_ttf_url()` so `<link rel="preload">`
+	 * and `@font-face` URLs always match byte-for-byte.
+	 *
+	 * @param array<string, mixed> $font Font definition.
+	 * @return array{woff2_url: string, fallback_url: string, format: string, mime: string}|null
+	 */
+	private static function resolve_font_asset_urls( array $font ) {
+		if ( empty( $font['url'] ) || ! is_string( $font['url'] ) ) {
+			return null;
+		}
+
+		$f_path        = ! empty( $font['path'] ) ? (string) $font['path'] : '';
+		$primary_mtime = 0;
+		if ( '' !== $f_path ) {
+			$primary_mtime = self::get_file_mtime_cached( $f_path );
+			// Skip local fonts whose file no longer exists on disk (e.g. deleted custom fonts).
+			if ( $primary_mtime <= 0 ) {
+				return null;
+			}
+		}
+
+		if ( null === self::$host_cache ) {
+			$site_host        = ( function_exists( 'home_url' ) && function_exists( 'wp_parse_url' ) )
+				? strtolower( (string) wp_parse_url( home_url(), PHP_URL_HOST ) )
+				: '';
+			$http_host        = isset( $_SERVER['HTTP_HOST'] )
+				? strtolower( (string) preg_replace( '/:\d+$/', '', sanitize_text_field( wp_unslash( $_SERVER['HTTP_HOST'] ) ) ) )
+				: '';
+			self::$host_cache = array(
+				'site_host' => $site_host,
+				'http_host' => $http_host,
+			);
+		}
+
+		$parsed    = function_exists( 'wp_parse_url' ) ? wp_parse_url( $font['url'] ) : parse_url( $font['url'] ); // phpcs:ignore WordPress.WP.AlternativeFunctions.parse_url_parse_url
+		$url_host  = ! empty( $parsed['host'] ) ? strtolower( (string) $parsed['host'] ) : '';
+		$site_host = self::$host_cache['site_host'];
+		$http_host = self::$host_cache['http_host'];
+		$same_host = ( '' === $url_host || $url_host === $site_host || ( '' !== $http_host && $url_host === $http_host ) );
+
+		if ( $same_host && ! empty( $parsed['path'] ) ) {
+			$font_url = $parsed['path'] . ( ! empty( $parsed['query'] ) ? '?' . $parsed['query'] : '' );
+		} else {
+			// Preserve external CDN hostnames untouched.
+			$font_url = $font['url'];
+		}
+
+		$fallback_url = self::append_version_query( $font_url, $primary_mtime );
+
+		// Detect companion .woff2 next to .ttf/.otf on disk.
+		$woff2_url = '';
+		if ( '' !== $f_path && preg_match( '/\.(?:ttf|otf)$/i', $f_path ) ) {
+			$woff2_path  = (string) preg_replace( '/\.(?:ttf|otf)$/i', '.woff2', $f_path );
+			$woff2_mtime = self::get_file_mtime_cached( $woff2_path );
+			if ( $woff2_mtime > 0 ) {
+				$q_pos     = strpos( $font_url, '?' );
+				$base_no_q = ( false !== $q_pos ) ? substr( $font_url, 0, $q_pos ) : $font_url;
+				$woff2_raw = (string) preg_replace( '/\.(?:ttf|otf)$/i', '.woff2', $base_no_q );
+				if ( $woff2_raw !== $base_no_q ) {
+					$woff2_url = self::append_version_query( $woff2_raw, $woff2_mtime );
+				}
+			}
+		}
+
+		$format = ! empty( $font['format'] ) ? (string) $font['format'] : ( preg_match( '/\.otf$/i', $f_path ) ? 'opentype' : 'truetype' );
+		$mime   = ( 'opentype' === $format ) ? 'font/otf' : 'font/ttf';
+
+		return array(
+			'woff2_url'    => $woff2_url,
+			'fallback_url' => $fallback_url,
+			'format'       => $format,
+			'mime'         => $mime,
+		);
+	}
+
+	/**
+	 * Return the primary browser font URL and MIME type (`font/woff2` when a companion `.woff2`
+	 * exists next to the `.ttf`, otherwise `font/ttf` / `font/otf`) for `<link rel="preload" as="font">`
+	 * on Slide 0's active standard vector font (or COLR/CPAL hybrid).
+	 *
+	 * Returns `null` for non-COLR OpenType-SVG fonts or missing fonts.
+	 *
+	 * @param string $font_id Font identifier, alias, or family name.
+	 * @return array{url: string, type: string}|null
+	 */
+	public static function get_primary_woff2_or_ttf_url( $font_id ) {
+		if ( ! is_string( $font_id ) || '' === trim( $font_id ) ) {
+			return null;
+		}
+
+		$fonts    = self::get_fonts();
+		$clean_id = sanitize_key( $font_id );
+		$font     = null;
+
+		if ( isset( $fonts[ $font_id ] ) ) {
+			$font = $fonts[ $font_id ];
+		} elseif ( '' !== $clean_id && isset( $fonts[ $clean_id ] ) ) {
+			$font = $fonts[ $clean_id ];
+		} else {
+			foreach ( $fonts as $f ) {
+				if ( ! empty( $f['aliases'] ) && in_array( $font_id, $f['aliases'], true ) ) {
+					$font = $f;
+					break;
+				}
+				if ( ! empty( $f['family'] ) && 0 === strcasecmp( $f['family'], $font_id ) ) {
+					$font = $f;
+					break;
+				}
+			}
+		}
+
+		if ( ! is_array( $font ) || ! self::is_font_face_eligible( $font ) ) {
+			return null;
+		}
+
+		$urls = self::resolve_font_asset_urls( $font );
+		if ( null === $urls ) {
+			return null;
+		}
+
+		if ( '' !== $urls['woff2_url'] ) {
+			return array(
+				'url'  => $urls['woff2_url'],
+				'type' => 'font/woff2',
+			);
+		}
+
+		return array(
+			'url'  => $urls['fallback_url'],
+			'type' => $urls['mime'],
+		);
+	}
+
+	/**
+	 * Build clean inline @font-face CSS declarations for registered standard vector fonts
+	 * and true COLR/CPAL hybrids (such as `palestine_1445`), preferring companion `.woff2`
+	 * files with `?v=<mtime>` versioning and `.ttf`/`.otf` fallback.
+	 *
+	 * Skips bitmap OpenType-SVG fonts and pure-vector OpenType-SVG fonts (`use_your_imagination_*`)
+	 * because those render via SvgRenderer glyph packages/paths rather than browser `@font-face`.
+	 *
+	 * @param array<int, string>|null $only_font_ids Optional array of allowed font IDs to filter by.
+	 * @return string
+	 */
+	public static function get_font_face_css( $only_font_ids = null ) {
 		$css       = '';
 		$all_fonts = self::get_fonts();
 		$fonts     = $all_fonts;
 
-		if ( is_array( $allowed_font_ids ) ) {
-			$allowed_map = array_flip( $allowed_font_ids );
-			// Always include 'bungee' (72 KB) as a universal bold vector fallback for missing OpenType-SVG digits/symbols
+		if ( is_array( $only_font_ids ) ) {
+			$allowed_map = array_flip( $only_font_ids );
+			// Always include 'bungee' (~40 KB WOFF2) as a universal bold vector fallback for missing OpenType-SVG digits/symbols
 			$allowed_map['bungee'] = true;
 			$filtered              = array();
 			foreach ( $all_fonts as $fid => $fdef ) {
@@ -990,61 +1297,47 @@ class FontRegistry {
 			$fonts = $filtered;
 		}
 
-		$site_host = strtolower( (string) wp_parse_url( home_url(), PHP_URL_HOST ) );
-		$http_host = isset( $_SERVER['HTTP_HOST'] )
-			? strtolower( (string) preg_replace( '/:\d+$/', '', sanitize_text_field( wp_unslash( $_SERVER['HTTP_HOST'] ) ) ) )
-			: '';
-
 		foreach ( $fonts as $font ) {
-			$f_path = ! empty( $font['path'] ) ? (string) $font['path'] : '';
-
-			// Skip local fonts whose file no longer exists on disk (e.g. deleted custom fonts).
-			if ( '' !== $f_path && ! file_exists( $f_path ) ) {
+			if ( ! self::is_font_face_eligible( $font ) ) {
 				continue;
 			}
 
-			$is_ot_svg = ( ! empty( $font['font_type'] ) && 'opentype_svg' === $font['font_type'] ) || ! empty( $font['color_svg'] );
-			if ( $is_ot_svg ) {
-				// Skip multi-megabyte bitmap OpenType-SVG fonts (> 768 KB), but emit @font-face for lightweight
-				// hybrid COLR/CPAL/TrueType fonts (such as palestine_1445 at ~557 KB) so their vector outline glyphs render natively.
-				if ( '' === $f_path || filesize( $f_path ) > 786432 ) {
-					continue;
-				}
+			$urls = self::resolve_font_asset_urls( $font );
+			if ( null === $urls ) {
+				continue;
 			}
 
-			if ( ! empty( $font['url'] ) ) {
-				$parsed    = wp_parse_url( $font['url'] );
-				$url_host  = ! empty( $parsed['host'] ) ? strtolower( (string) $parsed['host'] ) : '';
-				$same_host = ( '' === $url_host || $url_host === $site_host || ( '' !== $http_host && $url_host === $http_host ) );
-
-				if ( $same_host && ! empty( $parsed['path'] ) ) {
-					$font_url = $parsed['path'] . ( ! empty( $parsed['query'] ) ? '?' . $parsed['query'] : '' );
-				} else {
-					// Preserve external CDN hostnames untouched.
-					$font_url = $font['url'];
-				}
-
-				$format = ! empty( $font['format'] ) ? $font['format'] : 'truetype';
-
-				// Primary font-family declaration
-				$css .= sprintf(
-					"@font-face { font-family: '%s'; src: url('%s') format('%s'); font-weight: normal; font-style: normal; font-display: swap; }\n",
-					esc_attr( $font['family'] ),
-					esc_url( $font_url ),
-					esc_attr( $format )
+			if ( '' !== $urls['woff2_url'] ) {
+				$src_css = sprintf(
+					"url('%s') format('woff2'), url('%s') format('%s')",
+					esc_url( $urls['woff2_url'] ),
+					esc_url( $urls['fallback_url'] ),
+					esc_attr( $urls['format'] )
 				);
+			} else {
+				$src_css = sprintf(
+					"url('%s') format('%s')",
+					esc_url( $urls['fallback_url'] ),
+					esc_attr( $urls['format'] )
+				);
+			}
 
-				// Family aliases declarations (e.g. 'SuperMario256' for 'Super Mario Wii')
-				if ( ! empty( $font['aliases'] ) && is_array( $font['aliases'] ) ) {
-					foreach ( $font['aliases'] as $alias ) {
-						if ( 0 !== strcasecmp( $alias, $font['family'] ) ) {
-							$css .= sprintf(
-								"@font-face { font-family: '%s'; src: url('%s') format('%s'); font-weight: normal; font-style: normal; font-display: swap; }\n",
-								esc_attr( $alias ),
-								esc_url( $font_url ),
-								esc_attr( $format )
-							);
-						}
+			// Primary font-family declaration
+			$css .= sprintf(
+				"@font-face { font-family: '%s'; src: %s; font-weight: normal; font-style: normal; font-display: swap; }\n",
+				esc_attr( $font['family'] ),
+				$src_css
+			);
+
+			// Family aliases declarations (e.g. 'SuperMario256' for 'Super Mario Wii')
+			if ( ! empty( $font['aliases'] ) && is_array( $font['aliases'] ) ) {
+				foreach ( $font['aliases'] as $alias ) {
+					if ( 0 !== strcasecmp( $alias, $font['family'] ) ) {
+						$css .= sprintf(
+							"@font-face { font-family: '%s'; src: %s; font-weight: normal; font-style: normal; font-display: swap; }\n",
+							esc_attr( $alias ),
+							$src_css
+						);
 					}
 				}
 			}

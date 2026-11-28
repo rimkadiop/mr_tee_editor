@@ -370,7 +370,7 @@ class CartIntegration {
 
 		$product_id = method_exists( $item, 'get_product_id' ) ? (int) $item->get_product_id() : 0;
 		if ( $product_id > 0 && NBDesignerBridge::is_nbd_active() ) {
-			$cfg              = SceneGraphSchema::get_product_config( $product_id );
+			$cfg              = SceneGraphSchema::get_product_config( $product_id, array( 'compile_scene_graph' => false ) );
 			$should_handshake = isset( $cfg['nbd_handshake'] ) ? ! empty( $cfg['nbd_handshake'] ) : true;
 			if ( $should_handshake && ! empty( $cloned['payload'] ) && is_array( $cloned['payload'] ) ) {
 				$cloned['nbd'] = NBDesignerBridge::inject_nbd_artifacts(
@@ -710,7 +710,7 @@ class CartIntegration {
 			}
 		}
 
-		$config = SceneGraphSchema::get_product_config( $product_id );
+		$config = SceneGraphSchema::get_product_config( $product_id, array( 'compile_scene_graph' => false ) );
 
 		// Parse optional multi-view mr_tee_previews_json while guaranteeing primary preview is item 0
 		$raw_previews_json = isset( $_POST['mr_tee_previews_json'] ) ? wp_unslash( $_POST['mr_tee_previews_json'] ) : ''; // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.NonceVerification.Missing
@@ -1012,7 +1012,7 @@ class CartIntegration {
 		$item_label  = ! empty( $data['repeater_item_label'] ) ? sanitize_text_field( (string) $data['repeater_item_label'] ) : '';
 
 		if ( '' === $count_label && $product_id > 0 ) {
-			$cfg = SceneGraphSchema::get_product_config( $product_id );
+			$cfg = SceneGraphSchema::get_product_config( $product_id, array( 'compile_scene_graph' => false ) );
 			if ( ! empty( $cfg['repeater']['label'] ) ) {
 				$count_label = sanitize_text_field( (string) $cfg['repeater']['label'] );
 			}

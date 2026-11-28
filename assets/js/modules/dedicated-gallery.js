@@ -12,6 +12,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
+const TRANSPARENT_PLACEHOLDER_GIF = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 const SVG_ICON_SHIRT = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.38 3.46L16 2a4 4 0 0 1-8 0L3.62 3.46a2 2 0 0 0-1.34 2.23l.58 3.47a1 1 0 0 0 .99.84H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.15a1 1 0 0 0 .99-.84l.58-3.47a2 2 0 0 0-1.34-2.23z"/></svg>';
 const SVG_ICON_ZOOM = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>';
 const SVG_ICON_PHOTO = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
@@ -98,6 +99,9 @@ export class DedicatedGallery {
 		this.bindVariationSync();
 		this.initMobilePreviewFab();
 		this.goToIndex(0, { silent: true });
+		if (this.slides.length > 1) {
+			this.scheduleIdleNextSlideHydration();
+		}
 	}
 
 	/**
@@ -344,8 +348,14 @@ export class DedicatedGallery {
 		let anySlideLocked = false;
 		const slidesHtml = rawSlides.map((s, idx) => {
 			const imgUrl = DedicatedGallery.normalizeProtocol(s.image_url || '');
-			const srcsetAttr = s.srcset ? ` srcset="${DedicatedGallery.escHtml(s.srcset)}"` : '';
-			const sizesAttr = s.sizes ? ` sizes="${DedicatedGallery.escHtml(s.sizes)}"` : '';
+			const isDeferred = idx > 0;
+			const srcAttrs = isDeferred
+				? `src="${TRANSPARENT_PLACEHOLDER_GIF}" data-src="${DedicatedGallery.escHtml(imgUrl)}"` +
+				  (s.srcset ? ` data-srcset="${DedicatedGallery.escHtml(s.srcset)}"` : '') +
+				  (s.sizes ? ` data-sizes="${DedicatedGallery.escHtml(s.sizes)}"` : '')
+				: `src="${DedicatedGallery.escHtml(imgUrl)}"` +
+				  (s.srcset ? ` srcset="${DedicatedGallery.escHtml(s.srcset)}"` : '') +
+				  (s.sizes ? ` sizes="${DedicatedGallery.escHtml(s.sizes)}"` : '');
 			const dimAttrs = (s.width && s.height) ? ` width="${parseInt(s.width, 10)}" height="${parseInt(s.height, 10)}"` : '';
 			const loadAttrs = idx === 0
 				? ' loading="eager" fetchpriority="high" decoding="sync"'
@@ -365,7 +375,7 @@ export class DedicatedGallery {
 			const overlayHtml = s.is_customizable
 				? `<div class="mr-tee-live-stage-overlay" data-view-id="${DedicatedGallery.escHtml(s.view_id)}" data-side-id="${DedicatedGallery.escHtml(s.side_id || 'front')}" data-blend="${DedicatedGallery.escHtml(s.blend_mode || 'normal')}"><div class="mr-tee-live-svg-container"></div></div>`
 				: '';
-			return `<div class="mr-tee-slide${idx === 0 ? ' is-active' : ''}" data-slide-index="${idx}" data-view-id="${DedicatedGallery.escHtml(s.view_id)}" data-side-id="${DedicatedGallery.escHtml(s.side_id || '')}" data-view-role="${DedicatedGallery.escHtml(s.view_role || 'full')}" data-customizable="${s.is_customizable ? '1' : '0'}"><div class="${stageClass}"${stageStyle}><img src="${DedicatedGallery.escHtml(imgUrl)}"${srcsetAttr}${sizesAttr} alt="${DedicatedGallery.escHtml(s.alt || s.label || '')}" class="mr-tee-slide-img${idx === primaryVariationIdx ? ' wp-post-image' : ''} skip-lazy no-lazyload" data-no-lazy="1" data-skip-lazy="1" data-large_image="${DedicatedGallery.escHtml(imgUrl)}"${dimAttrs}${loadAttrs} draggable="false" />${overlayHtml}</div></div>`;
+			return `<div class="mr-tee-slide${idx === 0 ? ' is-active' : ''}" data-slide-index="${idx}" data-view-id="${DedicatedGallery.escHtml(s.view_id)}" data-side-id="${DedicatedGallery.escHtml(s.side_id || '')}" data-view-role="${DedicatedGallery.escHtml(s.view_role || 'full')}" data-customizable="${s.is_customizable ? '1' : '0'}"><div class="${stageClass}"${stageStyle}><img ${srcAttrs} alt="${DedicatedGallery.escHtml(s.alt || s.label || '')}" class="mr-tee-slide-img${idx === primaryVariationIdx ? ' wp-post-image' : ''} skip-lazy no-lazyload" data-no-lazy="1" data-skip-lazy="1" data-large_image="${DedicatedGallery.escHtml(imgUrl)}"${dimAttrs}${loadAttrs} draggable="false" />${overlayHtml}</div></div>`;
 		}).join('');
 
 		const arrowsHtml = count > 1
@@ -736,7 +746,7 @@ export class DedicatedGallery {
 		const thumbEl = this.thumbs[targetSlide.index] ? this.thumbs[targetSlide.index].querySelector('img') : null;
 
 		if (!imgEl.dataset.mrTeeOrigSrc) {
-			imgEl.dataset.mrTeeOrigSrc = imgEl.getAttribute('src') || '';
+			imgEl.dataset.mrTeeOrigSrc = imgEl.getAttribute('data-src') || imgEl.getAttribute('src') || '';
 		}
 		if (!imgEl.dataset.mrTeeOrigLarge) {
 			imgEl.dataset.mrTeeOrigLarge = imgEl.getAttribute('data-large_image') || imgEl.dataset.mrTeeOrigSrc || '';
@@ -753,6 +763,10 @@ export class DedicatedGallery {
 			const normalizedLarge = DedicatedGallery.normalizeProtocol(largeUrl || nextUrl) || normalized;
 			const token = ++syncToken;
 
+			imgEl.dataset.mrTeeHydrated = '1';
+			imgEl.removeAttribute('data-src');
+			imgEl.removeAttribute('data-srcset');
+			imgEl.removeAttribute('data-sizes');
 			imgEl.removeAttribute('srcset');
 			imgEl.removeAttribute('sizes');
 			imgEl.removeAttribute('width');
@@ -856,6 +870,77 @@ export class DedicatedGallery {
 	}
 
 	/**
+	 * Promote deferred `data-srcset`, `data-sizes`, and `data-src` attributes on a true lazy off-screen
+	 * slide image once so initial LCP pays zero network cost for off-screen slides.
+	 *
+	 * @param {Object|null} slide Slide metadata entry from `this.slides`.
+	 * @return {boolean} True if deferred attributes were promoted.
+	 */
+	hydrateSlideImage(slide) {
+		if (!slide || !slide.imgEl) return false;
+		const img = slide.imgEl;
+		if (img.dataset.mrTeeHydrated === '1') return false;
+
+		const dataSrc = img.getAttribute('data-src');
+		const dataSrcset = img.getAttribute('data-srcset');
+		const dataSizes = img.getAttribute('data-sizes');
+
+		img.dataset.mrTeeHydrated = '1';
+		if (!dataSrc && !dataSrcset && !dataSizes) {
+			return false;
+		}
+
+		if (img.getAttribute('loading') === 'lazy') {
+			img.setAttribute('loading', 'eager');
+		}
+		if (dataSizes) {
+			img.setAttribute('sizes', dataSizes);
+			img.removeAttribute('data-sizes');
+		}
+		if (dataSrcset) {
+			img.setAttribute('srcset', dataSrcset);
+			img.removeAttribute('data-srcset');
+		}
+		if (dataSrc) {
+			img.src = DedicatedGallery.normalizeProtocol(dataSrc);
+			img.removeAttribute('data-src');
+		}
+		return true;
+	}
+
+	/**
+	 * Gently hydrate Slide 1 on idle after `window.load` (skipping constrained Save-Data / 2G links)
+	 * so the very first swipe feels instantaneous without competing with Slide 0 LCP.
+	 */
+	scheduleIdleNextSlideHydration() {
+		if (typeof window === 'undefined' || this.slides.length <= 1) return;
+		const conn = typeof navigator !== 'undefined' ? navigator.connection : null;
+		if (conn && (conn.saveData || conn.effectiveType === '2g' || conn.effectiveType === 'slow-2g')) {
+			return;
+		}
+
+		const runHydrate = () => {
+			if (this.slides[1]) {
+				this.hydrateSlideImage(this.slides[1]);
+			}
+		};
+
+		const queueIdle = () => {
+			if (typeof window.requestIdleCallback === 'function') {
+				window.requestIdleCallback(runHydrate, { timeout: 2000 });
+			} else {
+				setTimeout(runHydrate, 1200);
+			}
+		};
+
+		if (document.readyState === 'complete') {
+			queueIdle();
+		} else {
+			window.addEventListener('load', queueIdle, { once: true });
+		}
+	}
+
+	/**
 	 * Promote a lazy slide image to eager loading just before/during swipe or tab switch
 	 * so adjacent slides decode immediately without hurting initial LCP bandwidth.
 	 *
@@ -864,6 +949,7 @@ export class DedicatedGallery {
 	preloadSlideImage(idx) {
 		const slide = this.slides[idx];
 		if (!slide || !slide.imgEl) return;
+		this.hydrateSlideImage(slide);
 		if (slide.imgEl.getAttribute('loading') === 'lazy') {
 			slide.imgEl.setAttribute('loading', 'eager');
 		}
@@ -882,6 +968,7 @@ export class DedicatedGallery {
 		const normalized = ((idx % count) + count) % count;
 		const changed = normalized !== this.activeIndex;
 		this.activeIndex = normalized;
+		this.hydrateSlideImage(this.slides[normalized]);
 		this.preloadSlideImage(normalized);
 
 		if (this.track) {
@@ -1227,6 +1314,7 @@ export class DedicatedGallery {
 		const slide = this.slides[this.activeIndex];
 		if (!slide) return;
 
+		this.hydrateSlideImage(slide);
 		this.toggleFullscreenZoom(false);
 
 		if (this.lbTitleEl) {
@@ -1244,7 +1332,11 @@ export class DedicatedGallery {
 
 		this._lbTargetViewId = slide.viewId;
 		if (this.lbImgEl && slide.imgEl) {
-			const src = slide.imgEl.getAttribute('data-large_image') || slide.imgEl.currentSrc || slide.imgEl.src || '';
+			const src = slide.imgEl.getAttribute('data-large_image')
+				|| slide.imgEl.getAttribute('data-src')
+				|| slide.imgEl.currentSrc
+				|| slide.imgEl.src
+				|| '';
 			this.lbImgEl.src = src;
 			this.lbImgEl.alt = slide.imgEl.alt || slide.label || '';
 		}
@@ -1296,6 +1388,7 @@ export class DedicatedGallery {
 	 */
 	openFullscreen() {
 		if (this.isLightboxOpen) return;
+		this.hydrateSlideImage(this.slides[this.activeIndex]);
 		this._lastFocusedEl = (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement)
 			? document.activeElement
 			: null;
@@ -1315,6 +1408,13 @@ export class DedicatedGallery {
 		if (closeBtn && typeof closeBtn.focus === 'function') {
 			closeBtn.focus({ preventScroll: true });
 		}
+	}
+
+	/**
+	 * Alias for `openFullscreen()`.
+	 */
+	openLightbox() {
+		return this.openFullscreen();
 	}
 
 	/**

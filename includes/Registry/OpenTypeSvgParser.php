@@ -421,28 +421,34 @@ class OpenTypeSvgParser {
 				}
 
 				if ( ! empty( $raw ) ) {
-					// Clean up XML declaration and sanitize extracted SVG markup before caching.
+					// Clean up XML declaration and sanitize extracted SVG document ONCE before splitting defs/glyphs.
 					$raw = (string) preg_replace( '/<\?xml[^>]*\?>/i', '', $raw );
 					$raw = trim( self::sanitize_svg_fragment( $raw ) );
 					if ( '' === $raw ) {
 						continue;
 					}
 
-					// Extract shared <defs> if present in the SVG document.
+					// Extract shared <defs> if present in the already-sanitized SVG document.
 					if ( preg_match( '/<defs[^>]*>(.*?)<\/defs>/is', $raw, $defs_m ) ) {
-						$font_svg_defs .= self::sanitize_svg_fragment( $defs_m[1] ) . "\n";
+						$defs_inner = trim( $defs_m[1] );
+						if ( '' !== $defs_inner ) {
+							$font_svg_defs .= $defs_inner . "\n";
+						}
 					}
 
+					$single_inner = null;
 					for ( $g = $start_gid; $g <= $end_gid; $g++ ) {
 						// Look for targeted glyph element if multi-glyph document.
 						if ( $start_gid !== $end_gid && preg_match( '/(<(?:g|path|text|symbol)[^>]*id=[\'"]glyph' . $g . '[\'"].*?<\/(?:g|path|text|symbol)>|<(?:g|path|text|symbol)[^>]*id=[\'"]glyph' . $g . '[\'"][^\/>]*\/>)/is', $raw, $gm ) ) {
-							$gid_to_svg[ $g ] = self::sanitize_svg_fragment( $gm[1] );
+							$gid_to_svg[ $g ] = trim( $gm[1] );
 						} else {
-							// Single glyph document or root svg wrapper.
-							$inner = (string) preg_replace( '/^<svg[^>]*>/i', '', $raw );
-							$inner = (string) preg_replace( '/<\/svg>$/i', '', $inner );
-							$inner = trim( $inner );
-							$gid_to_svg[ $g ] = self::sanitize_svg_fragment( $inner );
+							// Single glyph document or root svg wrapper (already sanitized above).
+							if ( null === $single_inner ) {
+								$inner        = (string) preg_replace( '/^<svg[^>]*>/i', '', $raw );
+								$inner        = (string) preg_replace( '/<\/svg>$/i', '', $inner );
+								$single_inner = trim( $inner );
+							}
+							$gid_to_svg[ $g ] = $single_inner;
 						}
 					}
 				}

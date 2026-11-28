@@ -7,10 +7,13 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.5.13';
+import { SvgRenderer } from './svg-renderer.js?v=2.6.0';
 
 export class PrintExporter {
 	static CHUNK_SIZE_BYTES = 600 * 1024; // 600 KB binary chunks fit cleanly under 1 MB proxy/WAF limits while minimizing round-trips
+	static _imageInFlight = new Map();
+	static _fontInFlight = new Map();
+	static _thumbInFlight = new Map();
 
 	static normalizeSameHostUrl(rawUrl) {
 		if (!rawUrl || typeof rawUrl !== 'string') return '';
@@ -37,49 +40,80 @@ export class PrintExporter {
 		}
 	}
 
+	static encodeAlphaCanvas(canvas) {
+		try {
+			const webp = canvas.toDataURL('image/webp', 0.85);
+			if (webp && webp.startsWith('data:image/webp')) {
+				return webp;
+			}
+		} catch (e) {}
+		return canvas.toDataURL('image/png');
+	}
+
 	static async fetchImageAsDataUrl(rawUrl) {
 		if (!rawUrl || typeof rawUrl !== 'string') return '';
 		if (rawUrl.startsWith('data:image/')) {
 			return rawUrl;
 		}
+		const fetchUrl = this.normalizeSameHostUrl(rawUrl);
 		if (typeof window !== 'undefined') {
 			window.mrTeeImageB64Cache = window.mrTeeImageB64Cache || {};
 			if (window.mrTeeImageB64Cache[rawUrl]) {
 				return window.mrTeeImageB64Cache[rawUrl];
 			}
-		}
-		const fetchUrl = this.normalizeSameHostUrl(rawUrl);
-		try {
-			const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-			const timer = ctrl ? setTimeout(() => ctrl.abort(), 12000) : null;
-			const resp = await fetch(fetchUrl, ctrl ? { signal: ctrl.signal, cache: 'force-cache' } : { cache: 'force-cache' });
-			if (timer) clearTimeout(timer);
-			if (resp.ok) {
-				const blob = await resp.blob();
-				const b64 = await new Promise((res, rej) => {
-					const reader = new FileReader();
-					reader.onloadend = () => res(reader.result);
-					reader.onerror = rej;
-					reader.readAsDataURL(blob);
-				});
-				if (typeof window !== 'undefined' && b64) {
-					window.mrTeeImageB64Cache[rawUrl] = b64;
-					if (fetchUrl !== rawUrl) window.mrTeeImageB64Cache[fetchUrl] = b64;
-				}
-				return b64 || '';
+			if (fetchUrl && window.mrTeeImageB64Cache[fetchUrl]) {
+				window.mrTeeImageB64Cache[rawUrl] = window.mrTeeImageB64Cache[fetchUrl];
+				return window.mrTeeImageB64Cache[fetchUrl];
 			}
-		} catch (e) {
-			console.warn('[MrTee PrintExporter] Failed to fetch image URL:', rawUrl, e);
 		}
-		return '';
+
+		const dedupKey = fetchUrl || rawUrl;
+		if (this._imageInFlight.has(dedupKey)) {
+			return this._imageInFlight.get(dedupKey);
+		}
+
+		const task = (async () => {
+			try {
+				const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+				const timer = ctrl ? setTimeout(() => ctrl.abort(), 12000) : null;
+				const resp = await fetch(fetchUrl, ctrl ? { signal: ctrl.signal, cache: 'force-cache' } : { cache: 'force-cache' });
+				if (timer) clearTimeout(timer);
+				if (resp.ok) {
+					const blob = await resp.blob();
+					const b64 = await new Promise((res, rej) => {
+						const reader = new FileReader();
+						reader.onloadend = () => res(reader.result);
+						reader.onerror = rej;
+						reader.readAsDataURL(blob);
+					});
+					if (typeof window !== 'undefined' && b64) {
+						window.mrTeeImageB64Cache = window.mrTeeImageB64Cache || {};
+						window.mrTeeImageB64Cache[rawUrl] = b64;
+						if (fetchUrl !== rawUrl) window.mrTeeImageB64Cache[fetchUrl] = b64;
+					}
+					return b64 || '';
+				}
+			} catch (e) {
+				console.warn('[MrTee PrintExporter] Failed to fetch image URL:', rawUrl, e);
+			}
+			return '';
+		})().finally(() => {
+			if (this._imageInFlight.get(dedupKey) === task) {
+				this._imageInFlight.delete(dedupKey);
+			}
+		});
+
+		this._imageInFlight.set(dedupKey, task);
+		return task;
 	}
 
 	static async getThumbnailImageDataUrl(rawUrl, maxDim = 420) {
 		if (!rawUrl || typeof rawUrl !== 'string') return '';
 		const normUrl = this.normalizeSameHostUrl(rawUrl);
+		const isDataUrl = rawUrl.startsWith('data:');
 		if (typeof window !== 'undefined') {
 			window.mrTeeThumbB64Cache = window.mrTeeThumbB64Cache || {};
-			if (!rawUrl.startsWith('data:')) {
+			if (!isDataUrl) {
 				if (window.mrTeeThumbB64Cache[rawUrl]) {
 					return window.mrTeeThumbB64Cache[rawUrl];
 				}
@@ -87,74 +121,97 @@ export class PrintExporter {
 					return window.mrTeeThumbB64Cache[normUrl];
 				}
 			}
+		}
 
-			// Fast path: reuse already-decoded same-origin HTMLImageElement from live stage prewarm cache
-			if (window.mrTeePrewarmedImages && typeof window.mrTeePrewarmedImages.get === 'function') {
+		const dedupKey = !isDataUrl ? `${normUrl || rawUrl}|${maxDim}` : '';
+		if (dedupKey && this._thumbInFlight.has(dedupKey)) {
+			return this._thumbInFlight.get(dedupKey);
+		}
+
+		const cacheThumb = (val) => {
+			if (typeof window !== 'undefined' && !isDataUrl && val) {
+				window.mrTeeThumbB64Cache = window.mrTeeThumbB64Cache || {};
+				window.mrTeeThumbB64Cache[rawUrl] = val;
+				if (normUrl) window.mrTeeThumbB64Cache[normUrl] = val;
+			}
+			return val;
+		};
+
+		const task = (async () => {
+			// Fast path: check already-decoded same-origin HTMLImageElement from live stage prewarm cache
+			if (typeof window !== 'undefined' && window.mrTeePrewarmedImages && typeof window.mrTeePrewarmedImages.get === 'function') {
 				const preImg = window.mrTeePrewarmedImages.get(rawUrl) || (normUrl ? window.mrTeePrewarmedImages.get(normUrl) : null);
 				if (preImg && this.isSameOriginImage(preImg)) {
-					try {
-						const natW = preImg.naturalWidth || maxDim;
-						const natH = preImg.naturalHeight || maxDim;
-						const longest = Math.max(natW, natH);
-						const scale = longest > maxDim ? (maxDim / longest) : 1.0;
-						const canvas = document.createElement('canvas');
-						canvas.width = Math.max(1, Math.round(natW * scale));
-						canvas.height = Math.max(1, Math.round(natH * scale));
-						const ctx = canvas.getContext('2d');
-						if (ctx) {
-							ctx.clearRect(0, 0, canvas.width, canvas.height);
-							ctx.drawImage(preImg, 0, 0, canvas.width, canvas.height);
-							const cleanPath = String(normUrl || rawUrl).split('?')[0].toLowerCase();
-							const needsAlpha = cleanPath.endsWith('.png') || cleanPath.endsWith('.webp');
-							const fastDataUrl = needsAlpha ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', 0.82);
-							if (fastDataUrl && fastDataUrl.startsWith('data:image/')) {
-								window.mrTeeThumbB64Cache[rawUrl] = fastDataUrl;
-								if (normUrl) window.mrTeeThumbB64Cache[normUrl] = fastDataUrl;
-								return fastDataUrl;
-							}
+					const natW = preImg.naturalWidth || maxDim;
+					const natH = preImg.naturalHeight || maxDim;
+					const longest = Math.max(natW, natH);
+					// Bypass slow canvas PNG re-encoding when already <= maxDim (100% of 256px OpenType-SVG WebP glyphs!)
+					if (longest <= maxDim) {
+						const cachedDirect = await this.fetchImageAsDataUrl(rawUrl);
+						if (cachedDirect) {
+							return cacheThumb(cachedDirect);
 						}
-					} catch (e) {
-						// Fall through to standard fetch path if canvas read is blocked
+					} else {
+						try {
+							const scale = maxDim / longest;
+							const canvas = document.createElement('canvas');
+							canvas.width = Math.max(1, Math.round(natW * scale));
+							canvas.height = Math.max(1, Math.round(natH * scale));
+							const ctx = canvas.getContext('2d');
+							if (ctx) {
+								ctx.clearRect(0, 0, canvas.width, canvas.height);
+								ctx.drawImage(preImg, 0, 0, canvas.width, canvas.height);
+								const cleanPath = String(normUrl || rawUrl).split('?')[0].toLowerCase();
+								const needsAlpha = cleanPath.endsWith('.png') || cleanPath.endsWith('.webp');
+								const fastDataUrl = needsAlpha ? this.encodeAlphaCanvas(canvas) : canvas.toDataURL('image/jpeg', 0.82);
+								if (fastDataUrl && fastDataUrl.startsWith('data:image/')) {
+									return cacheThumb(fastDataUrl);
+								}
+							}
+						} catch (e) {
+							// Fall through to standard fetch path if canvas read is blocked
+						}
 					}
 				}
 			}
-		}
 
-		const fullDataUrl = await this.fetchImageAsDataUrl(rawUrl);
-		if (!fullDataUrl) return '';
-		if (fullDataUrl.length <= 80 * 1024 || fullDataUrl.startsWith('data:image/svg+xml')) {
-			if (typeof window !== 'undefined' && !rawUrl.startsWith('data:')) {
-				window.mrTeeThumbB64Cache[rawUrl] = fullDataUrl;
-				if (normUrl) window.mrTeeThumbB64Cache[normUrl] = fullDataUrl;
+			const fullDataUrl = await this.fetchImageAsDataUrl(rawUrl);
+			if (!fullDataUrl) return '';
+			if (fullDataUrl.length <= 80 * 1024 || fullDataUrl.startsWith('data:image/svg+xml')) {
+				return cacheThumb(fullDataUrl);
 			}
-			return fullDataUrl;
-		}
 
-		try {
-			const img = await this.loadHtmlImage(fullDataUrl, false);
-			const natW = img.naturalWidth || maxDim;
-			const natH = img.naturalHeight || maxDim;
-			const longest = Math.max(natW, natH);
-			let resultUrl = fullDataUrl;
-			if (longest > maxDim) {
-				const scale = maxDim / longest;
-				const canvas = document.createElement('canvas');
-				canvas.width = Math.max(1, Math.round(natW * scale));
-				canvas.height = Math.max(1, Math.round(natH * scale));
-				const ctx = canvas.getContext('2d');
-				ctx.clearRect(0, 0, canvas.width, canvas.height);
-				ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-				const hasAlphaMime = fullDataUrl.startsWith('data:image/png') || fullDataUrl.startsWith('data:image/webp');
-				resultUrl = hasAlphaMime ? canvas.toDataURL('image/png') : canvas.toDataURL('image/jpeg', 0.80);
+			try {
+				const img = await this.loadHtmlImage(fullDataUrl, false);
+				const natW = img.naturalWidth || maxDim;
+				const natH = img.naturalHeight || maxDim;
+				const longest = Math.max(natW, natH);
+				let resultUrl = fullDataUrl;
+				if (longest > maxDim) {
+					const scale = maxDim / longest;
+					const canvas = document.createElement('canvas');
+					canvas.width = Math.max(1, Math.round(natW * scale));
+					canvas.height = Math.max(1, Math.round(natH * scale));
+					const ctx = canvas.getContext('2d');
+					ctx.clearRect(0, 0, canvas.width, canvas.height);
+					ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+					const hasAlphaMime = fullDataUrl.startsWith('data:image/png') || fullDataUrl.startsWith('data:image/webp');
+					resultUrl = hasAlphaMime ? this.encodeAlphaCanvas(canvas) : canvas.toDataURL('image/jpeg', 0.80);
+				}
+				return cacheThumb(resultUrl);
+			} catch (e) {
+				return fullDataUrl;
 			}
-			if (typeof window !== 'undefined' && !rawUrl.startsWith('data:')) {
-				window.mrTeeThumbB64Cache[rawUrl] = resultUrl;
-				if (normUrl) window.mrTeeThumbB64Cache[normUrl] = resultUrl;
+		})().finally(() => {
+			if (dedupKey && this._thumbInFlight.get(dedupKey) === task) {
+				this._thumbInFlight.delete(dedupKey);
 			}
-			return resultUrl;
-		} catch (e) {
-			return fullDataUrl;
+		});
+
+		if (dedupKey) {
+			this._thumbInFlight.set(dedupKey, task);
 		}
+		return task;
 	}
 
 	static findProductGalleryImageElement(viewId = null) {
@@ -769,7 +826,8 @@ export class PrintExporter {
 			const cleanKey = fId.toLowerCase().replace(/[\s\-]+/g, '_');
 			const fDef = fonts[fId] || fonts[cleanKey] || null;
 			if (!fDef || (fDef.font_type !== 'opentype_svg' && !fDef.color_svg)) continue;
-			if (!SvgRenderer.getSvgFontData(fId)) {
+			const existing = SvgRenderer.getSvgFontData(fId);
+			if (!existing || existing.partial) {
 				tasks.push(SvgRenderer.ensureSvgFontLoaded(fId, fDef, { prewarmGlyphs: false }).catch(() => null));
 			}
 		}
@@ -793,7 +851,7 @@ export class PrintExporter {
 		await this.ensureStoreImagesUploaded(store, config);
 
 		if (store && store.state && typeof window !== 'undefined' && window.mrTeeSceneGraphEngine) {
-			const merged = window.mrTeeSceneGraphEngine.getLayersMergedWithRefs(store.state.layers, store.state.references);
+			const merged = window.mrTeeSceneGraphEngine.getLayersMergedWithRefs(store.state.layers, store.state.references, store.refMap);
 			layers = window.mrTeeSceneGraphEngine.applyRowCentering(merged, store.state.activeCount);
 		}
 
@@ -860,10 +918,16 @@ export class PrintExporter {
 				? (sideMetrics.realW / sideMetrics.realH)
 				: (parseFloat(config.print_aspect_ratio) || 1.0);
 			if (!isLocked) {
-				if (domGarmentImg && domGarmentImg.naturalWidth > 0 && domGarmentImg.naturalHeight > 0) {
+				if (hasFastDomBg && domGarmentImg && domGarmentImg.naturalWidth > 2 && domGarmentImg.naturalHeight > 2) {
 					compositeRatio = domGarmentImg.naturalWidth / domGarmentImg.naturalHeight;
-				} else if (bgAsset && bgAsset.naturalWidth > 0 && bgAsset.naturalHeight > 0) {
+				} else if (bgAsset && bgAsset.naturalWidth > 2 && bgAsset.naturalHeight > 2) {
 					compositeRatio = bgAsset.naturalWidth / bgAsset.naturalHeight;
+				} else if (domGarmentImg) {
+					const attrW = parseInt(domGarmentImg.getAttribute('width'), 10);
+					const attrH = parseInt(domGarmentImg.getAttribute('height'), 10);
+					if (attrW > 2 && attrH > 2) {
+						compositeRatio = attrW / attrH;
+					}
 				}
 			}
 
@@ -883,17 +947,17 @@ export class PrintExporter {
 			const fullPreviewSvg = SvgRenderer.renderToString(layers, zoomTransform, svgOptions);
 			const inlinedImagesSvg = await this.inlineExternalImages(fullPreviewSvg, {
 				useThumbCache: true,
-				maxThumbDim: 760,
+				maxThumbDim: 640,
 			});
-			const inlinedFullPreviewSvg = await this.inlineExternalFonts(inlinedImagesSvg);
+			const inlinedFullPreviewSvg = await this.inlineExternalFonts(inlinedImagesSvg, { stripUnused: true });
 
-			// Render crisp 800px JPEG composite mockup preview for cart thumbnail & full-screen cart zoom modal
+			// Render crisp 640px @ 0.80 JPEG composite mockup preview so 2-view products fit cleanly inline under 260 KB
 			const compositeB64 = await this.renderCompositePreview(inlinedFullPreviewSvg, config, {
 				bgAsset,
 				domGarmentImg,
 				compositeRatio,
-				canvasWidth: 800,
-				quality: 0.85,
+				canvasWidth: 640,
+				quality: 0.80,
 				blendMode: view.blend_mode || 'normal',
 				isFlatObject: sideMetrics.isFlatObject,
 				isLocked,
@@ -1120,43 +1184,63 @@ export class PrintExporter {
 				return window.mrTeeFontB64Cache[fetchUrl];
 			}
 		}
-		try {
-			const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
-			const timer = ctrl ? setTimeout(() => ctrl.abort(), 12000) : null;
-			const resp = await fetch(fetchUrl, ctrl ? { signal: ctrl.signal, cache: 'force-cache' } : { cache: 'force-cache' });
-			if (timer) clearTimeout(timer);
-			if (resp.ok) {
-				const buf = await resp.arrayBuffer();
-				const typedBlob = new Blob([buf], { type: this.getFontMimeType(fetchUrl) });
-				const b64 = await new Promise((res, rej) => {
-					const reader = new FileReader();
-					reader.onloadend = () => res(reader.result);
-					reader.onerror = rej;
-					reader.readAsDataURL(typedBlob);
-				});
-				if (typeof window !== 'undefined' && b64) {
-					window.mrTeeFontB64Cache[rawUrl] = b64;
-					if (fetchUrl !== rawUrl) window.mrTeeFontB64Cache[fetchUrl] = b64;
-				}
-				return b64 || '';
-			}
-		} catch (e) {
-			console.warn('[MrTee PrintExporter] Failed to fetch font URL:', rawUrl, e);
+
+		const dedupKey = fetchUrl || rawUrl;
+		if (this._fontInFlight.has(dedupKey)) {
+			return this._fontInFlight.get(dedupKey);
 		}
-		return '';
+
+		const task = (async () => {
+			try {
+				const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+				const timer = ctrl ? setTimeout(() => ctrl.abort(), 12000) : null;
+				const resp = await fetch(fetchUrl, ctrl ? { signal: ctrl.signal, cache: 'force-cache' } : { cache: 'force-cache' });
+				if (timer) clearTimeout(timer);
+				if (resp.ok) {
+					const buf = await resp.arrayBuffer();
+					const typedBlob = new Blob([buf], { type: this.getFontMimeType(fetchUrl) });
+					const b64 = await new Promise((res, rej) => {
+						const reader = new FileReader();
+						reader.onloadend = () => res(reader.result);
+						reader.onerror = rej;
+						reader.readAsDataURL(typedBlob);
+					});
+					if (typeof window !== 'undefined' && b64) {
+						window.mrTeeFontB64Cache = window.mrTeeFontB64Cache || {};
+						window.mrTeeFontB64Cache[rawUrl] = b64;
+						if (fetchUrl !== rawUrl) window.mrTeeFontB64Cache[fetchUrl] = b64;
+					}
+					return b64 || '';
+				}
+			} catch (e) {
+				console.warn('[MrTee PrintExporter] Failed to fetch font URL:', rawUrl, e);
+			}
+			return '';
+		})().finally(() => {
+			if (this._fontInFlight.get(dedupKey) === task) {
+				this._fontInFlight.delete(dedupKey);
+			}
+		});
+
+		this._fontInFlight.set(dedupKey, task);
+		return task;
 	}
 
 	/**
 	 * Inline active @font-face font binaries referenced by SVG nodes so standalone SVGs and
-	 * Blob-rendered rasterization canvases display exact custom TTF/OTF typography.
+	 * Blob-rendered rasterization canvases display exact custom typography.
+	 * When a @font-face rule declares multiple formats (e.g. woff2 + ttf), selects ONLY ONE URL:
+	 * prefers `.ttf`/`.otf` when `options.preferTtf` is true (for 300 DPI Illustrator/Inkscape/RIP),
+	 * and prefers `.woff2` otherwise (for fast browser cart composite rasterization).
 	 *
 	 * @param {string} svgMarkup SVG XML markup.
-	 * @param {Object} options Optional flags ({ stripUnused }).
+	 * @param {Object} options Optional flags ({ stripUnused, preferTtf }).
 	 * @return {Promise<string>}
 	 */
 	static async inlineExternalFonts(svgMarkup, options = {}) {
 		if (!svgMarkup) return '';
 		const stripUnused = Boolean(options.stripUnused);
+		const preferTtf = Boolean(options.preferTtf);
 
 		const markupWithoutStyles = svgMarkup.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '');
 		const usedFamilies = new Set();
@@ -1190,6 +1274,46 @@ export class PrintExporter {
 			return svgMarkup;
 		}
 
+		const classifyFontUrl = (rawUrl, fmtHint = '') => {
+			const clean = decodeEntities(rawUrl).split('?')[0].split('#')[0].toLowerCase();
+			const fmt = String(fmtHint || '').trim().toLowerCase();
+			if (clean.endsWith('.woff2') || fmt === 'woff2' || rawUrl.startsWith('data:font/woff2')) {
+				return { kind: 'woff2', cssFormat: 'woff2' };
+			}
+			if (clean.endsWith('.ttf') || fmt === 'truetype' || rawUrl.startsWith('data:font/ttf')) {
+				return { kind: 'ttf', cssFormat: 'truetype' };
+			}
+			if (clean.endsWith('.otf') || fmt === 'opentype' || rawUrl.startsWith('data:font/otf')) {
+				return { kind: 'otf', cssFormat: 'opentype' };
+			}
+			if (clean.endsWith('.woff') || fmt === 'woff' || rawUrl.startsWith('data:font/woff')) {
+				return { kind: 'woff', cssFormat: 'woff' };
+			}
+			return { kind: 'other', cssFormat: 'truetype' };
+		};
+
+		const selectPreferredFontEntry = (ruleBody) => {
+			const entries = [];
+			const urlRe = /url\(\s*(?:['"]([^'"]+)['"]|([^)\s'"]+))\s*\)(?:\s*format\(\s*['"]?([^)'"]+)['"]?\s*\))?/gi;
+			for (const m of ruleBody.matchAll(urlRe)) {
+				const rawUrl = (m[1] || m[2] || '').trim();
+				if (!rawUrl) continue;
+				const { kind, cssFormat } = classifyFontUrl(rawUrl, m[3] || '');
+				entries.push({ rawUrl, kind, cssFormat });
+			}
+			if (entries.length === 0) return null;
+			if (entries.length === 1) return entries[0];
+
+			const priority = preferTtf
+				? ['ttf', 'otf', 'woff', 'woff2', 'other']
+				: ['woff2', 'woff', 'ttf', 'otf', 'other'];
+			for (const wanted of priority) {
+				const match = entries.find((e) => e.kind === wanted);
+				if (match) return match;
+			}
+			return entries[0];
+		};
+
 		const fontUrls = [];
 		if (usedFamilies.size > 0) {
 			for (const sm of svgMarkup.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)) {
@@ -1205,11 +1329,9 @@ export class PrintExporter {
 						.toLowerCase();
 					if (!famName || !usedFamilies.has(famName)) continue;
 
-					for (const urlMatch of ruleBody.matchAll(/url\(\s*(?:['"]([^'"]+)['"]|([^)\s'"]+))\s*\)/gi)) {
-						const rawUrl = (urlMatch[1] || urlMatch[2] || '').trim();
-						if (rawUrl && !rawUrl.startsWith('data:') && !fontUrls.includes(rawUrl)) {
-							fontUrls.push(rawUrl);
-						}
+					const selected = selectPreferredFontEntry(ruleBody);
+					if (selected && selected.rawUrl && !selected.rawUrl.startsWith('data:') && !fontUrls.includes(selected.rawUrl)) {
+						fontUrls.push(selected.rawUrl);
 					}
 				}
 			}
@@ -1230,6 +1352,8 @@ export class PrintExporter {
 			return svgMarkup;
 		}
 
+		const srcDeclRe = /\bsrc\s*:\s*(?:[^;'"()]|'[^']*'|"[^"]*"|\([^)]*\))+\s*;?/gi;
+
 		return svgMarkup.replace(/<style\b([^>]*)>([\s\S]*?)<\/style>/gi, (fullStyle, attrs, cssBody) => {
 			const rewrittenCss = cssBody.replace(/@font-face\s*\{([^}]*)\}/gi, (ruleFull, ruleBody) => {
 				const famMatch = ruleBody.match(/font-family\s*:\s*(?:'([^']*)'|"([^"]*)"|([^;]+))/i);
@@ -1241,6 +1365,23 @@ export class PrintExporter {
 					.toLowerCase();
 				if (!famName || !usedFamilies.has(famName)) {
 					return stripUnused ? '' : ruleFull;
+				}
+
+				const selected = selectPreferredFontEntry(ruleBody);
+				if (!selected) return ruleFull;
+				const inlinedUrl = selected.rawUrl.startsWith('data:')
+					? selected.rawUrl
+					: (Object.prototype.hasOwnProperty.call(fontMap, selected.rawUrl) ? fontMap[selected.rawUrl] : '');
+				if (!inlinedUrl) return ruleFull;
+
+				let replacedSrc = false;
+				const nextBody = ruleBody.replace(srcDeclRe, () => {
+					if (replacedSrc) return '';
+					replacedSrc = true;
+					return `src: url('${inlinedUrl}') format('${selected.cssFormat}');`;
+				});
+				if (replacedSrc) {
+					return `@font-face {${nextBody}}`;
 				}
 				return ruleFull.replace(/url\(\s*(?:(['"])([^'"]+)\1|([^)\s'"]+))\s*\)/gi, (um, q, quotedUrl, bareUrl) => {
 					const rawUrl = (quotedUrl || bareUrl || '').trim();
@@ -1475,14 +1616,16 @@ export class PrintExporter {
 			: (parseFloat(config.print_aspect_ratio) || 1.0);
 		const blendMode = options.blendMode || 'normal';
 
+		const validDomGarmentImg = this.isSameOriginImage(domGarmentImg) ? domGarmentImg : null;
+
 		let compositeRatio = parseFloat(options.compositeRatio) || 0;
 		if (!compositeRatio || compositeRatio <= 0) {
 			if (isLocked) {
 				compositeRatio = realRatio;
-			} else if (bgAsset && bgAsset.naturalWidth > 0 && bgAsset.naturalHeight > 0) {
+			} else if (bgAsset && bgAsset.naturalWidth > 2 && bgAsset.naturalHeight > 2) {
 				compositeRatio = bgAsset.naturalWidth / bgAsset.naturalHeight;
-			} else if (domGarmentImg && domGarmentImg.naturalWidth > 0 && domGarmentImg.naturalHeight > 0) {
-				compositeRatio = domGarmentImg.naturalWidth / domGarmentImg.naturalHeight;
+			} else if (validDomGarmentImg) {
+				compositeRatio = validDomGarmentImg.naturalWidth / validDomGarmentImg.naturalHeight;
 			} else {
 				compositeRatio = realRatio || 1.0;
 			}
@@ -1500,8 +1643,7 @@ export class PrintExporter {
 		ctx.fillStyle = '#ffffff';
 		ctx.fillRect(0, 0, canvasW, canvasH);
 
-		const bgSource = (bgAsset && bgAsset.img) ||
-			((domGarmentImg && domGarmentImg.complete && domGarmentImg.naturalWidth > 0) ? domGarmentImg : null);
+		const bgSource = (bgAsset && bgAsset.img) || validDomGarmentImg;
 
 		const drawBackground = (targetCtx) => {
 			if (!bgSource) return false;
@@ -1635,9 +1777,20 @@ export class PrintExporter {
 	 * @return {string}
 	 */
 	static extractFontFaceCss() {
+		if (typeof document !== 'undefined') {
+			const inlineCss = document.getElementById('mr-tee-frontend-style-inline-css')?.textContent || '';
+			if (inlineCss && inlineCss.includes('@font-face') && (!inlineCss.includes('data:font') || inlineCss.length < 50000)) {
+				const rules = inlineCss.match(/@font-face\s*\{[^}]*\}/gi);
+				if (rules && rules.length > 0) {
+					return rules.join('\n');
+				}
+				return inlineCss;
+			}
+		}
+
 		if (typeof window !== 'undefined') {
-			const preCss = (window.mrTeeProductData && window.mrTeeProductData.fontFaceCss)
-				|| (window.mrTeeOrderExportData && window.mrTeeOrderExportData.fontFaceCss)
+			const preCss = (window.mrTeeOrderExportData && window.mrTeeOrderExportData.fontFaceCss)
+				|| (window.mrTeeProductData && window.mrTeeProductData.fontFaceCss)
 				|| '';
 			if (preCss && (!preCss.includes('data:font') || preCss.length < 50000)) {
 				return preCss;

@@ -3,7 +3,7 @@
  * Plugin Name: Mr. Tee Editor – Live Product Customizer
  * Plugin URI:  https://github.com/rimkadiop/mr_tee_editor
  * Description: Multi-view live product customizer for WooCommerce with real-time SVG preview, OpenType-SVG color fonts, visual print-zone placement, and 300 DPI + NBDesigner print-ready export.
- * Version:     2.5.13
+ * Version:     2.6.0
  * Author:      Rimka Diop
  * Text Domain: mr-tee-editor
  * Domain Path: /languages
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // Plugin Constants
-define( 'MR_TEE_EDITOR_VERSION', '2.5.13' );
+define( 'MR_TEE_EDITOR_VERSION', '2.6.0' );
 define( 'MR_TEE_EDITOR_FILE', __FILE__ );
 define( 'MR_TEE_EDITOR_DIR', plugin_dir_path( __FILE__ ) );
 

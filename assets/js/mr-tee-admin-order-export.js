@@ -9,9 +9,9 @@
  * @package MrTeeEditor\Assets
  */
 
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.5.13';
-import { SvgRenderer } from './modules/svg-renderer.js?v=2.5.13';
-import { PrintExporter } from './modules/print-exporter.js?v=2.5.13';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.6.0';
+import { SvgRenderer } from './modules/svg-renderer.js?v=2.6.0';
+import { PrintExporter } from './modules/print-exporter.js?v=2.6.0';
 
 class MrTeeAdminOrderExporter {
 	constructor() {
@@ -488,13 +488,19 @@ class MrTeeAdminOrderExporter {
 			const checkId = (matchedId || cleanKey).toLowerCase().replace(/[\s\-]+/g, '_');
 			const cached = window.mrTeeSvgFonts[checkId] || window.mrTeeSvgFonts[matchedId];
 			const hasGlyphs = Boolean(cached && cached.glyphs && Object.keys(cached.glyphs).length > 0);
-			const usesRasterBitmaps = Boolean(cached && cached.thumbMap && Object.keys(cached.thumbMap).length > 0);
+			const isPartial = Boolean(cached && cached.partial);
+			const usesRasterBitmaps = Boolean(
+				cached && (
+					(cached._previewUrls && cached._previewUrls.length > 0)
+					|| (cached.stats && cached.stats.images > 0)
+				)
+			);
 			const hasFullMap = Boolean(cached && cached.fullMap && Object.keys(cached.fullMap).length > 0);
-			// Pure-vector OpenType-SVG fonts have inline <path> glyphs and empty thumbMap/fullMap: do not re-fetch them.
-			if (!hasGlyphs || (usesRasterBitmaps && !hasFullMap)) {
+			// Pure-vector OpenType-SVG fonts have inline <path> glyphs and zero raster bitmaps: do not re-fetch them.
+			if (!hasGlyphs || isPartial || (usesRasterBitmaps && !hasFullMap)) {
 				delete window.mrTeeSvgFonts[checkId];
 				if (matchedId) delete window.mrTeeSvgFonts[matchedId];
-				await SvgRenderer.ensureSvgFontLoaded(matchedId || checkId, matchedDef, { prewarmGlyphs: false });
+				await SvgRenderer.ensureSvgFontLoaded(matchedId || checkId, matchedDef, { prewarmGlyphs: false, isExport: true });
 			}
 		}
 
@@ -635,7 +641,7 @@ class MrTeeAdminOrderExporter {
 
 				const rawSvgMarkup = SvgRenderer.renderToString(layers, zoomTransform, renderOptions);
 				const inlinedImagesSvg = await PrintExporter.inlineExternalImages(rawSvgMarkup, { strict: true });
-				const inlinedSvg = await PrintExporter.inlineExternalFonts(inlinedImagesSvg, { stripUnused: true });
+				const inlinedSvg = await PrintExporter.inlineExternalFonts(inlinedImagesSvg, { stripUnused: true, preferTtf: true });
 				const printBlob = await PrintExporter.rasterizeSvgToPng(inlinedSvg, metrics.exportPxW, metrics.exportPxH, {
 					dpi: metrics.dpi,
 					asBlob: true,

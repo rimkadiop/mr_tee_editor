@@ -1,0 +1,18 @@
+# Mr. Tee Editor - Static Font Assets (WOFF2 / TTF / OTF)
+# Served with versioned ?v=<mtime> query strings for 1-year immutable browser & CDN caching.
+<IfModule mod_mime.c>
+  AddType font/woff2 .woff2
+  AddType font/ttf .ttf
+  AddType font/otf .otf
+</IfModule>
+<IfModule mod_expires.c>
+  ExpiresActive On
+  ExpiresByType font/woff2 "access plus 1 year"
+  ExpiresByType font/ttf "access plus 1 year"
+  ExpiresByType font/otf "access plus 1 year"
+</IfModule>
+<IfModule mod_headers.c>
+  <FilesMatch "\.(woff2|ttf|otf)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+</IfModule>

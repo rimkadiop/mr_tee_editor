@@ -15,12 +15,13 @@ export class SceneGraphEngine {
 	/**
 	 * Deeply merge references into layers tree (matching Monsieur TSHIRT's `getLayersMergedWithRefs`).
 	 *
-	 * @param {Array} layers Scene-graph layers array.
-	 * @param {Array} references Flat or nested references registry.
+	 * @param {Array}            layers         Scene-graph layers array.
+	 * @param {Array}            references     Flat or nested references registry.
+	 * @param {Map<string, any>} prebuiltRefMap Optional prebuilt reference lookup map to avoid rebuilding per keystroke.
 	 * @return {Array} Merged layers tree ready for rendering.
 	 */
-	static getLayersMergedWithRefs(layers, references) {
-		const refMap = this.createRefsMap(references);
+	static getLayersMergedWithRefs(layers, references, prebuiltRefMap = null) {
+		const refMap = (prebuiltRefMap instanceof Map) ? prebuiltRefMap : this.createRefsMap(references);
 		const clone = this.fastCloneLayers(layers || []);
 
 		const mergeNode = (node) => {
@@ -50,7 +51,14 @@ export class SceneGraphEngine {
 						node.colorReference = ref.colorRefId;
 					}
 				} else if (ref.type === 'IMAGE') {
-					node.url = (ref.url !== undefined) ? ref.url : node.url;
+					if (ref.url !== undefined) {
+						node.url = ref.url;
+					}
+					if (ref.previewUrl) {
+						node.previewUrl = ref.previewUrl;
+					} else {
+						delete node.previewUrl;
+					}
 					node.iconKey = ref.iconKey || node.iconKey;
 					if (ref.imageFit) {
 						node.imageFit = ref.imageFit;

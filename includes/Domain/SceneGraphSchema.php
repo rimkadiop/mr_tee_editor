@@ -49,6 +49,63 @@ class SceneGraphSchema {
 	}
 
 	/**
+	 * Normalize a field type into one of the three supported types: 'text', 'image', or 'ai_image'.
+	 *
+	 * @param mixed $raw Raw field_type string.
+	 * @return string
+	 */
+	public static function normalize_field_type( $raw ) {
+		$t = is_string( $raw ) ? strtolower( trim( $raw ) ) : '';
+		if ( 'ai_image' === $t ) {
+			return 'ai_image';
+		}
+		if ( 'image' === $t ) {
+			return 'image';
+		}
+		return 'text';
+	}
+
+	/**
+	 * Check whether a field type behaves as an image print zone ('image' or 'ai_image').
+	 *
+	 * @param mixed $raw Raw field_type string.
+	 * @return bool
+	 */
+	public static function is_image_field_type( $raw ) {
+		return in_array( self::normalize_field_type( $raw ), array( 'image', 'ai_image' ), true );
+	}
+
+	/**
+	 * Strip server-only AI fields (hidden predefined prompt, hidden admin reference images,
+	 * model ID, and generation flags) from a product config before exposing it to the storefront.
+	 *
+	 * @param array<string, mixed> $config Product config array.
+	 * @return array<string, mixed>
+	 */
+	public static function strip_private_ai_fields( array $config ) {
+		if ( empty( $config['text_lines'] ) || ! is_array( $config['text_lines'] ) ) {
+			return $config;
+		}
+		$private_keys = array(
+			'ai_prompt',
+			'ai_reference_images',
+			'ai_use_default_as_ref',
+			'ai_model',
+			'ai_size_mode',
+			'ai_remove_bg',
+		);
+		foreach ( $config['text_lines'] as $i => $line ) {
+			if ( ! is_array( $line ) ) {
+				continue;
+			}
+			foreach ( $private_keys as $pk ) {
+				unset( $config['text_lines'][ $i ][ $pk ] );
+			}
+		}
+		return $config;
+	}
+
+	/**
 	 * Convert ColorPaletteRegistry solid swatches into an associative `#hex => Label` map
 	 * suitable for text line `color_swatches` pickers.
 	 *
@@ -859,22 +916,28 @@ class SceneGraphSchema {
 		$has_explicit_allowed_fonts = ! empty( $config['allowed_fonts'] ) && is_array( $config['allowed_fonts'] );
 		$union_line_allowed_fonts   = array();
 		$normalized_lines           = array();
+		$used_line_ids              = array();
+		$used_ref_ids               = array();
 		$line_index                 = 0;
 
 		foreach ( $raw_text_lines as $idx => $line_data ) {
 			if ( ! is_array( $line_data ) ) {
 				continue;
 			}
-			$line_num   = $line_index + 1;
-			$field_type = ( isset( $line_data['field_type'] ) && 'image' === $line_data['field_type'] ) ? 'image' : 'text';
+			$line_num      = $line_index + 1;
+			$field_type    = self::normalize_field_type( isset( $line_data['field_type'] ) ? $line_data['field_type'] : 'text' );
+			$is_image_like = self::is_image_field_type( $field_type );
+			$is_ai_image   = ( 'ai_image' === $field_type );
 
-			if ( 'image' === $field_type ) {
+			if ( $is_image_like ) {
 				$def_line = array(
 					'id'                    => 'custom_line_' . $line_num,
-					'ref_id'                => 'id-ref-image-line-' . $line_num,
+					'ref_id'                => ( $is_ai_image ? 'id-ref-ai-image-line-' : 'id-ref-image-line-' ) . $line_num,
 					'color_ref_id'          => 'id-ref-color-line-' . $line_num,
-					'field_type'            => 'image',
-					'label'                 => sprintf( __( 'Image %d', 'mr-tee-editor' ), $line_num ),
+					'field_type'            => $field_type,
+					'label'                 => $is_ai_image
+						? sprintf( __( 'Image IA %d', 'mr-tee-editor' ), $line_num )
+						: sprintf( __( 'Image %d', 'mr-tee-editor' ), $line_num ),
 					'default_text'          => '',
 					'default_image'         => '',
 					'default_image_id'      => 0,
@@ -888,6 +951,15 @@ class SceneGraphSchema {
 					'box_height'            => 30.0,
 					'warning_unedited'      => false,
 				);
+				if ( $is_ai_image ) {
+					$def_line['ai_model']              = '';
+					$def_line['ai_prompt']             = '';
+					$def_line['ai_use_default_as_ref'] = false;
+					$def_line['ai_reference_images']   = array();
+					$def_line['ai_size_mode']          = 'auto_box';
+					$def_line['ai_remove_bg']          = false;
+					$def_line['ai_button_label']       = __( 'Générer', 'mr-tee-editor' );
+				}
 			} else {
 				$def_line = isset( $defaults['text_lines'][ $line_index ] ) ? $defaults['text_lines'][ $line_index ] : array(
 					'id'               => 'custom_line_' . $line_num,
@@ -913,15 +985,97 @@ class SceneGraphSchema {
 			$merged               = wp_parse_args( $line_data, $def_line );
 			$merged['field_type'] = $field_type;
 
-			if ( 'image' === $field_type ) {
+			// Guarantee globally unique `id` and `ref_id` across all text, image, and ai_image fields
+			// so SVG `<clipPath>` IDs and `StateStore.refMap` references can never collide.
+			$cand_id = ! empty( $merged['id'] ) ? preg_replace( '/[^a-zA-Z0-9_-]/', '', (string) $merged['id'] ) : '';
+			if ( '' === $cand_id ) {
+				$cand_id = 'line_' . $line_num;
+			}
+			while ( isset( $used_line_ids[ $cand_id ] ) ) {
+				$cand_id .= '_' . $line_num;
+			}
+			$used_line_ids[ $cand_id ] = true;
+			$merged['id']              = $cand_id;
+
+			$cand_ref = ! empty( $merged['ref_id'] ) ? preg_replace( '/[^a-zA-Z0-9_-]/', '', (string) $merged['ref_id'] ) : '';
+			if ( '' === $cand_ref ) {
+				$cand_ref = ( $is_ai_image ? 'id-ref-ai-image-line-' : ( $is_image_like ? 'id-ref-image-line-' : 'id-ref-text-line-' ) ) . $line_num;
+			}
+			while ( isset( $used_ref_ids[ $cand_ref ] ) ) {
+				$cand_ref .= '_' . $line_num;
+			}
+			$used_ref_ids[ $cand_ref ] = true;
+			$merged['ref_id']           = $cand_ref;
+
+			if ( $is_image_like ) {
+				unset( $merged['font'], $merged['allowed_fonts'], $merged['color_swatches'] );
 				$merged['default_image']         = ! empty( $merged['default_image'] ) ? self::normalize_url_scheme( esc_url_raw( $merged['default_image'] ) ) : '';
 				$merged['default_image_id']      = ! empty( $merged['default_image_id'] ) ? absint( $merged['default_image_id'] ) : 0;
 				$merged['image_fit']             = ( isset( $merged['image_fit'] ) && 'cover' === $merged['image_fit'] ) ? 'cover' : 'contain';
-				$merged['allow_image_upload']    = isset( $merged['allow_image_upload'] ) ? (bool) $merged['allow_image_upload'] : true;
+				$merged['allow_image_upload']    = $is_ai_image ? true : ( isset( $merged['allow_image_upload'] ) ? (bool) $merged['allow_image_upload'] : true );
 				$img_variants                    = self::resolve_image_field_variants( $merged['default_image_id'], $merged['default_image'] );
 				$merged['default_image_preview'] = $img_variants['preview'];
 				$merged['default_image_thumb']   = $img_variants['thumb'];
+
+				if ( $is_ai_image ) {
+					$merged['ai_model']              = ! empty( $merged['ai_model'] ) ? sanitize_key( (string) $merged['ai_model'] ) : '';
+					$merged['ai_prompt']             = isset( $merged['ai_prompt'] ) ? (string) $merged['ai_prompt'] : '';
+					$merged['ai_use_default_as_ref'] = isset( $merged['ai_use_default_as_ref'] ) ? (bool) $merged['ai_use_default_as_ref'] : false;
+					$merged['ai_size_mode']          = ( isset( $merged['ai_size_mode'] ) && 'match_reference' === $merged['ai_size_mode'] ) ? 'match_reference' : 'auto_box';
+					$merged['ai_remove_bg']          = ! empty( $merged['ai_remove_bg'] );
+					$btn_lbl                         = isset( $merged['ai_button_label'] ) ? trim( sanitize_text_field( (string) $merged['ai_button_label'] ) ) : '';
+					$merged['ai_button_label']       = '' !== $btn_lbl ? $btn_lbl : __( 'Générer', 'mr-tee-editor' );
+
+					$clean_refs = array();
+					if ( ! empty( $merged['ai_reference_images'] ) && is_array( $merged['ai_reference_images'] ) ) {
+						foreach ( $merged['ai_reference_images'] as $r_item ) {
+							if ( count( $clean_refs ) >= 6 ) {
+								break;
+							}
+							$r_id  = 0;
+							$r_url = '';
+							if ( is_array( $r_item ) ) {
+								$r_id  = ! empty( $r_item['id'] ) ? absint( $r_item['id'] ) : 0;
+								$r_url = ! empty( $r_item['url'] ) ? self::normalize_url_scheme( esc_url_raw( $r_item['url'] ) ) : '';
+							} elseif ( is_string( $r_item ) ) {
+								$r_url = self::normalize_url_scheme( esc_url_raw( $r_item ) );
+							}
+							if ( '' !== $r_url || $r_id > 0 ) {
+								$clean_refs[] = array(
+									'id'  => $r_id,
+									'url' => $r_url,
+								);
+							}
+						}
+					}
+					$merged['ai_reference_images'] = $clean_refs;
+				} else {
+					unset(
+						$merged['ai_model'],
+						$merged['ai_prompt'],
+						$merged['ai_use_default_as_ref'],
+						$merged['ai_reference_images'],
+						$merged['ai_size_mode'],
+						$merged['ai_remove_bg'],
+						$merged['ai_button_label']
+					);
+				}
 			} else {
+				unset(
+					$merged['default_image'],
+					$merged['default_image_id'],
+					$merged['default_image_preview'],
+					$merged['default_image_thumb'],
+					$merged['image_fit'],
+					$merged['allow_image_upload'],
+					$merged['ai_model'],
+					$merged['ai_prompt'],
+					$merged['ai_use_default_as_ref'],
+					$merged['ai_reference_images'],
+					$merged['ai_size_mode'],
+					$merged['ai_remove_bg'],
+					$merged['ai_button_label']
+				);
 				$line_font = ! empty( $merged['font'] ) ? sanitize_key( $merged['font'] ) : '';
 				if ( '' !== $line_font && ! isset( $registered_fonts[ $line_font ] ) ) {
 					$line_font = '';
@@ -1897,18 +2051,20 @@ class SceneGraphSchema {
 		// 1. Build Primary Field Layers & References (Text & Image fields)
 		$created_color_refs = array();
 		foreach ( $config['text_lines'] as $idx => $line ) {
-			$line_num   = $idx + 1;
-			$field_type = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) ? 'image' : 'text';
-			$box_w      = isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : ( isset( $line['max_width'] ) ? floatval( $line['max_width'] ) : 40.0 );
-			$box_h      = isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : ( isset( $line['font_size'] ) ? floatval( $line['font_size'] ) * 1.5 : 8.5 );
-			$box_l      = isset( $line['box_left'] ) ? floatval( $line['box_left'] ) : ( 50.0 - ( $box_w / 2.0 ) );
-			$box_t      = isset( $line['box_top'] ) ? floatval( $line['box_top'] ) : ( isset( $line['y_pct'] ) ? floatval( $line['y_pct'] ) - ( $box_h / 2.0 ) : 30.0 );
-			$box_r      = isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0;
-			$side_id    = ! empty( $line['side_id'] ) ? sanitize_key( $line['side_id'] ) : $default_side_id;
-			$placements = ( ! empty( $line['placements'] ) && is_array( $line['placements'] ) ) ? $line['placements'] : array();
+			$line_num      = $idx + 1;
+			$field_type    = self::normalize_field_type( isset( $line['field_type'] ) ? $line['field_type'] : 'text' );
+			$is_image_like = self::is_image_field_type( $field_type );
+			$is_ai_image   = ( 'ai_image' === $field_type );
+			$box_w         = isset( $line['box_width'] ) ? floatval( $line['box_width'] ) : ( isset( $line['max_width'] ) ? floatval( $line['max_width'] ) : 40.0 );
+			$box_h         = isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : ( isset( $line['font_size'] ) ? floatval( $line['font_size'] ) * 1.5 : 8.5 );
+			$box_l         = isset( $line['box_left'] ) ? floatval( $line['box_left'] ) : ( 50.0 - ( $box_w / 2.0 ) );
+			$box_t         = isset( $line['box_top'] ) ? floatval( $line['box_top'] ) : ( isset( $line['y_pct'] ) ? floatval( $line['y_pct'] ) - ( $box_h / 2.0 ) : 30.0 );
+			$box_r         = isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0;
+			$side_id       = ! empty( $line['side_id'] ) ? sanitize_key( $line['side_id'] ) : $default_side_id;
+			$placements    = ( ! empty( $line['placements'] ) && is_array( $line['placements'] ) ) ? $line['placements'] : array();
 
-			if ( 'image' === $field_type ) {
-				$img_ref_id      = ! empty( $line['ref_id'] ) ? $line['ref_id'] : 'id-ref-image-line-' . $line_num;
+			if ( $is_image_like ) {
+				$img_ref_id      = ! empty( $line['ref_id'] ) ? $line['ref_id'] : ( ( $is_ai_image ? 'id-ref-ai-image-line-' : 'id-ref-image-line-' ) . $line_num );
 				$default_img_url = ! empty( $line['default_image'] ) ? $line['default_image'] : '';
 				$preview_img_url = ! empty( $line['default_image_preview'] ) ? $line['default_image_preview'] : '';
 				$has_preview_url = ( '' !== $preview_img_url && $preview_img_url !== $default_img_url );
@@ -1922,8 +2078,9 @@ class SceneGraphSchema {
 					'url'              => $default_img_url,
 					'defaultUrl'       => $default_img_url,
 					'imageFit'         => $image_fit,
-					'editable'         => ! isset( $line['allow_image_upload'] ) || ! empty( $line['allow_image_upload'] ),
+					'editable'         => $is_ai_image ? true : ( ! isset( $line['allow_image_upload'] ) || ! empty( $line['allow_image_upload'] ) ),
 					'isFieldImage'     => true,
+					'isAiImage'        => $is_ai_image,
 					'customProperties' => array(
 						array( 'key' => 'edited',   'value' => false ),
 						array( 'key' => 'warning',  'value' => ! empty( $line['warning_unedited'] ) ),

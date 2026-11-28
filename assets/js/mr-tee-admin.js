@@ -70,6 +70,7 @@
 			this.bindDuplicateField();
 			this.bindDeleteField();
 			this.bindFieldReorder();
+			this.bindAiFieldControls();
 			this.bindPresetApply();
 			this.bindDimensionControls();
 			this.bindMultiViewManager();
@@ -233,14 +234,14 @@
 			if (Array.isArray(this.config.allowed_fonts)) {
 				this.config.allowed_fonts.forEach(fid => fid && initialIds.add(fid));
 			} else if (Array.isArray(this.config.text_lines)) {
-				const firstText = this.config.text_lines.find(tl => tl && tl.field_type !== 'image' && Array.isArray(tl.allowed_fonts));
+				const firstText = this.config.text_lines.find(tl => tl && tl.field_type !== 'image' && tl.field_type !== 'ai_image' && Array.isArray(tl.allowed_fonts));
 				if (firstText) {
 					firstText.allowed_fonts.forEach(fid => fid && initialIds.add(fid));
 				}
 			}
 			if (Array.isArray(this.config.text_lines)) {
 				this.config.text_lines.forEach(tl => {
-					if (tl && tl.field_type !== 'image' && tl.font) initialIds.add(tl.font);
+					if (tl && tl.field_type !== 'image' && tl.field_type !== 'ai_image' && tl.font) initialIds.add(tl.font);
 				});
 			}
 			initialIds.forEach(fid => this._loadedTtfFonts.add(fid));
@@ -1444,7 +1445,7 @@
 		syncFieldColorUi(idx) {
 			const $panel = $(`#mr-tee-field-panel-${idx}`);
 			if (!$panel.length) return;
-			const isImage = this.getFieldType(idx) === 'image';
+			const isImage = this.isImageLikeType(this.getFieldType(idx));
 			if (isImage) {
 				$panel.find('.mr-tee-row-svg-color-notice, .mr-tee-row-color-mode, .mr-tee-row-solid-color').hide();
 				return;
@@ -1536,37 +1537,64 @@
 			$(document).on('input change', '.mr-tee-field-label-input', function() {
 				const idx = getFieldIdx($(this));
 				const val = $(this).val() || `Champ ${idx + 1}`;
-				const prefix = self.getFieldType(idx) === 'image' ? '🖼️ ' : '';
+				const ft = self.getFieldType(idx);
+				const prefix = ft === 'ai_image' ? '✨ ' : (ft === 'image' ? '🖼️ ' : '');
 				$(`.mr-tee-field-pill[data-field-index="${idx}"] .mr-tee-pill-label`).text(val);
 				$(`#mr-tee-field-box-${idx} .mr-tee-box-badge`).text(`${idx + 1}. ${prefix}${val}`);
 				$(`#mr-tee-field-panel-${idx} .mr-tee-panel-title`).text(`Champ #${idx + 1} : ${val}`);
 			});
 
-			// Field Type Switcher (Text <-> Image)
+			// Field Type Switcher (Text <-> Image <-> AI Image)
 			$(document).on('change', '.mr-tee-field-type-select', function() {
 				const idx = getFieldIdx($(this));
-				const newType = $(this).val() === 'image' ? 'image' : 'text';
-				const isImage = newType === 'image';
+				const rawVal = $(this).val();
+				const newType = rawVal === 'ai_image' ? 'ai_image' : (rawVal === 'image' ? 'image' : 'text');
+				const isAiImage = newType === 'ai_image';
+				const isImage = newType === 'image' || isAiImage;
+				const isPlainImage = newType === 'image';
 				const $panel = $(`#mr-tee-field-panel-${idx}`);
 				const $box = $(`#mr-tee-field-box-${idx}`);
 				const $pill = $(`.mr-tee-field-pill[data-field-index="${idx}"]`);
 
-				$panel.attr('data-field-type', newType).toggleClass('is-image-panel', isImage);
-				$box.attr('data-field-type', newType).toggleClass('is-image-field', isImage);
-				$pill.attr('data-field-type', newType).toggleClass('is-image-pill', isImage);
+				const prevType = $panel.attr('data-field-type') || 'text';
+				$panel.attr('data-field-type', newType).toggleClass('is-image-panel', isImage).toggleClass('is-ai-image-panel', isAiImage);
+				$box.attr('data-field-type', newType).toggleClass('is-image-field', isImage).toggleClass('is-ai-image-field', isAiImage);
+				$pill.attr('data-field-type', newType).toggleClass('is-image-pill', isImage).toggleClass('is-ai-image-pill', isAiImage);
+
+				// Keep default ref_id prefix aligned when switching field types in the live Studio
+				const $refInput = $panel.find('.mr-tee-field-ref-id');
+				if ($refInput.length && prevType !== newType) {
+					const curRef = String($refInput.val() || '');
+					const prevSlug = `id-ref-${prevType.replace(/_/g, '-')}-`;
+					const nextSlug = `id-ref-${newType.replace(/_/g, '-')}-`;
+					if (curRef.indexOf(prevSlug) === 0) {
+						$refInput.val(nextSlug + curRef.slice(prevSlug.length));
+					}
+				}
 
 				$panel.find('.mr-tee-row-text-only, .mr-tee-opt-text-only').toggle(!isImage);
-				$panel.find('.mr-tee-row-image-only, .mr-tee-opt-image-only').toggle(isImage);
+				$panel.find('.mr-tee-row-image-only').toggle(isImage);
+				$panel.find('.mr-tee-opt-image-only').toggle(isPlainImage);
+				$panel.find('.mr-tee-row-ai-only').toggle(isAiImage);
+				$panel.find('.mr-tee-lbl-default-image').text(isAiImage ? 'Aperçu par défaut' : 'Image');
 				self.syncFieldColorUi(idx);
 
 				$pill.find('.mr-tee-pill-type-icon').remove();
-				if (isImage) {
+				if (isAiImage) {
+					$pill.find('.mr-tee-pill-badge').after('<span class="mr-tee-pill-type-icon" aria-hidden="true">✨</span>');
+				} else if (isImage) {
 					$pill.find('.mr-tee-pill-badge').after('<span class="mr-tee-pill-type-icon" aria-hidden="true">🖼️</span>');
 				}
 				const labelVal = $panel.find('.mr-tee-field-label-input').val() || `Champ ${idx + 1}`;
-				$box.find('.mr-tee-box-badge').text(`${idx + 1}. ${isImage ? '🖼️ ' : ''}${labelVal}`);
+				const boxPrefix = isAiImage ? '✨ ' : (isImage ? '🖼️ ' : '');
+				$box.find('.mr-tee-box-badge').text(`${idx + 1}. ${boxPrefix}${labelVal}`);
 
-				// Give image fields a practical initial height, clamping curTop cleanly when curTop > 85
+				if (isAiImage) {
+					self.renderAiRefsStrip(idx);
+					self.syncAiPromptLegend(idx);
+				}
+
+				// Give image / AI image fields a practical initial height, clamping curTop cleanly when curTop > 85
 				if (isImage) {
 					const numOr = (sel, fb) => { const n = parseFloat($(sel).val()); return Number.isFinite(n) ? n : fb; };
 					const curL = numOr(`#mr_tee_field_left_${idx}`, 30.0);
@@ -1591,6 +1619,7 @@
 				const url = ($(this).val() || '').trim();
 				$(`#mr-tee-field-panel-${idx} .mr-tee-field-default-image-id`).val('0');
 				self.syncDefaultImagePreviewUi(idx, url);
+				self.syncAiPromptLegend(idx);
 				self.renderBoxPreview(idx);
 			});
 
@@ -1746,9 +1775,319 @@
 		getFieldType(idx) {
 			const $sel = $(`#mr-tee-field-panel-${idx} .mr-tee-field-type-select`);
 			if ($sel.length) {
-				return $sel.val() === 'image' ? 'image' : 'text';
+				const v = $sel.val();
+				return v === 'ai_image' ? 'ai_image' : (v === 'image' ? 'image' : 'text');
 			}
-			return $(`#mr-tee-field-panel-${idx}`).attr('data-field-type') === 'image' ? 'image' : 'text';
+			const attr = $(`#mr-tee-field-panel-${idx}`).attr('data-field-type');
+			return attr === 'ai_image' ? 'ai_image' : (attr === 'image' ? 'image' : 'text');
+		}
+
+		isImageLikeType(fieldType) {
+			return fieldType === 'image' || fieldType === 'ai_image';
+		}
+
+		generateAiModelSelectOptions(selectedModelId = '') {
+			const aiState = (window.mrTeeAdminData && window.mrTeeAdminData.ai) || {};
+			const models = Array.isArray(aiState.models) ? aiState.models : [];
+			const defId = aiState.defaultModelId || '';
+			const defModel = models.find(m => m && m.id === defId) || models[0] || null;
+			const defLabel = defModel ? `Par défaut (${defModel.name})` : 'Par défaut (Réglages IA)';
+			let html = `<option value="">${this.escapeXml(defLabel)}</option>`;
+			models.forEach(m => {
+				if (!m || !m.id) return;
+				const sel = selectedModelId === m.id ? ' selected' : '';
+				html += `<option value="${this.escapeXml(m.id)}"${sel}>${this.escapeXml(m.name)} [${this.escapeXml(m.air_id)}]</option>`;
+			});
+			return html;
+		}
+
+		getAiRefsArray(idx) {
+			const raw = $(`#mr-tee-field-panel-${idx} .mr-tee-field-ai-refs-json`).val() || '[]';
+			try {
+				const parsed = JSON.parse(raw);
+				return Array.isArray(parsed) ? parsed : [];
+			} catch (_e) {
+				return [];
+			}
+		}
+
+		setAiRefsArray(idx, refs) {
+			const clean = Array.isArray(refs) ? refs.slice(0, 6) : [];
+			$(`#mr-tee-field-panel-${idx} .mr-tee-field-ai-refs-json`).val(JSON.stringify(clean));
+			this.renderAiRefsStrip(idx, clean);
+			this.syncAiPromptLegend(idx);
+			this.markDirty();
+		}
+
+		renderAiRefsStrip(idx, refs = null) {
+			const list = Array.isArray(refs) ? refs : this.getAiRefsArray(idx);
+			const $panel = $(`#mr-tee-field-panel-${idx}`);
+			const $strip = $panel.find('.mr-tee-ai-refs-strip');
+			if (!$strip.length) return;
+
+			const useDef = $panel.find('.mr-tee-field-ai-use-def-ref').is(':checked');
+			const defUrl = ($panel.find('.mr-tee-field-default-image-input').val() || '').trim();
+			const offset = (useDef && defUrl) ? 1 : 0;
+
+			let html = '';
+			list.forEach((item, rIdx) => {
+				const url = this.normalizeAdminAssetUrl((item && item.url) || '');
+				if (!url) return;
+				html += `
+					<div class="mr-tee-ai-ref-thumb" data-ref-index="${rIdx}">
+						<img src="${this.escapeXml(url)}" alt="" loading="lazy" decoding="async" />
+						<span class="mr-tee-ai-ref-badge">#${offset + rIdx + 1}</span>
+						<button type="button" class="mr-tee-ai-ref-remove" data-field-index="${idx}" data-ref-index="${rIdx}" aria-label="Retirer cette référence">&times;</button>
+					</div>
+				`;
+			});
+			$strip.html(html);
+		}
+
+		syncAiPromptLegend(idx) {
+			const $panel = $(`#mr-tee-field-panel-${idx}`);
+			const $legend = $panel.find('.mr-tee-ai-prompt-legend');
+			if (!$legend.length) return;
+
+			const useDef = $panel.find('.mr-tee-field-ai-use-def-ref').is(':checked');
+			const defUrl = ($panel.find('.mr-tee-field-default-image-input').val() || '').trim();
+			const refs = this.getAiRefsArray(idx).filter(r => r && r.url);
+			const adminTotal = (useDef && defUrl ? 1 : 0) + refs.length;
+			const clientNum = adminTotal + 1;
+
+			let html = '';
+			if (adminTotal > 0) {
+				const label = adminTotal === 1
+					? 'Image 1 = Référence admin'
+					: `Images 1–${adminTotal} = Références admin`;
+				html += `<span class="mr-tee-ai-legend-pill">${this.escapeXml(label)}</span>`;
+			}
+			html += `<span class="mr-tee-ai-legend-pill is-client">Image ${clientNum} = Photo importée par le client</span>`;
+			$legend.html(html);
+		}
+
+		bindAiFieldControls() {
+			const self = this;
+			const getIdx = ($el) => {
+				const raw = $el.attr('data-field-index') || $el.closest('.mr-tee-field-panel').attr('data-field-index');
+				const idx = parseInt(raw, 10);
+				return Number.isNaN(idx) ? 0 : idx;
+			};
+
+			// Toggle "Use Default Image as Reference #1"
+			$(document).on('change', '.mr-tee-field-ai-use-def-ref', function() {
+				const idx = getIdx($(this));
+				self.renderAiRefsStrip(idx);
+				self.syncAiPromptLegend(idx);
+			});
+
+			// Add hidden reference image via WP Media Library
+			$(document).on('click', '.mr-tee-btn-add-ai-ref', function(e) {
+				e.preventDefault();
+				const idx = getIdx($(this));
+				if (typeof wp === 'undefined' || !wp.media) {
+					window.alert('Médiathèque WordPress indisponible sur cette page.');
+					return;
+				}
+				const frame = wp.media({
+					title: 'Choisir une image de référence IA (cachée au client)',
+					button: { text: 'Ajouter comme référence IA' },
+					library: { type: 'image' },
+					multiple: false,
+				});
+				frame.on('select', function() {
+					const sel = frame.state().get('selection').first();
+					if (!sel) return;
+					const att = sel.toJSON();
+					const url = (att && att.url) ? String(att.url) : '';
+					if (!url) return;
+					const refs = self.getAiRefsArray(idx);
+					refs.push({ id: parseInt(att.id, 10) || 0, url });
+					self.setAiRefsArray(idx, refs);
+				});
+				frame.open();
+			});
+
+			// Remove hidden reference image
+			$(document).on('click', '.mr-tee-ai-ref-remove', function(e) {
+				e.preventDefault();
+				const idx = getIdx($(this));
+				const refIdx = parseInt($(this).attr('data-ref-index'), 10);
+				if (Number.isNaN(refIdx)) return;
+				const refs = self.getAiRefsArray(idx);
+				refs.splice(refIdx, 1);
+				self.setAiRefsArray(idx, refs);
+			});
+
+			// Show chosen admin test photo filename
+			$(document).on('change', '.mr-tee-ai-admin-test-file', function() {
+				const $row = $(this).closest('.mr-tee-ai-admin-test-row');
+				const file = this.files && this.files[0];
+				$row.find('.mr-tee-ai-admin-test-status')
+					.removeClass('is-error is-ok')
+					.text(file ? `Photo prête : ${file.name}` : '');
+			});
+
+			const compressAdminTestPhoto = (file) => new Promise((resolve) => {
+				if (!file || file.size <= 350 * 1024) {
+					resolve(file);
+					return;
+				}
+				const objUrl = URL.createObjectURL(file);
+				const img = new Image();
+				img.onload = () => {
+					URL.revokeObjectURL(objUrl);
+					try {
+						const w = img.naturalWidth || img.width || 0;
+						const h = img.naturalHeight || img.height || 0;
+						if (!w || !h) { resolve(file); return; }
+						const scale = Math.min(1, 1280 / Math.max(w, h));
+						const dw = Math.max(1, Math.round(w * scale));
+						const dh = Math.max(1, Math.round(h * scale));
+						const c = document.createElement('canvas');
+						c.width = dw;
+						c.height = dh;
+						const ctx = c.getContext('2d');
+						if (!ctx) { resolve(file); return; }
+						const keepAlpha = (file.type === 'image/png' || file.type === 'image/webp');
+						if (!keepAlpha) {
+							ctx.fillStyle = '#ffffff';
+							ctx.fillRect(0, 0, dw, dh);
+						}
+						ctx.drawImage(img, 0, 0, dw, dh);
+						c.toBlob((blob) => resolve(blob && blob.size > 0 ? blob : file), keepAlpha ? 'image/webp' : 'image/jpeg', 0.86);
+					} catch (_e) {
+						resolve(file);
+					}
+				};
+				img.onerror = () => { URL.revokeObjectURL(objUrl); resolve(file); };
+				img.src = objUrl;
+			});
+
+			const makeAdminUuid = () => {
+				if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+					return crypto.randomUUID();
+				}
+				return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+					const r = (Math.random() * 16) | 0;
+					return (c === 'x' ? r : ((r & 0x3) | 0x8)).toString(16);
+				});
+			};
+
+			// Run Live Admin Test Generation directly inside the Visual Placement Stage box (with async polling support)
+			$(document).on('click', '.mr-tee-btn-ai-admin-test', async function(e) {
+				e.preventDefault();
+				const idx = getIdx($(this));
+				const $panel = $(`#mr-tee-field-panel-${idx}`);
+				const $row = $panel.find('.mr-tee-ai-admin-test-row');
+				const $btn = $(this);
+				const $status = $row.find('.mr-tee-ai-admin-test-status');
+				const fileInput = $row.find('.mr-tee-ai-admin-test-file')[0];
+				const testFile = (fileInput && fileInput.files && fileInput.files[0]) ? fileInput.files[0] : null;
+				const cfg = window.mrTeeAdminData || {};
+				const ajaxUrl = self.toSameOriginPath(cfg.ajaxUrl || '/wp-admin/admin-ajax.php');
+
+				$btn.prop('disabled', true);
+				$status.removeClass('is-error is-ok').text('⏳ Génération test en cours...');
+
+				try {
+					const uploadBlob = testFile ? await compressAdminTestPhoto(testFile) : null;
+					const coords = self.getFieldCurrentCoords(idx);
+					const taskUuid = makeAdminUuid();
+					const fd = new FormData();
+					fd.append('action', 'mr_tee_ai_admin_test');
+					fd.append('nonce', cfg.nonce || '');
+					fd.append('product_id', String(cfg.productId || 0));
+					fd.append('task_uuid', taskUuid);
+					fd.append('ai_model', $panel.find('.mr-tee-field-ai-model').val() || '');
+					fd.append('ai_prompt', $panel.find('.mr-tee-field-ai-prompt').val() || '');
+					fd.append('ai_size_mode', $panel.find('.mr-tee-field-ai-size-mode').val() || 'auto_box');
+					fd.append('ai_remove_bg', $panel.find('.mr-tee-field-ai-remove-bg').is(':checked') ? '1' : '0');
+					fd.append('ai_use_default_as_ref', $panel.find('.mr-tee-field-ai-use-def-ref').is(':checked') ? '1' : '0');
+					fd.append('default_image', ($panel.find('.mr-tee-field-default-image-input').val() || '').trim());
+					fd.append('default_image_id', $panel.find('.mr-tee-field-default-image-id').val() || '0');
+					fd.append('ai_reference_images', $panel.find('.mr-tee-field-ai-refs-json').val() || '[]');
+					fd.append('box_width', String(coords.box_width || 40));
+					fd.append('box_height', String(coords.box_height || 30));
+					fd.append('stage_ratio', String(self.getStageAspectRatio() || 1));
+					if (uploadBlob) {
+						fd.append('customer_image', uploadBlob, (testFile && testFile.name) || 'test.jpg');
+					}
+
+					let resultData = null;
+					let shouldPoll = false;
+					let pollUuid = taskUuid;
+
+					try {
+						const resp = await fetch(ajaxUrl, { method: 'POST', body: fd, credentials: 'same-origin' });
+						const json = await resp.json();
+						if (json && json.success && json.data) {
+							if (json.data.status === 'completed' && json.data.url) {
+								resultData = json.data;
+							} else if (json.data.status === 'processing') {
+								if (json.data.task_uuid) pollUuid = String(json.data.task_uuid);
+								shouldPoll = true;
+							}
+						} else {
+							throw new Error((json && json.data && json.data.message) || 'Erreur lors du test IA.');
+						}
+					} catch (reqErr) {
+						if (reqErr && (reqErr.name === 'TypeError' || /json|unexpected token|504|502|524/i.test(String(reqErr.message || '')))) {
+							shouldPoll = true;
+						} else {
+							throw reqErr;
+						}
+					}
+
+					if (shouldPoll && !resultData) {
+						$status.removeClass('is-error is-ok').text('⏳ Finalisation de l\'image IA...');
+						for (let attempt = 0; attempt < 45; attempt++) {
+							await new Promise((r) => setTimeout(r, 2500));
+							const pfd = new FormData();
+							pfd.append('action', 'mr_tee_ai_poll');
+							pfd.append('nonce', cfg.nonce || '');
+							pfd.append('task_uuid', pollUuid);
+							try {
+								const presp = await fetch(ajaxUrl, { method: 'POST', body: pfd, credentials: 'same-origin' });
+								const pjson = await presp.json();
+								if (pjson && pjson.success && pjson.data && pjson.data.status === 'completed' && pjson.data.url) {
+									resultData = pjson.data;
+									break;
+								}
+								if (pjson && pjson.success === false && pjson.data && pjson.data.message) {
+									throw new Error(pjson.data.message);
+								}
+							} catch (pollErr) {
+								if (pollErr && pollErr.message && !/fetch|json|network/i.test(pollErr.message)) {
+									throw pollErr;
+								}
+							}
+						}
+					}
+
+					if (!resultData || !resultData.url) {
+						throw new Error('Aucune image retournée par le test IA.');
+					}
+
+					const liveIdx = parseInt($panel.attr('data-field-index'), 10);
+					const targetIdx = Number.isNaN(liveIdx) ? idx : liveIdx;
+					const previewUrl = resultData.preview_url || resultData.url;
+					const el = document.getElementById(`mr-tee-box-svg-${targetIdx}`);
+					const imgFit = $panel.find('.mr-tee-field-image-fit').val() === 'cover' ? 'cover' : 'contain';
+					if (el) {
+						el.innerHTML = `<img class="mr-tee-admin-box-img" src="${self.escapeXml(previewUrl)}" alt="" draggable="false" style="width:100%;height:100%;object-fit:${imgFit};display:block;pointer-events:none;user-select:none;" />`;
+						el._renderMode = 'img';
+						el._imgUrl = previewUrl;
+						el._imgFit = imgFit;
+						el._imgEl = el.querySelector('.mr-tee-admin-box-img');
+					}
+					$status.removeClass('is-error').addClass('is-ok').text('✓ Test réussi (affiché dans la zone) !');
+				} catch (err) {
+					$status.removeClass('is-ok').addClass('is-error').text('✕ ' + ((err && err.message) || 'Erreur lors du test IA.'));
+				} finally {
+					$btn.prop('disabled', false);
+				}
+			});
 		}
 
 		syncDefaultImagePreviewUi(idx, url) {
@@ -1762,10 +2101,12 @@
 				$wrap.html('<span class="mr-tee-default-img-empty">Aucune image par défaut</span>');
 				$clearBtn.hide();
 			}
+			this.renderAiRefsStrip(idx);
+			this.syncAiPromptLegend(idx);
 		}
 
 		/**
-		 * Add New Field Rectangle (Text or Image).
+		 * Add New Field Rectangle (Text, Image, or AI Image).
 		 */
 		bindAddField() {
 			const self = this;
@@ -1774,6 +2115,9 @@
 			});
 			$(document).on('click', '#mr-tee-btn-add-image-field-pill', function() {
 				self.addField('image');
+			});
+			$(document).on('click', '#mr-tee-btn-add-ai-image-field-pill', function() {
+				self.addField('ai_image');
 			});
 		}
 
@@ -1794,13 +2138,14 @@
 
 			this.saveFieldPlacementForActiveView(srcIdx);
 			const fieldType = this.getFieldType(srcIdx);
+			const isImageLike = this.isImageLikeType(fieldType);
 			const sideId = this.getFieldSideId(srcIdx);
 			const coords = this.getFieldCurrentCoords(srcIdx);
 			const srcPlacements = this.getFieldPlacements(srcIdx);
 
 			const offsetCoords = (c) => {
 				const bw = Number.isFinite(parseFloat(c.box_width)) ? parseFloat(c.box_width) : 40;
-				const bh = Number.isFinite(parseFloat(c.box_height)) ? parseFloat(c.box_height) : (fieldType === 'image' ? 30 : 8.5);
+				const bh = Number.isFinite(parseFloat(c.box_height)) ? parseFloat(c.box_height) : (isImageLike ? 30 : 8.5);
 				const bl = Number.isFinite(parseFloat(c.box_left)) ? parseFloat(c.box_left) : 30;
 				const bt = Number.isFinite(parseFloat(c.box_top)) ? parseFloat(c.box_top) : 25;
 				const br = Number.isFinite(parseFloat(c.box_rotate)) ? parseFloat(c.box_rotate) : 0;
@@ -1841,13 +2186,23 @@
 				defaultImageId: parseInt($srcPanel.find('.mr-tee-field-default-image-id').val(), 10) || 0,
 				imageFit: $srcPanel.find('.mr-tee-field-image-fit').val() === 'cover' ? 'cover' : 'contain',
 				allowImageUpload: $srcPanel.find('.mr-tee-field-allow-image-upload').is(':checked'),
+				aiModel: $srcPanel.find('.mr-tee-field-ai-model').val() || '',
+				aiPrompt: $srcPanel.find('.mr-tee-field-ai-prompt').val() || '',
+				aiUseDefaultAsRef: $srcPanel.find('.mr-tee-field-ai-use-def-ref').is(':checked'),
+				aiReferenceImages: this.getAiRefsArray(srcIdx),
+				aiSizeMode: $srcPanel.find('.mr-tee-field-ai-size-mode').val() === 'match_reference' ? 'match_reference' : 'auto_box',
+				aiRemoveBg: $srcPanel.find('.mr-tee-field-ai-remove-bg').is(':checked'),
+				aiButtonLabel: $srcPanel.find('.mr-tee-field-ai-btn-label').val() || 'Générer',
 			};
 
 			this.addField(fieldType, cloneSpec);
 		}
 
 		addField(fieldType = 'text', cloneSpec = null) {
-			const isImage = fieldType === 'image';
+			const normType = fieldType === 'ai_image' ? 'ai_image' : (fieldType === 'image' ? 'image' : 'text');
+			const isAiImage = normType === 'ai_image';
+			const isImage = normType === 'image' || isAiImage;
+			const isPlainImage = normType === 'image';
 			const newIdx = $('.mr-tee-field-box').length;
 			const color = FIELD_COLORS[newIdx % FIELD_COLORS.length];
 			const activeSideId = (cloneSpec && cloneSpec.sideId) ? cloneSpec.sideId : this.getActiveSideId();
@@ -1856,7 +2211,7 @@
 			this._uidCounter = (this._uidCounter || 0) + 1;
 			const uid = 'f' + Date.now().toString(36) + '_' + this._uidCounter + '_' + Math.random().toString(36).slice(2, 5);
 			const fieldId = `line_${uid}`;
-			const refId = `id-ref-${isImage ? 'image' : 'text'}-${uid}`;
+			const refId = `id-ref-${isAiImage ? 'ai-image' : (isImage ? 'image' : 'text')}-${uid}`;
 			const colorRefId = `id-ref-color-${uid}`;
 
 			let newLeft = isImage ? 32.5 : 30.0;
@@ -1889,7 +2244,8 @@
 				}
 			}
 
-			const fieldLabel = (cloneSpec && cloneSpec.label) ? cloneSpec.label : (isImage ? `Image ${newIdx + 1}` : `Texte ${newIdx + 1}`);
+			const defaultFieldLabel = isAiImage ? `Image IA ${newIdx + 1}` : (isImage ? `Image ${newIdx + 1}` : `Texte ${newIdx + 1}`);
+			const fieldLabel = (cloneSpec && cloneSpec.label) ? cloneSpec.label : defaultFieldLabel;
 			const defaultText = (cloneSpec && cloneSpec.defaultText !== undefined) ? cloneSpec.defaultText : (isImage ? '' : `Ligne ${newIdx + 1}`);
 			const allowedFonts = this.getAllowedFonts();
 			const defaultFontId = (cloneSpec && cloneSpec.fontId && allowedFonts.includes(cloneSpec.fontId))
@@ -1910,8 +2266,19 @@
 			const imageFit = (cloneSpec && cloneSpec.imageFit === 'cover') ? 'cover' : 'contain';
 			const allowImageUpload = cloneSpec ? Boolean(cloneSpec.allowImageUpload) : true;
 
+			const aiModel = (cloneSpec && cloneSpec.aiModel) ? cloneSpec.aiModel : '';
+			const aiPrompt = (cloneSpec && cloneSpec.aiPrompt) ? cloneSpec.aiPrompt : '';
+			const aiUseDefAsRef = (cloneSpec && cloneSpec.aiUseDefaultAsRef !== undefined) ? Boolean(cloneSpec.aiUseDefaultAsRef) : false;
+			const aiRefs = (cloneSpec && Array.isArray(cloneSpec.aiReferenceImages)) ? cloneSpec.aiReferenceImages : [];
+			const aiSizeMode = (cloneSpec && cloneSpec.aiSizeMode === 'match_reference') ? 'match_reference' : 'auto_box';
+			const aiRemoveBg = cloneSpec ? Boolean(cloneSpec.aiRemoveBg) : false;
+			const aiButtonLabel = (cloneSpec && cloneSpec.aiButtonLabel) ? cloneSpec.aiButtonLabel : 'Générer';
+			const aiState = (window.mrTeeAdminData && window.mrTeeAdminData.ai) || {};
+			const aiHasKey = Boolean(aiState.hasApiKey);
+
 			const fontSelectOptions = this.generateFontSelectOptions(defaultFontId, allowedFonts);
 			const sideSelectOptions = this.generateSideSelectOptions(activeSideId);
+			const aiModelSelectOptions = this.generateAiModelSelectOptions(aiModel);
 
 			let initialPlacements = {};
 			if (cloneSpec && cloneSpec.placements && Object.keys(cloneSpec.placements).length) {
@@ -1935,24 +2302,31 @@
 			}
 
 			const placementsJsonAttr = this.escapeXml(JSON.stringify(initialPlacements));
+			const aiRefsJsonAttr = this.escapeXml(JSON.stringify(aiRefs));
 			const safeLabel = this.escapeXml(fieldLabel);
 			const safeDefaultText = this.escapeXml(defaultText);
 			const safeDefaultImage = this.escapeXml(defaultImage);
+			const safeAiPrompt = this.escapeXml(aiPrompt);
+			const safeAiBtnLabel = this.escapeXml(aiButtonLabel);
 			const rotTxt = newRotate !== 0 ? ` (${newRotate}°)` : '';
 			const badgeClasses = `${newTop < 8 ? ' is-badge-bottom' : ''}${(newTop + newHeight) > 92 ? ' is-badge-inside' : ''}`;
+			const boxPrefix = isAiImage ? '✨ ' : (isImage ? '🖼️ ' : '');
 
 			// 1. Add Pill
+			const pillIconHtml = isAiImage
+				? '<span class="mr-tee-pill-type-icon" aria-hidden="true">✨</span>'
+				: (isImage ? '<span class="mr-tee-pill-type-icon" aria-hidden="true">🖼️</span>' : '');
 			const pillHtml = `
 				<button
 					type="button"
-					class="mr-tee-field-pill ${isImage ? 'is-image-pill' : ''}"
+					class="mr-tee-field-pill ${isImage ? 'is-image-pill' : ''} ${isAiImage ? 'is-ai-image-pill' : ''}"
 					data-field-index="${newIdx}"
-					data-field-type="${fieldType}"
+					data-field-type="${normType}"
 					data-side-id="${safeSideId}"
 					style="--pill-color: ${color};"
 				>
 					<span class="mr-tee-pill-badge" style="background: ${color};">${newIdx + 1}</span>
-					${isImage ? '<span class="mr-tee-pill-type-icon" aria-hidden="true">🖼️</span>' : ''}
+					${pillIconHtml}
 					<span class="mr-tee-pill-label">${safeLabel}</span>
 					<span class="mr-tee-pill-dims">${newWidth}×${newHeight}%${rotTxt}</span>
 				</button>
@@ -1963,14 +2337,14 @@
 			const boxHtml = `
 				<div
 					id="mr-tee-field-box-${newIdx}"
-					class="mr-tee-field-box ${isImage ? 'is-image-field' : ''}${badgeClasses}"
+					class="mr-tee-field-box ${isImage ? 'is-image-field' : ''} ${isAiImage ? 'is-ai-image-field' : ''}${badgeClasses}"
 					data-field-index="${newIdx}"
-					data-field-type="${fieldType}"
+					data-field-type="${normType}"
 					data-side-id="${safeSideId}"
 					style="left: ${newLeft}%; top: ${newTop}%; width: ${newWidth}%; height: ${newHeight}%; transform: rotate(${newRotate}deg); transform-origin: center center; --field-color: ${color};"
 				>
 					<span class="mr-tee-box-badge" style="background: ${color};">
-						${newIdx + 1}. ${isImage ? '🖼️ ' : ''}${safeLabel}
+						${newIdx + 1}. ${boxPrefix}${safeLabel}
 					</span>
 					<div class="mr-tee-box-svg-holder" id="mr-tee-box-svg-${newIdx}"></div>
 					<div class="mr-tee-handle-rot-stem" style="background: ${color};"></div>
@@ -1998,10 +2372,10 @@
 
 			const panelHtml = `
 				<div
-					class="mr-tee-field-panel ${isImage ? 'is-image-panel' : ''}"
+					class="mr-tee-field-panel ${isImage ? 'is-image-panel' : ''} ${isAiImage ? 'is-ai-image-panel' : ''}"
 					id="mr-tee-field-panel-${newIdx}"
 					data-field-index="${newIdx}"
-					data-field-type="${fieldType}"
+					data-field-type="${normType}"
 					data-side-id="${safeSideId}"
 				>
 					<input type="hidden" name="mr_tee_config[text_lines][${newIdx}][id]" value="${fieldId}" class="mr-tee-field-id" data-field-index="${newIdx}" />
@@ -2024,7 +2398,8 @@
 							<td>
 								<select id="mr_tee_field_type_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][field_type]" class="mr-tee-field-type-select" data-field-index="${newIdx}">
 									<option value="text" ${!isImage ? 'selected' : ''}>📝 Champ Texte</option>
-									<option value="image" ${isImage ? 'selected' : ''}>🖼️ Champ Image</option>
+									<option value="image" ${isPlainImage ? 'selected' : ''}>🖼️ Champ Image</option>
+									<option value="ai_image" ${isAiImage ? 'selected' : ''}>✨ Champ Image IA</option>
 								</select>
 							</td>
 						</tr>
@@ -2037,7 +2412,7 @@
 							</td>
 						</tr>
 						<tr class="mr-tee-row-image-only" ${isImage ? '' : 'style="display:none;"'}>
-							<th><label for="mr_tee_field_default_image_${newIdx}" class="mr-tee-lbl-default-image">Image</label></th>
+							<th><label for="mr_tee_field_default_image_${newIdx}" class="mr-tee-lbl-default-image">${isAiImage ? 'Aperçu par défaut' : 'Image'}</label></th>
 							<td>
 								<div class="mr-tee-default-img-picker" data-field-index="${newIdx}">
 									<div class="mr-tee-default-img-preview-wrap">${imgPreviewHtml}</div>
@@ -2062,6 +2437,74 @@
 									<option value="contain" ${imageFit === 'contain' ? 'selected' : ''}>Entier (Contain — sans rogner)</option>
 									<option value="cover" ${imageFit === 'cover' ? 'selected' : ''}>Remplir (Cover — recadré)</option>
 								</select>
+							</td>
+						</tr>
+						<tr class="mr-tee-row-ai-only" ${isAiImage ? '' : 'style="display:none;"'}>
+							<th><label for="mr_tee_field_ai_model_${newIdx}" class="mr-tee-lbl-ai-model">Modèle IA</label></th>
+							<td>
+								<div class="mr-tee-ai-model-select-row">
+									<select id="mr_tee_field_ai_model_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][ai_model]" class="mr-tee-field-ai-model" data-field-index="${newIdx}">
+										${aiModelSelectOptions}
+									</select>
+									<button type="button" class="button button-small mr-tee-btn-open-ai-manager-tab" title="Gérer la clé API et les modèles IA">✨ Gérer</button>
+								</div>
+								${!aiHasKey ? '<p class="description mr-tee-ai-key-warn">⚠️ Aucune clé API Runware configurée. Ouvrez l\'onglet ✨ IA pour l\'ajouter.</p>' : ''}
+							</td>
+						</tr>
+						<tr class="mr-tee-row-ai-only" ${isAiImage ? '' : 'style="display:none;"'}>
+							<th><span>Références IA</span></th>
+							<td>
+								<div class="mr-tee-ai-refs-box" data-field-index="${newIdx}">
+									<label class="mr-tee-ai-use-default-ref-label">
+										<input type="hidden" name="mr_tee_config[text_lines][${newIdx}][ai_use_default_as_ref]" value="0" />
+										<input type="checkbox" name="mr_tee_config[text_lines][${newIdx}][ai_use_default_as_ref]" value="1" class="mr-tee-field-ai-use-def-ref" data-field-index="${newIdx}" ${aiUseDefAsRef ? 'checked' : ''} />
+										Utiliser l'aperçu par défaut comme Image 1
+									</label>
+									<input type="hidden" name="mr_tee_config[text_lines][${newIdx}][ai_reference_images]" value="${aiRefsJsonAttr}" class="mr-tee-field-ai-refs-json" data-field-index="${newIdx}" />
+									<div class="mr-tee-ai-refs-strip" data-field-index="${newIdx}"></div>
+									<div class="mr-tee-ai-refs-actions">
+										<button type="button" class="button button-small mr-tee-btn-add-ai-ref" data-field-index="${newIdx}"><span aria-hidden="true">📁</span> + Référence IA</button>
+										<span class="description">Cachée au client.</span>
+									</div>
+								</div>
+							</td>
+						</tr>
+						<tr class="mr-tee-row-ai-only" ${isAiImage ? '' : 'style="display:none;"'}>
+							<th><label for="mr_tee_field_ai_prompt_${newIdx}" class="mr-tee-lbl-ai-prompt">Prompt IA</label></th>
+							<td>
+								<div class="mr-tee-ai-prompt-legend" data-field-index="${newIdx}"></div>
+								<textarea rows="3" id="mr_tee_field_ai_prompt_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][ai_prompt]" class="large-text mr-tee-field-ai-prompt" data-field-index="${newIdx}" placeholder="Ex : Swap the person wearing the blue t-shirt in image 1 with the person in image 2. Keep the celebrity, pose, lighting and background identical.">${safeAiPrompt}</textarea>
+								<p class="description">Caché au client. Utilisez « image 1 », « image 2 » (ou {{customer_image}}) pour désigner chaque photo.</p>
+							</td>
+						</tr>
+						<tr class="mr-tee-row-ai-only" ${isAiImage ? '' : 'style="display:none;"'}>
+							<th><label for="mr_tee_field_ai_size_mode_${newIdx}" class="mr-tee-lbl-ai-size-mode">Cadrage IA</label></th>
+							<td>
+								<select id="mr_tee_field_ai_size_mode_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][ai_size_mode]" class="mr-tee-field-ai-size-mode" data-field-index="${newIdx}">
+									<option value="auto_box" ${aiSizeMode === 'auto_box' ? 'selected' : ''}>Adapter automatiquement à la zone définie</option>
+									<option value="match_reference" ${aiSizeMode === 'match_reference' ? 'selected' : ''}>Conserver le format de l'image de référence</option>
+								</select>
+								<div class="mr-tee-ai-suboptions">
+									<label class="mr-tee-inline-check">
+										<input type="hidden" name="mr_tee_config[text_lines][${newIdx}][ai_remove_bg]" value="0" />
+										<input type="checkbox" name="mr_tee_config[text_lines][${newIdx}][ai_remove_bg]" value="1" class="mr-tee-field-ai-remove-bg" data-field-index="${newIdx}" ${aiRemoveBg ? 'checked' : ''} />
+										Détourer automatiquement le fond (PNG transparent)
+									</label>
+								</div>
+							</td>
+						</tr>
+						<tr class="mr-tee-row-ai-only" ${isAiImage ? '' : 'style="display:none;"'}>
+							<th><label for="mr_tee_field_ai_btn_label_${newIdx}" class="mr-tee-lbl-ai-btn-label">Bouton client</label></th>
+							<td>
+								<input type="text" id="mr_tee_field_ai_btn_label_${newIdx}" name="mr_tee_config[text_lines][${newIdx}][ai_button_label]" value="${safeAiBtnLabel}" class="regular-text mr-tee-field-ai-btn-label" data-field-index="${newIdx}" placeholder="Générer" />
+								<div class="mr-tee-ai-admin-test-row" data-field-index="${newIdx}">
+									<label class="button button-small">
+										<span>📷 Photo test</span>
+										<input type="file" accept="image/png,image/jpeg,image/webp" class="screen-reader-text mr-tee-ai-admin-test-file" data-field-index="${newIdx}" />
+									</label>
+									<button type="button" class="button button-secondary button-small mr-tee-btn-ai-admin-test" data-field-index="${newIdx}"><span aria-hidden="true">✨</span> Tester la génération</button>
+									<span class="mr-tee-ai-admin-test-status" aria-live="polite"></span>
+								</div>
 							</td>
 						</tr>
 						<tr class="mr-tee-row-text-only" ${isImage ? 'style="display:none;"' : ''}>
@@ -2124,7 +2567,7 @@
 										Autoriser retours à la ligne
 									</label>
 								</span>
-								<span class="mr-tee-opt-image-only" ${isImage ? '' : 'style="display:none;"'}>
+								<span class="mr-tee-opt-image-only" ${isPlainImage ? '' : 'style="display:none;"'}>
 									<label>
 										<input type="hidden" name="mr_tee_config[text_lines][${newIdx}][allow_image_upload]" value="0" />
 										<input type="checkbox" name="mr_tee_config[text_lines][${newIdx}][allow_image_upload]" value="1" ${allowImageUpload ? 'checked' : ''} class="mr-tee-field-allow-image-upload" data-field-index="${newIdx}" />
@@ -2175,6 +2618,11 @@
 				</div>
 			`;
 			$('#mr-tee-field-panels-container').append(panelHtml);
+
+			if (isAiImage) {
+				this.renderAiRefsStrip(newIdx, aiRefs);
+				this.syncAiPromptLegend(newIdx);
+			}
 
 			$('.mr-tee-btn-delete-field').show();
 			this.syncFieldColorUi(newIdx);
@@ -2316,6 +2764,20 @@
 				$(this).find('.mr-tee-btn-select-default-image, .mr-tee-quick-image-file, .mr-tee-btn-clear-default-image').attr('data-field-index', i);
 				$(this).find('.mr-tee-field-image-fit').attr('id', `mr_tee_field_image_fit_${i}`).attr('name', `mr_tee_config[text_lines][${i}][image_fit]`).attr('data-field-index', i);
 				$(this).find('.mr-tee-lbl-image-fit').attr('for', `mr_tee_field_image_fit_${i}`);
+				$(this).find('.mr-tee-field-ai-model').attr('id', `mr_tee_field_ai_model_${i}`).attr('name', `mr_tee_config[text_lines][${i}][ai_model]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-lbl-ai-model').attr('for', `mr_tee_field_ai_model_${i}`);
+				$(this).find('.mr-tee-ai-refs-box, .mr-tee-ai-refs-strip, .mr-tee-btn-add-ai-ref, .mr-tee-ai-ref-remove, .mr-tee-ai-prompt-legend, .mr-tee-ai-admin-test-row, .mr-tee-ai-admin-test-file, .mr-tee-btn-ai-admin-test').attr('data-field-index', i);
+				$(this).find('input[type="hidden"][name*="[ai_use_default_as_ref]"]').attr('name', `mr_tee_config[text_lines][${i}][ai_use_default_as_ref]`);
+				$(this).find('.mr-tee-field-ai-use-def-ref').attr('name', `mr_tee_config[text_lines][${i}][ai_use_default_as_ref]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-ai-refs-json').attr('name', `mr_tee_config[text_lines][${i}][ai_reference_images]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-ai-prompt').attr('id', `mr_tee_field_ai_prompt_${i}`).attr('name', `mr_tee_config[text_lines][${i}][ai_prompt]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-lbl-ai-prompt').attr('for', `mr_tee_field_ai_prompt_${i}`);
+				$(this).find('.mr-tee-field-ai-size-mode').attr('id', `mr_tee_field_ai_size_mode_${i}`).attr('name', `mr_tee_config[text_lines][${i}][ai_size_mode]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-lbl-ai-size-mode').attr('for', `mr_tee_field_ai_size_mode_${i}`);
+				$(this).find('input[type="hidden"][name*="[ai_remove_bg]"]').attr('name', `mr_tee_config[text_lines][${i}][ai_remove_bg]`);
+				$(this).find('.mr-tee-field-ai-remove-bg').attr('name', `mr_tee_config[text_lines][${i}][ai_remove_bg]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-field-ai-btn-label').attr('id', `mr_tee_field_ai_btn_label_${i}`).attr('name', `mr_tee_config[text_lines][${i}][ai_button_label]`).attr('data-field-index', i);
+				$(this).find('.mr-tee-lbl-ai-btn-label').attr('for', `mr_tee_field_ai_btn_label_${i}`);
 				$(this).find('.mr-tee-field-text-input').attr('id', `mr_tee_field_text_${i}`).attr('name', `mr_tee_config[text_lines][${i}][default_text]`).attr('data-field-index', i);
 				$(this).find('.mr-tee-lbl-text').attr('for', `mr_tee_field_text_${i}`);
 				$(this).find('.mr-tee-field-font-select').attr('id', `mr_tee_field_font_${i}`).attr('name', `mr_tee_config[text_lines][${i}][font]`).attr('data-field-index', i);
@@ -2359,14 +2821,15 @@
 			$boxes.each(function(i) {
 				const color = FIELD_COLORS[i % FIELD_COLORS.length];
 				const $panel = $(`#mr-tee-field-panel-${i}`);
-				const isImg = $panel.find('.mr-tee-field-type-select').val() === 'image' || $panel.attr('data-field-type') === 'image';
+				const rawType = $panel.find('.mr-tee-field-type-select').val() || $panel.attr('data-field-type') || 'text';
+				const prefix = rawType === 'ai_image' ? '✨ ' : (rawType === 'image' ? '🖼️ ' : '');
 				const labelVal = $panel.find('.mr-tee-field-label-input').val() || `Champ ${i + 1}`;
 				const sideVal = $panel.attr('data-side-id') || $(this).attr('data-side-id') || 'front';
 				$(this).attr('id', `mr-tee-field-box-${i}`);
 				$(this).attr('data-field-index', i);
 				$(this).attr('data-side-id', sideVal);
 				$(this).css('--field-color', color);
-				$(this).find('.mr-tee-box-badge').text(`${i + 1}. ${isImg ? '🖼️ ' : ''}${labelVal}`).css('background', color);
+				$(this).find('.mr-tee-box-badge').text(`${i + 1}. ${prefix}${labelVal}`).css('background', color);
 				$(this).find('.mr-tee-box-svg-holder').attr('id', `mr-tee-box-svg-${i}`);
 				$(this).find('.mr-tee-handle').css('border-color', color);
 				$(this).find('.mr-tee-handle-rot-stem').css('background', color);
@@ -2572,16 +3035,20 @@
 			const el = document.getElementById(`mr-tee-box-svg-${idx}`);
 			if (!el) return;
 
-			// Image field branch
-			if (this.getFieldType(idx) === 'image') {
+			// Image / AI Image field branch
+			const fieldType = this.getFieldType(idx);
+			if (this.isImageLikeType(fieldType)) {
 				const rawImgUrl = ($(`[name="mr_tee_config[text_lines][${idx}][default_image]"]`).val() || '').trim();
 				const imgUrl = this.normalizeAdminAssetUrl(rawImgUrl);
 				const imgFit = $(`[name="mr_tee_config[text_lines][${idx}][image_fit]"]`).val() === 'cover' ? 'cover' : 'contain';
 
 				if (!imgUrl) {
-					if (el._renderMode !== 'img-empty') {
-						el.innerHTML = '<div class="mr-tee-admin-img-placeholder"><span>🖼️ Zone Image</span><small>Choisissez une image par défaut</small></div>';
-						el._renderMode = 'img-empty';
+					const emptyMode = fieldType === 'ai_image' ? 'ai-img-empty' : 'img-empty';
+					if (el._renderMode !== emptyMode) {
+						el.innerHTML = fieldType === 'ai_image'
+							? '<div class="mr-tee-admin-img-placeholder is-ai-placeholder"><span>✨ Zone Image IA</span><small>L\'image générée par l\'IA s\'affichera ici</small></div>'
+							: '<div class="mr-tee-admin-img-placeholder"><span>🖼️ Zone Image</span><small>Choisissez une image par défaut</small></div>';
+						el._renderMode = emptyMode;
 						el._imgEl = null;
 						el._svgEl = null;
 						el._groupEl = null;
@@ -4262,7 +4729,7 @@
 		}
 
 		getFieldCurrentCoords(idx) {
-			const defaultH = this.getFieldType(idx) === 'image' ? 30.0 : 8.5;
+			const defaultH = this.isImageLikeType(this.getFieldType(idx)) ? 30.0 : 8.5;
 			const round1 = (el, fallback) => {
 				const n = el ? parseFloat(el.value) : NaN;
 				return Number.isFinite(n) ? (Math.round(n * 10) / 10) : fallback;
@@ -4327,7 +4794,7 @@
 
 		applyFieldCoordsToDom(idx, coords) {
 			if (!coords || typeof coords !== 'object') return;
-			const defaultH = this.getFieldType(idx) === 'image' ? 30.0 : 8.5;
+			const defaultH = this.isImageLikeType(this.getFieldType(idx)) ? 30.0 : 8.5;
 			const l = Number.isFinite(parseFloat(coords.box_left)) ? parseFloat(coords.box_left) : 30.0;
 			const t = Number.isFinite(parseFloat(coords.box_top)) ? parseFloat(coords.box_top) : 25.0;
 			const w = Number.isFinite(parseFloat(coords.box_width)) ? parseFloat(coords.box_width) : 40.0;
@@ -4716,7 +5183,7 @@
 						const seed = (primaryView && placements[primaryView.id] && placements[primaryView.id].box_left !== undefined)
 							? placements[primaryView.id]
 							: this.getFieldCurrentCoords(i);
-						const defaultH = this.getFieldType(i) === 'image' ? 30.0 : 8.5;
+						const defaultH = this.isImageLikeType(this.getFieldType(i)) ? 30.0 : 8.5;
 						placement = {
 							box_left: Number.isFinite(parseFloat(seed.box_left)) ? parseFloat(seed.box_left) : 30.0,
 							box_top: Number.isFinite(parseFloat(seed.box_top)) ? parseFloat(seed.box_top) : 25.0,

@@ -14,6 +14,7 @@ namespace MrTeeEditor\Admin;
 
 use MrTeeEditor\Domain\SceneGraphSchema;
 use MrTeeEditor\Registry\FontRegistry;
+use MrTeeEditor\Registry\AiRegistry;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -140,7 +141,8 @@ class EngineSelectorMetabox {
 			<!-- Mr. Tee Editor Configuration Settings (Disabled & Hidden when engine !== mr_tee_editor) -->
 			<div id="mr-tee-settings-panel" class="mr-tee-settings-panel" style="<?php echo $is_mr_tee ? '' : 'display:none;'; ?>">
 				<fieldset id="mr-tee-settings-fieldset" class="mr-tee-settings-fieldset" <?php disabled( ! $is_mr_tee ); ?>>
-					<!-- Compact Top Navigation Row: 3 Tabs + Dirty Indicator + Inline Preset Loader -->
+					<!-- Compact Top Navigation Row: 4 Tabs + Dirty Indicator + Inline Preset Loader -->
+					<?php $ai_models_list = AiRegistry::get_models(); ?>
 					<div class="mr-tee-topbar">
 						<div class="mr-tee-tabs-nav" role="tablist" aria-label="<?php esc_attr_e( 'Sections du configurateur', 'mr-tee-editor' ); ?>">
 							<button type="button" id="mr-tee-tab-btn-stage" class="mr-tee-tab-btn is-active" data-tab="tab-stage" role="tab" aria-selected="true" aria-controls="tab-stage">
@@ -149,6 +151,10 @@ class EngineSelectorMetabox {
 							<button type="button" id="mr-tee-tab-btn-fonts" class="mr-tee-tab-btn" data-tab="tab-fonts" role="tab" aria-selected="false" aria-controls="tab-fonts">
 								<span aria-hidden="true">🔤</span> <?php esc_html_e( 'Polices', 'mr-tee-editor' ); ?>
 								<span class="mr-tee-tab-count" id="mr-tee-tab-fonts-badge"><?php echo esc_html( count( $allowed_fonts ) ); ?></span>
+							</button>
+							<button type="button" id="mr-tee-tab-btn-ai" class="mr-tee-tab-btn" data-tab="tab-ai" role="tab" aria-selected="false" aria-controls="tab-ai">
+								<span aria-hidden="true">✨</span> <?php esc_html_e( 'IA', 'mr-tee-editor' ); ?>
+								<span class="mr-tee-tab-count" id="mr-tee-tab-ai-badge"><?php echo esc_html( count( $ai_models_list ) ); ?></span>
 							</button>
 							<button type="button" id="mr-tee-tab-btn-export" class="mr-tee-tab-btn" data-tab="tab-export" role="tab" aria-selected="false" aria-controls="tab-export">
 								<span aria-hidden="true">⚙️</span> <?php esc_html_e( 'Export & Avancé', 'mr-tee-editor' ); ?>
@@ -391,7 +397,12 @@ class EngineSelectorMetabox {
 						</div>
 					</div>
 
-					<!-- TAB 3: Export, Gallery, NBDesigner Bridge & Advanced Repeater -->
+					<!-- TAB 3: Dedicated AI Manager (Runware API Key + Multi-Model Library, just like Font Manager) -->
+					<div id="tab-ai" class="mr-tee-tab-pane" role="tabpanel" aria-labelledby="mr-tee-tab-btn-ai">
+						<?php AiSettingsPage::render_manager_panel( 'metabox' ); ?>
+					</div>
+
+					<!-- TAB 4: Export, Gallery, NBDesigner Bridge & Advanced Repeater -->
 					<div id="tab-export" class="mr-tee-tab-pane" role="tabpanel" aria-labelledby="mr-tee-tab-btn-export">
 						<!-- 3A. Read-Only Summary of Configured Print Sides & Export Resolutions -->
 						<div class="mr-tee-export-card">
@@ -778,8 +789,10 @@ class EngineSelectorMetabox {
 					$existing = array();
 				}
 
-				$field_type    = ( isset( $line_data['field_type'] ) && 'image' === $line_data['field_type'] ) ? 'image' : 'text';
-				$existing_type = ( isset( $existing['field_type'] ) && 'image' === $existing['field_type'] ) ? 'image' : 'text';
+				$field_type    = SceneGraphSchema::normalize_field_type( isset( $line_data['field_type'] ) ? $line_data['field_type'] : 'text' );
+				$existing_type = SceneGraphSchema::normalize_field_type( isset( $existing['field_type'] ) ? $existing['field_type'] : 'text' );
+				$is_image_like = SceneGraphSchema::is_image_field_type( $field_type );
+				$is_ai_image   = ( 'ai_image' === $field_type );
 
 				$field_id = '' !== $sub_id ? $sub_id : ( ! empty( $existing['id'] ) ? $existing['id'] : 'line_' . $line_num );
 				while ( isset( $used_ids[ $field_id ] ) ) {
@@ -787,10 +800,12 @@ class EngineSelectorMetabox {
 				}
 				$used_ids[ $field_id ] = true;
 
-				$default_ref_prefix = ( 'image' === $field_type ) ? 'id-ref-image-line-' : 'id-ref-text-line-';
+				$default_ref_prefix = $is_ai_image ? 'id-ref-ai-image-line-' : ( $is_image_like ? 'id-ref-image-line-' : 'id-ref-text-line-' );
 				$ref_id             = '' !== $sub_ref_id ? $sub_ref_id : ( ! empty( $existing['ref_id'] ) ? $existing['ref_id'] : $default_ref_prefix . $line_num );
-				if ( $field_type !== $existing_type && 0 === strpos( $ref_id, 'id-ref-' . $existing_type . '-' ) ) {
-					$ref_id = 'id-ref-' . $field_type . '-' . substr( $ref_id, strlen( 'id-ref-' . $existing_type . '-' ) );
+				$existing_ref_slug  = 'id-ref-' . str_replace( '_', '-', $existing_type ) . '-';
+				$next_ref_slug      = 'id-ref-' . str_replace( '_', '-', $field_type ) . '-';
+				if ( $field_type !== $existing_type && 0 === strpos( $ref_id, $existing_ref_slug ) ) {
+					$ref_id = $next_ref_slug . substr( $ref_id, strlen( $existing_ref_slug ) );
 				}
 				while ( isset( $used_ref_ids[ $ref_id ] ) ) {
 					$ref_id .= '_' . $line_num;
@@ -812,7 +827,7 @@ class EngineSelectorMetabox {
 
 				// Per-field rectangle dimensions & orientation (clamped strictly to valid canvas bounds)
 				$raw_w = isset( $line_data['box_width'] ) && '' !== trim( (string) $line_data['box_width'] ) ? floatval( $line_data['box_width'] ) : ( isset( $existing['box_width'] ) ? floatval( $existing['box_width'] ) : 40.0 );
-				$raw_h = isset( $line_data['box_height'] ) && '' !== trim( (string) $line_data['box_height'] ) ? floatval( $line_data['box_height'] ) : ( isset( $existing['box_height'] ) ? floatval( $existing['box_height'] ) : ( 'image' === $field_type ? 30.0 : 8.5 ) );
+				$raw_h = isset( $line_data['box_height'] ) && '' !== trim( (string) $line_data['box_height'] ) ? floatval( $line_data['box_height'] ) : ( isset( $existing['box_height'] ) ? floatval( $existing['box_height'] ) : ( $is_image_like ? 30.0 : 8.5 ) );
 				$box_w = max( 2.0, min( 100.0, $raw_w ) );
 				$box_h = max( 2.0, min( 100.0, $raw_h ) );
 				$raw_l = isset( $line_data['box_left'] ) && '' !== trim( (string) $line_data['box_left'] ) ? floatval( $line_data['box_left'] ) : ( isset( $existing['box_left'] ) ? floatval( $existing['box_left'] ) : 30.0 );
@@ -854,17 +869,18 @@ class EngineSelectorMetabox {
 					$box_r = $ref_p['box_rotate'];
 				}
 
-				if ( 'image' === $field_type ) {
-					$default_img_url  = isset( $line_data['default_image'] ) ? esc_url_raw( trim( $line_data['default_image'] ) ) : ( ( 'image' === $existing_type && isset( $existing['default_image'] ) ) ? esc_url_raw( $existing['default_image'] ) : '' );
-					$default_img_id   = isset( $line_data['default_image_id'] ) ? absint( $line_data['default_image_id'] ) : ( ( 'image' === $existing_type && isset( $existing['default_image_id'] ) ) ? absint( $existing['default_image_id'] ) : 0 );
+				if ( $is_image_like ) {
+					$was_image_like   = SceneGraphSchema::is_image_field_type( $existing_type );
+					$default_img_url  = isset( $line_data['default_image'] ) ? esc_url_raw( trim( $line_data['default_image'] ) ) : ( ( $was_image_like && isset( $existing['default_image'] ) ) ? esc_url_raw( $existing['default_image'] ) : '' );
+					$default_img_id   = isset( $line_data['default_image_id'] ) ? absint( $line_data['default_image_id'] ) : ( ( $was_image_like && isset( $existing['default_image_id'] ) ) ? absint( $existing['default_image_id'] ) : 0 );
 					$image_fit        = ( isset( $line_data['image_fit'] ) && 'cover' === $line_data['image_fit'] ) ? 'cover' : 'contain';
-					$allow_img_upload = isset( $line_data['allow_image_upload'] ) ? ! empty( $line_data['allow_image_upload'] ) : true;
+					$allow_img_upload = $is_ai_image ? true : ( isset( $line_data['allow_image_upload'] ) ? ! empty( $line_data['allow_image_upload'] ) : true );
 
 					$sanitized_line = array(
 						'id'                 => $field_id,
 						'ref_id'             => $ref_id,
 						'color_ref_id'       => $color_ref_id,
-						'field_type'         => 'image',
+						'field_type'         => $field_type,
 						'side_id'            => $field_side_id,
 						'placements'         => $placements,
 						'label'              => $label,
@@ -880,13 +896,66 @@ class EngineSelectorMetabox {
 						'box_rotate'         => $box_r,
 						'warning_unedited'   => $warning,
 					);
+
+					if ( $is_ai_image ) {
+						$ai_model          = isset( $line_data['ai_model'] ) ? sanitize_key( (string) $line_data['ai_model'] ) : ( ( 'ai_image' === $existing_type && ! empty( $existing['ai_model'] ) ) ? sanitize_key( (string) $existing['ai_model'] ) : '' );
+						$ai_prompt         = isset( $line_data['ai_prompt'] ) ? sanitize_textarea_field( (string) $line_data['ai_prompt'] ) : ( ( 'ai_image' === $existing_type && isset( $existing['ai_prompt'] ) ) ? (string) $existing['ai_prompt'] : '' );
+						$ai_use_def_as_ref = isset( $line_data['ai_use_default_as_ref'] ) ? ! empty( $line_data['ai_use_default_as_ref'] ) : ( ( 'ai_image' === $existing_type && isset( $existing['ai_use_default_as_ref'] ) ) ? ! empty( $existing['ai_use_default_as_ref'] ) : false );
+						$ai_size_mode      = ( isset( $line_data['ai_size_mode'] ) && 'match_reference' === $line_data['ai_size_mode'] ) ? 'match_reference' : 'auto_box';
+						$ai_remove_bg      = isset( $line_data['ai_remove_bg'] ) ? ! empty( $line_data['ai_remove_bg'] ) : false;
+						$ai_btn_lbl_raw    = isset( $line_data['ai_button_label'] ) ? trim( sanitize_text_field( (string) $line_data['ai_button_label'] ) ) : '';
+						$ai_btn_label      = '' !== $ai_btn_lbl_raw ? $ai_btn_lbl_raw : __( 'Générer', 'mr-tee-editor' );
+
+						$clean_ai_refs = array();
+						$raw_refs_in   = isset( $line_data['ai_reference_images'] ) ? $line_data['ai_reference_images'] : array();
+						if ( is_string( $raw_refs_in ) ) {
+							$decoded_refs = json_decode( $raw_refs_in, true );
+							$raw_refs_in  = is_array( $decoded_refs ) ? $decoded_refs : array();
+						}
+						if ( is_array( $raw_refs_in ) ) {
+							foreach ( $raw_refs_in as $r_entry ) {
+								if ( count( $clean_ai_refs ) >= 6 ) {
+									break;
+								}
+								$r_id  = 0;
+								$r_url = '';
+								if ( is_array( $r_entry ) ) {
+									$r_id  = ! empty( $r_entry['id'] ) ? absint( $r_entry['id'] ) : 0;
+									$r_url = ! empty( $r_entry['url'] ) ? esc_url_raw( trim( (string) $r_entry['url'] ) ) : '';
+								} elseif ( is_string( $r_entry ) ) {
+									$r_url = esc_url_raw( trim( $r_entry ) );
+								}
+								if ( '' !== $r_url || $r_id > 0 ) {
+									$clean_ai_refs[] = array(
+										'id'  => $r_id,
+										'url' => $r_url,
+									);
+								}
+							}
+						}
+
+						$sanitized_line['ai_model']              = $ai_model;
+						$sanitized_line['ai_prompt']             = $ai_prompt;
+						$sanitized_line['ai_use_default_as_ref'] = $ai_use_def_as_ref;
+						$sanitized_line['ai_reference_images']   = $clean_ai_refs;
+						$sanitized_line['ai_size_mode']          = $ai_size_mode;
+						$sanitized_line['ai_remove_bg']          = $ai_remove_bg;
+						$sanitized_line['ai_button_label']       = $ai_btn_label;
+					}
 				} else {
 					$existing_text = ( 'text' === $existing_type ) ? $existing : array();
 					unset(
 						$existing_text['default_image'],
 						$existing_text['default_image_id'],
 						$existing_text['image_fit'],
-						$existing_text['allow_image_upload']
+						$existing_text['allow_image_upload'],
+						$existing_text['ai_model'],
+						$existing_text['ai_prompt'],
+						$existing_text['ai_use_default_as_ref'],
+						$existing_text['ai_reference_images'],
+						$existing_text['ai_size_mode'],
+						$existing_text['ai_remove_bg'],
+						$existing_text['ai_button_label']
 					);
 
 					$default_text = isset( $line_data['default_text'] ) ? sanitize_textarea_field( $line_data['default_text'] ) : ( isset( $existing_text['default_text'] ) ? $existing_text['default_text'] : sprintf( __( 'Texte %d', 'mr-tee-editor' ), $line_num ) );

@@ -7,7 +7,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.6.0';
+import { SvgRenderer } from './svg-renderer.js?v=2.7.1';
 
 export class PrintExporter {
 	static CHUNK_SIZE_BYTES = 600 * 1024; // 600 KB binary chunks fit cleanly under 1 MB proxy/WAF limits while minimizing round-trips
@@ -504,7 +504,7 @@ export class PrintExporter {
 	static async ensureStoreImagesUploaded(store, config) {
 		if (!store || !config || !Array.isArray(config.text_lines)) return;
 		for (const line of config.text_lines) {
-			if (line.field_type !== 'image' || !line.ref_id) continue;
+			if ((line.field_type !== 'image' && line.field_type !== 'ai_image') || !line.ref_id) continue;
 			const ref = store.getReference(line.ref_id);
 			if (!ref || typeof ref.url !== 'string' || !ref.url.startsWith('data:image/')) continue;
 
@@ -618,7 +618,7 @@ export class PrintExporter {
 			const fType = line.field_type || line.fieldType || 'text';
 			const ref = line.ref_id ? refMap.get(String(line.ref_id)) : null;
 			const pLine = (line.ref_id && payloadLineById.get(String(line.ref_id))) || (line.id && payloadLineById.get(`id:${line.id}`)) || null;
-			if (fType === 'image') {
+			if (fType === 'image' || fType === 'ai_image') {
 				if (ref) return Boolean(ref.url && String(ref.url).trim());
 				if (pLine && pLine.imageUrl !== undefined) return Boolean(String(pLine.imageUrl || '').trim());
 				return Boolean(line.imageUrl || line.default_image);
@@ -817,7 +817,8 @@ export class PrintExporter {
 
 		if (Array.isArray(config.text_lines)) {
 			for (const tl of config.text_lines) {
-				if (tl && tl.font) neededIds.add(String(tl.font));
+				if (!tl || tl.field_type === 'image' || tl.field_type === 'ai_image') continue;
+				if (tl.font) neededIds.add(String(tl.font));
 			}
 		}
 

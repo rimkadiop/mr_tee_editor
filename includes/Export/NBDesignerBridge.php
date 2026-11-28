@@ -416,7 +416,7 @@ class NBDesignerBridge {
 				$idx       = $frame_indices[ $f_idx ];
 				$frame_indices[ $f_idx ]++;
 
-				$is_image = isset( $line['fieldType'] ) && 'image' === $line['fieldType'];
+				$is_image = isset( $line['fieldType'] ) && in_array( $line['fieldType'], array( 'image', 'ai_image' ), true );
 				if ( $is_image ) {
 					$img_url = ! empty( $line['imageUrl'] ) ? (string) $line['imageUrl'] : '';
 					if ( '' !== trim( $img_url ) ) {

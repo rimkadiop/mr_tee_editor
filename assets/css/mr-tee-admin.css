@@ -2704,3 +2704,552 @@
 		width: auto;
 	}
 }
+
+/* ============================================================================
+ * Dedicated AI Manager (Standalone Page + Product Configurator "✨ IA" Tab)
+ * & Visual Placement Studio AI Image Field Controls (v2.7.0)
+ * ============================================================================ */
+
+.mr-tee-admin-wrap .mr-tee-btn-add-ai-image-field-pill {
+	white-space: nowrap;
+	font-weight: 600;
+	border-color: #7c3aed;
+	color: #6d28d9;
+	background: #f5f3ff;
+}
+
+.mr-tee-admin-wrap .mr-tee-btn-add-ai-image-field-pill:hover,
+.mr-tee-admin-wrap .mr-tee-btn-add-ai-image-field-pill:focus {
+	background: #ede9fe;
+	border-color: #6d28d9;
+	color: #5b21b6;
+}
+
+.mr-tee-field-box.is-ai-image-field {
+	background: rgba(124, 58, 237, 0.08);
+}
+
+.mr-tee-field-box.is-ai-image-field.is-active {
+	background: rgba(124, 58, 237, 0.16);
+}
+
+.mr-tee-field-box.is-ai-image-field .mr-tee-box-svg-holder {
+	overflow: hidden;
+}
+
+.mr-tee-admin-img-placeholder.is-ai-placeholder {
+	color: #5b21b6;
+}
+
+.mr-tee-admin-img-placeholder.is-ai-placeholder small {
+	color: #6d28d9;
+}
+
+.mr-tee-ai-model-select-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.mr-tee-ai-model-select-row select {
+	flex: 1 1 auto;
+	min-width: 0;
+	max-width: 100%;
+}
+
+.mr-tee-ai-key-warn {
+	color: #b45309 !important;
+	background: #fffbeb;
+	border: 1px solid #fde68a;
+	border-radius: 6px;
+	padding: 5px 8px;
+	margin: 6px 0 0 !important;
+	font-size: 11.5px;
+}
+
+.mr-tee-ai-refs-box {
+	display: flex;
+	flex-direction: column;
+	gap: 7px;
+}
+
+.mr-tee-ai-use-default-ref-label {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--mt-text-strong, #1e293b);
+}
+
+.mr-tee-ai-refs-strip {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.mr-tee-ai-refs-strip:empty {
+	display: none;
+}
+
+.mr-tee-ai-ref-thumb {
+	position: relative;
+	width: 56px;
+	height: 56px;
+	border-radius: 8px;
+	border: 1.5px solid #cbd5e1;
+	background: #f8fafc;
+	overflow: visible;
+	flex-shrink: 0;
+}
+
+.mr-tee-ai-ref-thumb img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	border-radius: 6px;
+	display: block;
+}
+
+.mr-tee-ai-ref-badge {
+	position: absolute;
+	left: 3px;
+	bottom: 3px;
+	background: rgba(15, 23, 42, 0.82);
+	color: #ffffff;
+	font-size: 10px;
+	font-weight: 700;
+	line-height: 1;
+	padding: 2px 5px;
+	border-radius: 4px;
+}
+
+.mr-tee-ai-ref-remove {
+	position: absolute;
+	top: -7px;
+	right: -7px;
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	border: 1.5px solid #ffffff;
+	background: #dc2626;
+	color: #ffffff;
+	font-size: 12px;
+	font-weight: 700;
+	line-height: 1;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	padding: 0;
+}
+
+.mr-tee-ai-ref-remove:hover {
+	background: #b91c1c;
+}
+
+.mr-tee-ai-refs-actions {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px 8px;
+	max-width: 100%;
+}
+
+.mr-tee-btn-add-ai-ref {
+	max-width: 100%;
+	white-space: normal !important;
+	height: auto !important;
+	line-height: 1.35 !important;
+	padding-top: 3px !important;
+	padding-bottom: 3px !important;
+}
+
+.mr-tee-ai-prompt-legend {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 5px;
+	margin-bottom: 6px;
+}
+
+.mr-tee-ai-legend-pill {
+	display: inline-flex;
+	align-items: center;
+	padding: 2px 8px;
+	border-radius: 999px;
+	font-size: 11px;
+	font-weight: 600;
+	background: #f1f5f9;
+	color: #334155;
+	border: 1px solid #cbd5e1;
+}
+
+.mr-tee-ai-legend-pill.is-client {
+	background: #f5f3ff;
+	color: #6d28d9;
+	border-color: #c4b5fd;
+}
+
+.mr-tee-field-ai-prompt {
+	width: 100%;
+	font-size: 12.5px;
+	line-height: 1.45;
+}
+
+.mr-tee-ai-suboptions {
+	margin-top: 6px;
+}
+
+.mr-tee-ai-admin-test-row {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 8px;
+	padding-top: 8px;
+	border-top: 1px dashed #e2e8f0;
+}
+
+.mr-tee-ai-admin-test-status {
+	font-size: 11.5px;
+	font-weight: 600;
+	color: #475569;
+	flex-basis: 100%;
+}
+
+.mr-tee-ai-admin-test-status.is-ok {
+	color: #047857;
+}
+
+.mr-tee-ai-admin-test-status.is-error {
+	color: #dc2626;
+}
+
+.mr-tee-ai-admin-test-status.is-loading {
+	color: #6d28d9;
+}
+
+/* Standalone WP Admin Page (WooCommerce -> Mr. Tee IA) */
+.mr-tee-ai-page-wrap {
+	max-width: 1180px;
+}
+
+.mr-tee-ai-page-header {
+	margin: 12px 0 18px;
+}
+
+.mr-tee-ai-page-header h1 {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-weight: 700;
+	padding: 0;
+	margin: 0 0 6px;
+}
+
+.mr-tee-ai-standalone-container {
+	background: transparent;
+}
+
+.mr-tee-ai-manager-panel {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.mr-tee-ai-card {
+	background: #ffffff;
+	border: 1px solid var(--mt-border, #dcdcde);
+	border-radius: 10px;
+	padding: 16px 18px;
+	box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.mr-tee-ai-card-header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: 10px 16px;
+	margin-bottom: 14px;
+	padding-bottom: 12px;
+	border-bottom: 1px solid #f1f5f9;
+}
+
+.mr-tee-ai-card-title {
+	margin: 0 0 4px !important;
+	font-size: 14.5px;
+	font-weight: 700;
+	color: #0f172a;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.mr-tee-ai-card-header .description {
+	margin: 0;
+	font-size: 12.5px;
+	color: #64748b;
+	max-width: 720px;
+}
+
+.mr-tee-ai-header-badges {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.mr-tee-ai-key-status-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 4px 10px;
+	border-radius: 999px;
+	font-size: 11.5px;
+	font-weight: 700;
+	white-space: nowrap;
+}
+
+.mr-tee-ai-key-status-pill.is-configured {
+	background: #ecfdf5;
+	color: #047857;
+	border: 1px solid #a7f3d0;
+}
+
+.mr-tee-ai-key-status-pill.is-missing {
+	background: #fffbeb;
+	color: #b45309;
+	border: 1px solid #fde68a;
+}
+
+.mr-tee-ai-credentials-grid {
+	display: grid;
+	grid-template-columns: minmax(0, 2fr) minmax(0, 1.1fr) auto;
+	gap: 12px 14px;
+	align-items: end;
+}
+
+.mr-tee-ai-field-label {
+	display: block;
+	font-size: 12px;
+	font-weight: 600;
+	color: #334155;
+	margin-bottom: 5px;
+}
+
+.mr-tee-ai-key-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.mr-tee-ai-api-key-input {
+	flex: 1 1 240px;
+	min-width: 0;
+}
+
+.mr-tee-ai-default-model-select {
+	width: 100%;
+	max-width: 100%;
+}
+
+.mr-tee-ai-cleanup-days-input {
+	width: 78px !important;
+}
+
+.mr-tee-ai-model-form-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 12px 14px;
+}
+
+.mr-tee-ai-model-form-grid input[type="text"],
+.mr-tee-ai-model-form-grid select,
+.mr-tee-ai-model-form-grid textarea {
+	width: 100%;
+	max-width: 100%;
+	box-sizing: border-box;
+}
+
+.mr-tee-ai-mf-span2 {
+	grid-column: 1 / -1;
+}
+
+.mr-tee-ai-model-form-actions {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: 10px;
+	margin-top: 14px;
+	padding-top: 12px;
+	border-top: 1px solid #f1f5f9;
+}
+
+.mr-tee-ai-model-form-btns {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.mr-tee-ai-settings-status,
+.mr-tee-ai-model-form-status {
+	margin-top: 8px;
+	font-size: 12.5px;
+	font-weight: 600;
+	min-height: 18px;
+}
+
+.mr-tee-ai-settings-status:empty,
+.mr-tee-ai-model-form-status:empty {
+	display: none;
+}
+
+.mr-tee-ai-settings-status.is-ok,
+.mr-tee-ai-model-form-status.is-ok {
+	color: #047857;
+}
+
+.mr-tee-ai-settings-status.is-error,
+.mr-tee-ai-model-form-status.is-error {
+	color: #dc2626;
+}
+
+.mr-tee-ai-settings-status.is-loading,
+.mr-tee-ai-model-form-status.is-loading {
+	color: #6d28d9;
+}
+
+.mr-tee-ai-models-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+	gap: 12px;
+}
+
+.mr-tee-ai-model-card {
+	display: flex;
+	flex-direction: column;
+	justify-content: space-between;
+	gap: 10px;
+	padding: 13px 14px;
+	background: #f8fafc;
+	border: 1.5px solid #e2e8f0;
+	border-radius: 10px;
+	transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.mr-tee-ai-model-card:hover {
+	border-color: #cbd5e1;
+	box-shadow: 0 2px 6px rgba(15, 23, 42, 0.05);
+}
+
+.mr-tee-ai-model-card.is-default {
+	background: #faf5ff;
+	border-color: #a78bfa;
+}
+
+.mr-tee-ai-model-card-top {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.mr-tee-ai-model-card-title-wrap {
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.mr-tee-ai-model-card-name {
+	font-size: 13.5px;
+	color: #0f172a;
+	line-height: 1.3;
+	word-break: break-word;
+}
+
+.mr-tee-ai-model-card-air {
+	display: inline-block;
+	align-self: flex-start;
+	font-size: 11px;
+	padding: 2px 6px;
+	border-radius: 4px;
+	background: #e2e8f0;
+	color: #334155;
+	word-break: break-all;
+}
+
+.mr-tee-ai-model-card.is-default .mr-tee-ai-model-card-air {
+	background: #ede9fe;
+	color: #5b21b6;
+}
+
+.mr-tee-ai-model-card-badges {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 4px;
+	flex-shrink: 0;
+}
+
+.mr-tee-ai-badge {
+	display: inline-flex;
+	align-items: center;
+	padding: 2px 7px;
+	border-radius: 999px;
+	font-size: 10.5px;
+	font-weight: 700;
+	background: #e2e8f0;
+	color: #334155;
+	white-space: nowrap;
+}
+
+.mr-tee-ai-badge.is-default {
+	background: #7c3aed;
+	color: #ffffff;
+}
+
+.mr-tee-ai-model-card-dims {
+	font-size: 11.5px;
+	color: #64748b;
+	line-height: 1.4;
+}
+
+.mr-tee-ai-model-card-dims span {
+	font-weight: 600;
+	color: #475569;
+}
+
+.mr-tee-ai-model-card-actions {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+	padding-top: 8px;
+	border-top: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.mr-tee-ai-card-delete {
+	color: #b91c1c !important;
+	border-color: #fecaca !important;
+	margin-left: auto !important;
+}
+
+.mr-tee-ai-card-delete:hover {
+	background: #fef2f2 !important;
+	border-color: #f87171 !important;
+}
+
+@media (max-width: 960px) {
+	.mr-tee-ai-credentials-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.mr-tee-ai-model-form-grid {
+		grid-template-columns: 1fr;
+	}
+}
+

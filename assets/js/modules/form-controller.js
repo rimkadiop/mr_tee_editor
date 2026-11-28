@@ -11,7 +11,7 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { SvgRenderer } from './svg-renderer.js?v=2.6.0';
+import { SvgRenderer } from './svg-renderer.js?v=2.7.1';
 
 const SVG_PLACEHOLDER_IMAGE = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>';
 const ALLOWED_IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/svg+xml']);
@@ -98,7 +98,7 @@ export class FormController {
 			return this._printExporterClass;
 		}
 		if (!this._printExporterPromise) {
-			this._printExporterPromise = import('./print-exporter.js?v=2.6.0')
+			this._printExporterPromise = import('./print-exporter.js?v=2.7.1')
 				.then((mod) => {
 					this._printExporterClass = mod.PrintExporter;
 					if (typeof window !== 'undefined') {
@@ -719,7 +719,8 @@ export class FormController {
 
 		// Synchronize initial color picker visibility across all field groups on mount
 		this.container.querySelectorAll('.mr-tee-field-group').forEach((fieldGroup) => {
-			if (fieldGroup.getAttribute('data-field-type') === 'image') return;
+			const fType = fieldGroup.getAttribute('data-field-type');
+			if (fType === 'image' || fType === 'ai_image') return;
 			const { fontDef, isOtSvg } = this.resolveFieldActiveFont(fieldGroup);
 			this.syncSwatchesForLine(fieldGroup, isOtSvg, fontDef);
 		});
@@ -1248,7 +1249,7 @@ export class FormController {
 					}
 				}
 				if (!targetInput) {
-					targetInput = this.container.querySelector('.mr-tee-text-input[data-warning="1"], .mr-tee-image-file-input[data-warning="1"]');
+					targetInput = this.container.querySelector('.mr-tee-text-input[data-warning="1"], .mr-tee-image-file-input[data-warning="1"], .mr-tee-ai-file-input[data-warning="1"]');
 				}
 				if (targetInput) {
 					const repCard = targetInput.closest('.mr-tee-repeater-item-card');
@@ -1262,9 +1263,9 @@ export class FormController {
 					} else {
 						this.notifySideFocus(targetInput);
 					}
-					if (targetInput.classList.contains('mr-tee-image-file-input')) {
+					if (targetInput.classList.contains('mr-tee-image-file-input') || targetInput.classList.contains('mr-tee-ai-file-input')) {
 						const card = targetInput.closest('.mr-tee-image-field-card');
-						const btn = card ? card.querySelector('.mr-tee-image-upload-btn') : null;
+						const btn = card ? card.querySelector('.mr-tee-image-upload-btn, .mr-tee-ai-upload-btn') : null;
 						if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
 						if (btn) btn.focus();
 					} else {
@@ -1593,7 +1594,7 @@ export class FormController {
 			return false;
 		};
 
-		this.container.querySelectorAll('.mr-tee-image-field-card').forEach((card) => {
+		this.container.querySelectorAll('.mr-tee-image-field-card:not(.mr-tee-ai-field-card)').forEach((card) => {
 			const fileInput = card.querySelector('.mr-tee-image-file-input');
 			const uploadBtn = card.querySelector('.mr-tee-image-upload-btn');
 			const resetBtn = card.querySelector('.mr-tee-image-reset-btn');
@@ -1752,6 +1753,21 @@ export class FormController {
 				});
 			}
 		});
+
+		// Lazily load AI image field controller ONLY when this product actually has an AI image field.
+		if (this.container.querySelector('.mr-tee-ai-field-card')) {
+			import('./ai-field-controller.js?v=2.7.1')
+				.then((mod) => {
+					if (mod && typeof mod.bindAiImageFields === 'function') {
+						mod.bindAiImageFields(this.container, this.store, this);
+					}
+				})
+				.catch((err) => {
+					if (typeof console !== 'undefined' && console.error) {
+						console.error('Mr. Tee AI module failed to load:', err);
+					}
+				});
+		}
 	}
 
 	readImageAsDataUrl(file) {

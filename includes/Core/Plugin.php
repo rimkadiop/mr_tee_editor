@@ -82,10 +82,13 @@ final class Plugin {
 		if ( is_admin() ) {
 			EngineSelectorMetabox::init();
 			OrderAdminPanel::init();
+			\MrTeeEditor\Admin\AiSettingsPage::init();
 		}
 		ProductPageRenderer::init();
 		CartIntegration::init();
 		\MrTeeEditor\Registry\FontRegistry::register_hooks();
+		\MrTeeEditor\AI\AiMediaStore::register_hooks();
+		\MrTeeEditor\AI\AiAjaxController::register_hooks();
 
 		add_action( 'mr_tee_build_svg_font_packages', array( 'MrTeeEditor\\Registry\\SvgFontPackager', 'build_all' ) );
 
@@ -722,7 +725,7 @@ final class Plugin {
 		$config_lines_list   = array();
 		if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
 			foreach ( array_values( $config['text_lines'] ) as $c_idx => $c_tl ) {
-				if ( ! is_array( $c_tl ) || ( isset( $c_tl['field_type'] ) && 'image' === $c_tl['field_type'] ) ) {
+				if ( ! is_array( $c_tl ) || ( isset( $c_tl['field_type'] ) && SceneGraphSchema::is_image_field_type( $c_tl['field_type'] ) ) ) {
 					continue;
 				}
 				$config_lines_list[ $c_idx ] = $c_tl;
@@ -740,7 +743,7 @@ final class Plugin {
 				if ( ! is_array( $tl ) ) {
 					continue;
 				}
-				if ( ( isset( $tl['fieldType'] ) && 'image' === $tl['fieldType'] ) || ( isset( $tl['field_type'] ) && 'image' === $tl['field_type'] ) ) {
+				if ( ( isset( $tl['fieldType'] ) && SceneGraphSchema::is_image_field_type( $tl['fieldType'] ) ) || ( isset( $tl['field_type'] ) && SceneGraphSchema::is_image_field_type( $tl['field_type'] ) ) ) {
 					continue;
 				}
 				if ( ! empty( $tl['fontId'] ) ) {
@@ -1382,7 +1385,7 @@ final class Plugin {
 			$selected_font_ids = $config['allowed_fonts'];
 		} elseif ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
 			foreach ( $config['text_lines'] as $tl ) {
-				if ( ( ! isset( $tl['field_type'] ) || 'image' !== $tl['field_type'] ) && ! empty( $tl['allowed_fonts'] ) && is_array( $tl['allowed_fonts'] ) ) {
+				if ( ( ! isset( $tl['field_type'] ) || ! SceneGraphSchema::is_image_field_type( $tl['field_type'] ) ) && ! empty( $tl['allowed_fonts'] ) && is_array( $tl['allowed_fonts'] ) ) {
 					$selected_font_ids = $tl['allowed_fonts'];
 					break;
 				}
@@ -1390,7 +1393,7 @@ final class Plugin {
 		}
 		if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
 			foreach ( $config['text_lines'] as $tl ) {
-				if ( isset( $tl['field_type'] ) && 'image' === $tl['field_type'] ) {
+				if ( isset( $tl['field_type'] ) && SceneGraphSchema::is_image_field_type( $tl['field_type'] ) ) {
 					continue;
 				}
 				if ( ! empty( $tl['font'] ) ) {
@@ -1422,11 +1425,19 @@ final class Plugin {
 			true
 		);
 
+		wp_enqueue_script(
+			'mr-tee-ai-manager-js',
+			MR_TEE_EDITOR_URL . 'assets/js/mr-tee-ai-manager.js',
+			array( 'jquery' ),
+			$this->get_asset_version( 'assets/js/mr-tee-ai-manager.js' ),
+			true
+		);
+
 		// Preload ONLY active text line OpenType-SVG fonts when Mr. Tee Editor is active
 		$preloaded_svg_fonts = array();
 		if ( ! empty( $config['engine'] ) && 'mr_tee_editor' === $config['engine'] && ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
 			foreach ( $config['text_lines'] as $line ) {
-				if ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) {
+				if ( isset( $line['field_type'] ) && SceneGraphSchema::is_image_field_type( $line['field_type'] ) ) {
 					continue;
 				}
 				if ( empty( $line['font'] ) || isset( $preloaded_svg_fonts[ $line['font'] ] ) ) {
@@ -1466,6 +1477,7 @@ final class Plugin {
 				'config'    => $admin_config,
 				'fonts'     => $admin_fonts,
 				'svgFonts'  => $preloaded_svg_fonts,
+				'ai'        => \MrTeeEditor\Registry\AiRegistry::get_admin_payload(),
 				'ajaxUrl'   => admin_url( 'admin-ajax.php', $proto ),
 				'nonce'     => wp_create_nonce( 'mr_tee_admin_nonce' ),
 				'pluginUrl' => MR_TEE_EDITOR_URL,

@@ -1892,3 +1892,169 @@ body.has-mr-tee-editor {
 [dir="rtl"] .mr-tee-editor-container .mr-tee-repeater-trigger-btn {
 	text-align: right;
 }
+
+/* ============================================================================
+ * Storefront AI Image Field Card (v2.7.0)
+ * Clean upload button + Generate CTA only (never exposes prompt or references)
+ * ============================================================================ */
+
+.mr-tee-ai-field-card {
+	border-color: #c7d2fe;
+	background: linear-gradient(180deg, #ffffff 0%, #fafaff 100%);
+}
+
+.mr-tee-ai-field-card:hover {
+	border-color: #a5b4fc;
+}
+
+.mr-tee-ai-field-card.is-generating {
+	border-color: #7c3aed;
+	box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.12);
+}
+
+.mr-tee-ai-field-actions {
+	display: inline-flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.mr-tee-ai-upload-btn,
+.mr-tee-editor-container .mr-tee-ai-upload-btn {
+	background: #f8fafc;
+	color: #1e293b;
+	border: 1.5px solid #cbd5e1;
+}
+
+.mr-tee-ai-upload-btn:hover,
+.mr-tee-editor-container .mr-tee-ai-upload-btn:hover {
+	background: #f1f5f9;
+	border-color: #94a3b8;
+	color: #0f172a;
+}
+
+.mr-tee-ai-upload-btn:disabled,
+.mr-tee-editor-container .mr-tee-ai-upload-btn:disabled {
+	opacity: 0.55;
+	cursor: not-allowed;
+}
+
+.mr-tee-ai-generate-btn,
+.mr-tee-editor-container .mr-tee-ai-generate-btn {
+	width: auto;
+	height: auto;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: 5px;
+	background: linear-gradient(135deg, #6d28d9 0%, #4f46e5 100%);
+	color: #ffffff;
+	border: 1.5px solid #5b21b6;
+	border-radius: 99px;
+	padding: 6px 14px;
+	font-size: 12px;
+	font-weight: 700;
+	cursor: pointer;
+	line-height: 1.2;
+	white-space: nowrap;
+	box-shadow: 0 2px 6px rgba(109, 40, 217, 0.22);
+	transition: filter 0.15s ease, transform 0.1s ease, opacity 0.15s ease;
+}
+
+.mr-tee-ai-generate-btn:hover:not(:disabled),
+.mr-tee-editor-container .mr-tee-ai-generate-btn:hover:not(:disabled) {
+	background: linear-gradient(135deg, #5b21b6 0%, #4338ca 100%);
+	border-color: #4c1d95;
+	color: #ffffff;
+	filter: brightness(1.04);
+	box-shadow: 0 3px 10px rgba(109, 40, 217, 0.3);
+}
+
+.mr-tee-ai-generate-btn:focus-visible,
+.mr-tee-editor-container .mr-tee-ai-generate-btn:focus-visible {
+	outline: 2px solid #6d28d9;
+	outline-offset: 2px;
+}
+
+.mr-tee-ai-generate-btn:disabled,
+.mr-tee-editor-container .mr-tee-ai-generate-btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+	box-shadow: none;
+	filter: grayscale(0.2);
+}
+
+.mr-tee-ai-spinner {
+	display: inline-block;
+	width: 12px;
+	height: 12px;
+	border: 2px solid rgba(255, 255, 255, 0.35);
+	border-top-color: #ffffff;
+	border-radius: 50%;
+	animation: mrTeeAiSpin 0.7s linear infinite;
+	flex-shrink: 0;
+}
+
+@keyframes mrTeeAiSpin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+/* Subtle live mockup shimmer while generating an AI design */
+.mr-tee-gallery-stage.is-ai-generating::after,
+.mr-tee-ded-slide-inner.is-ai-generating::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	z-index: 25;
+	background: linear-gradient(
+		110deg,
+		rgba(124, 58, 237, 0) 30%,
+		rgba(124, 58, 237, 0.14) 50%,
+		rgba(124, 58, 237, 0) 70%
+	);
+	background-size: 220% 100%;
+	animation: mrTeeAiStageShimmer 1.35s ease-in-out infinite;
+}
+
+@keyframes mrTeeAiStageShimmer {
+	0% {
+		background-position: 120% 0;
+	}
+	100% {
+		background-position: -120% 0;
+	}
+}
+
+@media (max-width: 640px) {
+	.mr-tee-ai-field-actions {
+		width: 100%;
+		flex-wrap: nowrap;
+		justify-content: stretch;
+		gap: 6px;
+	}
+
+	.mr-tee-ai-upload-btn,
+	.mr-tee-editor-container .mr-tee-ai-upload-btn,
+	.mr-tee-ai-generate-btn,
+	.mr-tee-editor-container .mr-tee-ai-generate-btn {
+		flex: 1 1 0;
+		min-width: 0;
+		min-height: 38px;
+		padding: 8px 10px;
+		font-size: 12.5px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+
+	.mr-tee-ai-reset-btn,
+	.mr-tee-editor-container .mr-tee-ai-reset-btn {
+		flex: 0 0 36px;
+		width: 36px;
+		height: 36px;
+	}
+}
+
+

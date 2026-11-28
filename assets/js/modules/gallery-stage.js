@@ -12,8 +12,8 @@
  * @package MrTeeEditor\Assets\Modules
  */
 
-import { DedicatedGallery } from './dedicated-gallery.js?v=2.6.0';
-import { SvgRenderer } from './svg-renderer.js?v=2.6.0';
+import { DedicatedGallery } from './dedicated-gallery.js?v=2.7.1';
+import { SvgRenderer } from './svg-renderer.js?v=2.7.1';
 
 export class GalleryStage {
 	constructor(config, options = {}) {
@@ -123,7 +123,7 @@ export class GalleryStage {
 			return Promise.resolve(this._legacyController);
 		}
 		if (!this._legacyLoadPromise) {
-			this._legacyLoadPromise = import('./legacy-gallery-stage.js?v=2.6.0')
+			this._legacyLoadPromise = import('./legacy-gallery-stage.js?v=2.7.1')
 				.then((mod) => {
 					const LegacyCls = mod && mod.LegacyGalleryStage;
 					if (!LegacyCls) return null;

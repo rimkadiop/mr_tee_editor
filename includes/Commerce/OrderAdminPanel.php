@@ -360,7 +360,7 @@ class OrderAdminPanel {
 					continue;
 				}
 				$sid      = ! empty( $line['sideId'] ) ? (string) $line['sideId'] : ( ! empty( $line['side_id'] ) ? (string) $line['side_id'] : $primary_id );
-				$is_image = isset( $line['fieldType'] ) && 'image' === $line['fieldType'];
+				$is_image = isset( $line['fieldType'] ) && in_array( $line['fieldType'], array( 'image', 'ai_image' ), true );
 				if ( $is_image ) {
 					if ( ! empty( $line['imageUrl'] ) ) {
 						$active_sides[ $sid ] = true;
@@ -447,7 +447,7 @@ class OrderAdminPanel {
 	}
 
 	/**
-	 * Extract customer-uploaded image fields from order item payload (strictly same-site URLs only).
+	 * Extract customer-uploaded and AI-generated image fields from order item payload (strictly same-site URLs only).
 	 *
 	 * @param array<string, mixed> $data Order item _mr_tee_editor_data.
 	 * @return array<int, array<string, string>>
@@ -456,7 +456,7 @@ class OrderAdminPanel {
 		$images = array();
 		if ( ! empty( $data['payload']['text_lines'] ) && is_array( $data['payload']['text_lines'] ) ) {
 			foreach ( $data['payload']['text_lines'] as $idx => $line ) {
-				if ( isset( $line['fieldType'] ) && 'image' === $line['fieldType'] && ! empty( $line['imageUrl'] ) ) {
+				if ( isset( $line['fieldType'] ) && in_array( $line['fieldType'], array( 'image', 'ai_image' ), true ) && ! empty( $line['imageUrl'] ) ) {
 					$url = self::sanitize_same_site_url( (string) $line['imageUrl'] );
 					if ( '' !== $url ) {
 						$images[] = array(

@@ -340,6 +340,19 @@ class ProductPageRenderer {
 	 * @return array<string, array<string, mixed>>
 	 */
 	private static function resolve_allowed_fonts_for_config( array $config ) {
+		$has_text_or_rep = ! empty( $config['repeater']['enabled'] );
+		if ( ! $has_text_or_rep && ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
+			foreach ( $config['text_lines'] as $tl ) {
+				if ( is_array( $tl ) && ( ! isset( $tl['field_type'] ) || ! SceneGraphSchema::is_image_field_type( $tl['field_type'] ) ) ) {
+					$has_text_or_rep = true;
+					break;
+				}
+			}
+		}
+		if ( ! $has_text_or_rep ) {
+			return array();
+		}
+
 		$all_fonts        = FontRegistry::get_fonts();
 		$allowed_font_ids = array();
 
@@ -353,7 +366,7 @@ class ProductPageRenderer {
 
 		if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
 			foreach ( $config['text_lines'] as $tl ) {
-				if ( ! is_array( $tl ) || ( isset( $tl['field_type'] ) && 'image' === $tl['field_type'] ) ) {
+				if ( ! is_array( $tl ) || ( isset( $tl['field_type'] ) && SceneGraphSchema::is_image_field_type( $tl['field_type'] ) ) ) {
 					continue;
 				}
 				if ( ! empty( $tl['font'] ) && is_string( $tl['font'] ) && ! in_array( $tl['font'], $allowed_font_ids, true ) ) {
@@ -503,7 +516,7 @@ class ProductPageRenderer {
 			if ( '' !== $slide0_side_id && $line_side !== $slide0_side_id ) {
 				continue;
 			}
-			if ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) {
+			if ( isset( $line['field_type'] ) && SceneGraphSchema::is_image_field_type( $line['field_type'] ) ) {
 				$preload_img = ! empty( $line['default_image_preview'] )
 					? (string) $line['default_image_preview']
 					: ( ! empty( $line['default_image'] ) ? (string) $line['default_image'] : '' );
@@ -611,7 +624,8 @@ class ProductPageRenderer {
 		$filtered_fonts = self::resolve_allowed_fonts_for_config( $config );
 
 		// Strip server-only & unused registry bloat before localizing to storefront HTML
-		$localized_config = $config;
+		// (CRITICAL: removes hidden admin AI prompts, hidden reference images, and model IDs)
+		$localized_config = SceneGraphSchema::strip_private_ai_fields( $config );
 		unset(
 			$localized_config['fonts'],
 			$localized_config['color_sets'],
@@ -705,7 +719,7 @@ class ProductPageRenderer {
 		$slide0_ot_chars_by_font = array();
 		if ( ! empty( $config['text_lines'] ) && is_array( $config['text_lines'] ) ) {
 			foreach ( $config['text_lines'] as $line ) {
-				if ( ! is_array( $line ) || ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) ) {
+				if ( ! is_array( $line ) || ( isset( $line['field_type'] ) && SceneGraphSchema::is_image_field_type( $line['field_type'] ) ) ) {
 					continue;
 				}
 				$line_side = ! empty( $line['side_id'] ) ? (string) $line['side_id'] : 'front';
@@ -818,6 +832,19 @@ class ProductPageRenderer {
 				'imageDefault'      => __( 'Image par défaut', 'mr-tee-editor' ),
 				'imageEmpty'        => __( 'Aucune image sélectionnée', 'mr-tee-editor' ),
 				'imageUploadError'  => __( 'Erreur lors du chargement de l\'image.', 'mr-tee-editor' ),
+				'aiImportPhoto'     => __( 'Importer une image', 'mr-tee-editor' ),
+				'aiChangePhoto'     => __( 'Changer la photo', 'mr-tee-editor' ),
+				'aiGenerate'        => __( 'Générer', 'mr-tee-editor' ),
+				'aiRegenerate'      => __( 'Régénérer', 'mr-tee-editor' ),
+				'aiGenerating'      => __( 'Génération...', 'mr-tee-editor' ),
+				'aiInitialHint'     => __( 'Importez votre image puis cliquez sur Générer', 'mr-tee-editor' ),
+				'aiPhotoReady'      => __( 'Photo prête — cliquez sur Générer', 'mr-tee-editor' ),
+				'aiGeneratingStatus'=> __( 'Génération de votre aperçu en cours...', 'mr-tee-editor' ),
+				'aiFinalizing'      => __( 'Finalisation de votre image...', 'mr-tee-editor' ),
+				'aiReady'           => __( 'Aperçu prêt !', 'mr-tee-editor' ),
+				'aiInvalidType'     => __( 'Format non pris en charge (utilisez PNG, JPG ou WebP).', 'mr-tee-editor' ),
+				'aiError'           => __( 'Impossible de générer l\'image. Veuillez réessayer.', 'mr-tee-editor' ),
+				'aiTimeout'         => __( 'La génération a expiré. Veuillez réessayer.', 'mr-tee-editor' ),
 				'imageInvalidType'  => __( 'Format d\'image non pris en charge (PNG, JPG, WebP, GIF, SVG).', 'mr-tee-editor' ),
 				'imageTooLarge'     => __( 'L\'image dépasse la taille maximale autorisée (15 Mo).', 'mr-tee-editor' ),
 				'preparingOrder'    => __( 'Préparation...', 'mr-tee-editor' ),
@@ -1098,12 +1125,72 @@ class ProductPageRenderer {
 
 						<?php foreach ( $side_lines as $idx => $line ) : ?>
 							<?php
-							$field_id       = 'mr_tee_line_' . $idx;
-							$line_side_id   = ! empty( $line['side_id'] ) ? sanitize_key( $line['side_id'] ) : 'front';
-							$display_label  = $has_multiple_sides
+							$field_id          = 'mr_tee_line_' . $idx;
+							$line_side_id      = ! empty( $line['side_id'] ) ? sanitize_key( $line['side_id'] ) : 'front';
+							$display_label     = $has_multiple_sides
 								? self::clean_field_label_for_side( $line['label'], $line_side_id )
 								: (string) $line['label'];
-							$is_image_field = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] );
+							$norm_field_type   = SceneGraphSchema::normalize_field_type( isset( $line['field_type'] ) ? $line['field_type'] : 'text' );
+							$is_ai_image_field = ( 'ai_image' === $norm_field_type );
+							$is_image_field    = ( 'image' === $norm_field_type );
+
+							if ( $is_ai_image_field ) :
+								$default_img       = ! empty( $line['default_image'] ) ? $line['default_image'] : '';
+								$default_img_thumb = ! empty( $line['default_image_thumb'] ) ? $line['default_image_thumb'] : $default_img;
+								$ai_btn_label      = ! empty( $line['ai_button_label'] ) ? (string) $line['ai_button_label'] : __( 'Générer', 'mr-tee-editor' );
+								$ai_status         = __( 'Importez votre image puis cliquez sur Générer', 'mr-tee-editor' );
+								?>
+								<div class="mr-tee-field-group mr-tee-field-group-image mr-tee-field-group-ai-image<?php echo ( $has_multiple_sides && $is_first_side ) ? ' is-active-side' : ''; ?>" data-line-index="<?php echo esc_attr( $idx ); ?>" data-line-id="<?php echo esc_attr( $line['id'] ); ?>" data-field-type="ai_image" data-side-id="<?php echo esc_attr( $line_side_id ); ?>">
+									<div
+										class="mr-tee-image-field-card mr-tee-ai-field-card"
+										data-field-id="<?php echo esc_attr( $line['id'] ); ?>"
+										data-ref-id="<?php echo esc_attr( $line['ref_id'] ); ?>"
+										data-default-image="<?php echo esc_attr( $default_img ); ?>"
+										data-default-thumb="<?php echo esc_attr( $default_img_thumb ); ?>"
+										data-warning="<?php echo ! empty( $line['warning_unedited'] ) ? '1' : '0'; ?>"
+									>
+										<div class="mr-tee-image-field-main mr-tee-ai-field-main">
+											<div class="mr-tee-img-field-thumb <?php echo $default_img ? '' : 'is-empty'; ?>">
+												<?php if ( $default_img ) : ?>
+													<img src="<?php echo esc_url( $default_img_thumb ); ?>" alt="<?php echo esc_attr( $display_label ); ?>" width="44" height="44" loading="lazy" decoding="async" />
+												<?php else : ?>
+													<span class="mr-tee-img-field-placeholder-icon" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8L20 10.7l-5.8 1.9L12 18.5l-1.9-5.9L4 10.7l6.1-1.9L12 3z"/><path d="M5 3v4"/><path d="M3 5h4"/><path d="M19 17v4"/><path d="M17 19h4"/></svg></span>
+												<?php endif; ?>
+											</div>
+											<div class="mr-tee-img-field-info">
+												<div class="mr-tee-img-field-label" title="<?php echo esc_attr( $line['label'] ); ?>">
+													<?php echo esc_html( $display_label ); ?>
+												</div>
+												<div class="mr-tee-img-field-status"><?php echo esc_html( $ai_status ); ?></div>
+											</div>
+											<div class="mr-tee-img-field-actions mr-tee-ai-field-actions">
+												<input
+													type="file"
+													id="<?php echo esc_attr( $field_id ); ?>"
+													class="mr-tee-ai-file-input"
+													accept="image/png,image/jpeg,image/webp"
+													data-line-index="<?php echo esc_attr( $idx ); ?>"
+													data-ref-id="<?php echo esc_attr( $line['ref_id'] ); ?>"
+													data-default-image="<?php echo esc_attr( $default_img ); ?>"
+													data-warning="<?php echo ! empty( $line['warning_unedited'] ) ? '1' : '0'; ?>"
+													style="display:none;"
+												/>
+												<button type="button" class="mr-tee-image-upload-btn mr-tee-ai-upload-btn" data-target-input="<?php echo esc_attr( $field_id ); ?>">
+													<?php esc_html_e( 'Importer une image', 'mr-tee-editor' ); ?>
+												</button>
+												<button type="button" class="mr-tee-ai-generate-btn" data-base-label="<?php echo esc_attr( $ai_btn_label ); ?>" disabled>
+													<svg class="mr-tee-ai-btn-sparkle" width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2l2.1 6.4L20.5 10.5l-6.4 2.1L12 19l-2.1-6.4-6.4-2.1 6.4-2.1L12 2z"/><path d="M19 15l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3z"/></svg> <?php echo esc_html( $ai_btn_label ); ?>
+												</button>
+												<button type="button" class="mr-tee-image-reset-btn mr-tee-ai-reset-btn" data-line-index="<?php echo esc_attr( $idx ); ?>" style="display:none;" title="<?php esc_attr_e( 'Revenir à l\'image par défaut', 'mr-tee-editor' ); ?>">
+													↺
+												</button>
+											</div>
+										</div>
+									</div>
+								</div>
+								<?php
+								continue;
+							endif;
 
 							if ( $is_image_field ) :
 								$default_img       = ! empty( $line['default_image'] ) ? $line['default_image'] : '';

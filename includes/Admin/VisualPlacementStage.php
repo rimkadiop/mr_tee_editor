@@ -19,6 +19,7 @@ namespace MrTeeEditor\Admin;
 
 use MrTeeEditor\Domain\SceneGraphSchema;
 use MrTeeEditor\Registry\FontRegistry;
+use MrTeeEditor\Registry\AiRegistry;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
@@ -57,7 +58,7 @@ class VisualPlacementStage {
 			$allowed_fonts = $config['allowed_fonts'];
 		} else {
 			foreach ( $text_lines as $tl ) {
-				if ( ( ! isset( $tl['field_type'] ) || 'image' !== $tl['field_type'] ) && ! empty( $tl['allowed_fonts'] ) && is_array( $tl['allowed_fonts'] ) ) {
+				if ( ( ! isset( $tl['field_type'] ) || ! SceneGraphSchema::is_image_field_type( $tl['field_type'] ) ) && ! empty( $tl['allowed_fonts'] ) && is_array( $tl['allowed_fonts'] ) ) {
 					$allowed_fonts = $tl['allowed_fonts'];
 					break;
 				}
@@ -66,7 +67,7 @@ class VisualPlacementStage {
 
 		if ( empty( $allowed_fonts ) ) {
 			foreach ( $text_lines as $tl ) {
-				if ( isset( $tl['field_type'] ) && 'image' === $tl['field_type'] ) {
+				if ( isset( $tl['field_type'] ) && SceneGraphSchema::is_image_field_type( $tl['field_type'] ) ) {
 					continue;
 				}
 				if ( ! empty( $tl['font'] ) ) {
@@ -117,8 +118,15 @@ class VisualPlacementStage {
 			);
 		}
 
-		$fonts         = FontRegistry::get_fonts();
-		$allowed_fonts = self::resolve_allowed_fonts( $config, $fonts );
+		$fonts               = FontRegistry::get_fonts();
+		$allowed_fonts       = self::resolve_allowed_fonts( $config, $fonts );
+		$ai_models           = AiRegistry::get_models();
+		$ai_default_model_id = AiRegistry::get_default_model_id();
+		$ai_default_model    = ( '' !== $ai_default_model_id && isset( $ai_models[ $ai_default_model_id ] ) ) ? $ai_models[ $ai_default_model_id ] : ( ! empty( $ai_models ) ? reset( $ai_models ) : null );
+		$ai_default_label    = ( is_array( $ai_default_model ) && ! empty( $ai_default_model['name'] ) )
+			? sprintf( __( 'Par défaut (%s)', 'mr-tee-editor' ), $ai_default_model['name'] )
+			: __( 'Par défaut (Réglages IA)', 'mr-tee-editor' );
+		$ai_has_api_key      = AiRegistry::has_api_key();
 
 		$unit       = ! empty( $config['print_unit'] ) ? $config['print_unit'] : 'cm';
 		$real_w     = isset( $config['print_real_width'] ) ? floatval( $config['print_real_width'] ) : 30.0;
@@ -534,8 +542,9 @@ class VisualPlacementStage {
 					<?php foreach ( $text_lines as $idx => $line ) : ?>
 						<?php
 						$color             = self::$field_colors[ $idx % count( self::$field_colors ) ];
-						$field_type        = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) ? 'image' : 'text';
-						$is_image          = ( 'image' === $field_type );
+						$field_type        = SceneGraphSchema::normalize_field_type( isset( $line['field_type'] ) ? $line['field_type'] : 'text' );
+						$is_ai_image       = ( 'ai_image' === $field_type );
+						$is_image          = SceneGraphSchema::is_image_field_type( $field_type );
 						$line_side_id      = ! empty( $line['side_id'] ) && isset( $sides_by_id[ $line['side_id'] ] ) ? $line['side_id'] : $default_side_id;
 						$is_on_active_side = ( $line_side_id === $first_view_side_id );
 						$view_placement    = ( $is_on_active_side && ! empty( $line['placements'][ $first_view_id ] ) && is_array( $line['placements'][ $first_view_id ] ) )
@@ -548,14 +557,16 @@ class VisualPlacementStage {
 						?>
 						<button
 							type="button"
-							class="mr-tee-field-pill <?php echo $initial_active_idx === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-pill' : ''; ?> <?php echo $is_on_active_side ? '' : 'is-other-side'; ?>"
+							class="mr-tee-field-pill <?php echo $initial_active_idx === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-pill' : ''; ?> <?php echo $is_ai_image ? 'is-ai-image-pill' : ''; ?> <?php echo $is_on_active_side ? '' : 'is-other-side'; ?>"
 							data-field-index="<?php echo esc_attr( $idx ); ?>"
 							data-field-type="<?php echo esc_attr( $field_type ); ?>"
 							data-side-id="<?php echo esc_attr( $line_side_id ); ?>"
 							style="--pill-color: <?php echo esc_attr( $color ); ?>;"
 						>
 							<span class="mr-tee-pill-badge" style="background: <?php echo esc_attr( $color ); ?>;"><?php echo esc_html( $idx + 1 ); ?></span>
-							<?php if ( $is_image ) : ?>
+							<?php if ( $is_ai_image ) : ?>
+								<span class="mr-tee-pill-type-icon" aria-hidden="true">✨</span>
+							<?php elseif ( $is_image ) : ?>
 								<span class="mr-tee-pill-type-icon" aria-hidden="true">🖼️</span>
 							<?php endif; ?>
 							<span class="mr-tee-pill-label"><?php echo esc_html( $line['label'] ); ?></span>
@@ -574,6 +585,9 @@ class VisualPlacementStage {
 					</button>
 					<button type="button" class="button button-secondary button-small mr-tee-btn-add-image-field-pill" id="mr-tee-btn-add-image-field-pill">
 						<span aria-hidden="true">🖼️</span> + <?php esc_html_e( 'Image', 'mr-tee-editor' ); ?>
+					</button>
+					<button type="button" class="button button-secondary button-small mr-tee-btn-add-ai-image-field-pill" id="mr-tee-btn-add-ai-image-field-pill">
+						<span aria-hidden="true">✨</span> + <?php esc_html_e( 'Image IA', 'mr-tee-editor' ); ?>
 					</button>
 				</div>
 			</div>
@@ -636,8 +650,9 @@ class VisualPlacementStage {
 							<?php foreach ( $text_lines as $idx => $line ) : ?>
 								<?php
 								$color             = self::$field_colors[ $idx % count( self::$field_colors ) ];
-								$field_type        = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) ? 'image' : 'text';
-								$is_image          = ( 'image' === $field_type );
+								$field_type        = SceneGraphSchema::normalize_field_type( isset( $line['field_type'] ) ? $line['field_type'] : 'text' );
+								$is_ai_image       = ( 'ai_image' === $field_type );
+								$is_image          = SceneGraphSchema::is_image_field_type( $field_type );
 								$line_side_id      = ! empty( $line['side_id'] ) && isset( $sides_by_id[ $line['side_id'] ] ) ? $line['side_id'] : $default_side_id;
 								$is_on_active_side = ( $line_side_id === $first_view_side_id );
 								$view_placement    = ( $is_on_active_side && ! empty( $line['placements'][ $first_view_id ] ) && is_array( $line['placements'][ $first_view_id ] ) )
@@ -649,17 +664,18 @@ class VisualPlacementStage {
 								$bh                = ( $view_placement && isset( $view_placement['box_height'] ) ) ? floatval( $view_placement['box_height'] ) : ( isset( $line['box_height'] ) ? floatval( $line['box_height'] ) : ( $is_image ? 30.0 : 8.5 ) );
 								$br                = ( $view_placement && isset( $view_placement['box_rotate'] ) ) ? floatval( $view_placement['box_rotate'] ) : ( isset( $line['box_rotate'] ) ? floatval( $line['box_rotate'] ) : 0.0 );
 								$badge_classes     = ( $bt < 8.0 ? ' is-badge-bottom' : '' ) . ( ( $bt + $bh ) > 92.0 ? ' is-badge-inside' : '' );
+								$box_icon          = $is_ai_image ? '✨ ' : ( $is_image ? '🖼️ ' : '' );
 								?>
 								<div
 									id="mr-tee-field-box-<?php echo esc_attr( $idx ); ?>"
-									class="mr-tee-field-box <?php echo $initial_active_idx === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-field' : ''; ?> <?php echo $is_on_active_side ? '' : 'is-other-side'; ?><?php echo esc_attr( $badge_classes ); ?>"
+									class="mr-tee-field-box <?php echo $initial_active_idx === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-field' : ''; ?> <?php echo $is_ai_image ? 'is-ai-image-field' : ''; ?> <?php echo $is_on_active_side ? '' : 'is-other-side'; ?><?php echo esc_attr( $badge_classes ); ?>"
 									data-field-index="<?php echo esc_attr( $idx ); ?>"
 									data-field-type="<?php echo esc_attr( $field_type ); ?>"
 									data-side-id="<?php echo esc_attr( $line_side_id ); ?>"
 									style="<?php echo $is_on_active_side ? '' : 'display:none; '; ?>left: <?php echo esc_attr( $bl ); ?>%; top: <?php echo esc_attr( $bt ); ?>%; width: <?php echo esc_attr( $bw ); ?>%; height: <?php echo esc_attr( $bh ); ?>%; transform: rotate(<?php echo esc_attr( $br ); ?>deg); transform-origin: center center; --field-color: <?php echo esc_attr( $color ); ?>;"
 								>
 									<span class="mr-tee-box-badge" style="background: <?php echo esc_attr( $color ); ?>;">
-										<?php echo esc_html( ( $idx + 1 ) . '. ' . ( $is_image ? '🖼️ ' : '' ) . $line['label'] ); ?>
+										<?php echo esc_html( ( $idx + 1 ) . '. ' . $box_icon . $line['label'] ); ?>
 									</span>
 									<div class="mr-tee-box-svg-holder" id="mr-tee-box-svg-<?php echo esc_attr( $idx ); ?>">
 										<!-- Live SVG rendered by admin JS engine -->
@@ -698,8 +714,10 @@ class VisualPlacementStage {
 						<?php foreach ( $text_lines as $idx => $line ) : ?>
 							<?php
 							$color             = self::$field_colors[ $idx % count( self::$field_colors ) ];
-							$field_type        = ( isset( $line['field_type'] ) && 'image' === $line['field_type'] ) ? 'image' : 'text';
-							$is_image          = ( 'image' === $field_type );
+							$field_type        = SceneGraphSchema::normalize_field_type( isset( $line['field_type'] ) ? $line['field_type'] : 'text' );
+							$is_ai_image       = ( 'ai_image' === $field_type );
+							$is_image          = SceneGraphSchema::is_image_field_type( $field_type );
+							$is_plain_image    = ( 'image' === $field_type );
 							$line_side_id      = ! empty( $line['side_id'] ) && isset( $sides_by_id[ $line['side_id'] ] ) ? $line['side_id'] : $default_side_id;
 							$is_on_active_side = ( $line_side_id === $first_view_side_id );
 							$base_box          = array(
@@ -725,8 +743,16 @@ class VisualPlacementStage {
 							$image_fit         = ( isset( $line['image_fit'] ) && 'cover' === $line['image_fit'] ) ? 'cover' : 'contain';
 							$allow_upload      = ! isset( $line['allow_image_upload'] ) || ! empty( $line['allow_image_upload'] );
 
+							$ai_model          = ! empty( $line['ai_model'] ) ? sanitize_key( (string) $line['ai_model'] ) : '';
+							$ai_prompt         = isset( $line['ai_prompt'] ) ? (string) $line['ai_prompt'] : '';
+							$ai_use_def_as_ref = isset( $line['ai_use_default_as_ref'] ) ? ! empty( $line['ai_use_default_as_ref'] ) : false;
+							$ai_ref_images     = ( ! empty( $line['ai_reference_images'] ) && is_array( $line['ai_reference_images'] ) ) ? array_values( $line['ai_reference_images'] ) : array();
+							$ai_size_mode      = ( isset( $line['ai_size_mode'] ) && 'match_reference' === $line['ai_size_mode'] ) ? 'match_reference' : 'auto_box';
+							$ai_remove_bg      = ! empty( $line['ai_remove_bg'] );
+							$ai_button_label   = ! empty( $line['ai_button_label'] ) ? (string) $line['ai_button_label'] : __( 'Générer', 'mr-tee-editor' );
+
 							$field_uid           = ! empty( $line['id'] ) ? $line['id'] : 'line_' . ( $idx + 1 );
-							$field_ref_id        = ! empty( $line['ref_id'] ) ? $line['ref_id'] : ( 'id-ref-' . ( $is_image ? 'image' : 'text' ) . '-line-' . ( $idx + 1 ) );
+							$field_ref_id        = ! empty( $line['ref_id'] ) ? $line['ref_id'] : ( 'id-ref-' . ( $is_ai_image ? 'ai-image' : ( $is_image ? 'image' : 'text' ) ) . '-line-' . ( $idx + 1 ) );
 							$field_color_ref     = ! empty( $line['color_ref_id'] ) ? $line['color_ref_id'] : 'id-ref-color-line-' . ( $idx + 1 );
 							$placements_json_val = empty( $line_placements ) ? '{}' : wp_json_encode( $line_placements );
 
@@ -742,9 +768,12 @@ class VisualPlacementStage {
 								$line_color_hex = '#111827';
 							}
 							$allow_color_pick = ! isset( $line['allow_color_pick'] ) || ! empty( $line['allow_color_pick'] );
+
+							$admin_ref_total = ( $ai_use_def_as_ref && '' !== $def_img_url ? 1 : 0 ) + count( $ai_ref_images );
+							$client_img_num  = $admin_ref_total + 1;
 							?>
 							<div
-								class="mr-tee-field-panel <?php echo $initial_active_idx === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-panel' : ''; ?>"
+								class="mr-tee-field-panel <?php echo $initial_active_idx === $idx ? 'is-active' : ''; ?> <?php echo $is_image ? 'is-image-panel' : ''; ?> <?php echo $is_ai_image ? 'is-ai-image-panel' : ''; ?>"
 								id="mr-tee-field-panel-<?php echo esc_attr( $idx ); ?>"
 								data-field-index="<?php echo esc_attr( $idx ); ?>"
 								data-field-type="<?php echo esc_attr( $field_type ); ?>"
@@ -791,6 +820,7 @@ class VisualPlacementStage {
 											>
 												<option value="text" <?php selected( $field_type, 'text' ); ?>><?php esc_html_e( '📝 Champ Texte', 'mr-tee-editor' ); ?></option>
 												<option value="image" <?php selected( $field_type, 'image' ); ?>><?php esc_html_e( '🖼️ Champ Image', 'mr-tee-editor' ); ?></option>
+												<option value="ai_image" <?php selected( $field_type, 'ai_image' ); ?>><?php esc_html_e( '✨ Champ Image IA', 'mr-tee-editor' ); ?></option>
 											</select>
 										</td>
 									</tr>
@@ -810,9 +840,9 @@ class VisualPlacementStage {
 										</td>
 									</tr>
 
-									<!-- Image Field Specific Controls -->
+									<!-- Image & AI Image Shared Controls -->
 									<tr class="mr-tee-row-image-only" <?php echo $is_image ? '' : 'style="display:none;"'; ?>>
-										<th><label for="mr_tee_field_default_image_<?php echo esc_attr( $idx ); ?>" class="mr-tee-lbl-default-image"><?php esc_html_e( 'Image', 'mr-tee-editor' ); ?></label></th>
+										<th><label for="mr_tee_field_default_image_<?php echo esc_attr( $idx ); ?>" class="mr-tee-lbl-default-image"><?php echo $is_ai_image ? esc_html__( 'Aperçu par défaut', 'mr-tee-editor' ) : esc_html__( 'Image', 'mr-tee-editor' ); ?></label></th>
 										<td>
 											<div class="mr-tee-default-img-picker" data-field-index="<?php echo esc_attr( $idx ); ?>">
 												<div class="mr-tee-default-img-preview-wrap">
@@ -870,6 +900,156 @@ class VisualPlacementStage {
 												<option value="contain" <?php selected( $image_fit, 'contain' ); ?>><?php esc_html_e( 'Entier (Contain — sans rogner)', 'mr-tee-editor' ); ?></option>
 												<option value="cover" <?php selected( $image_fit, 'cover' ); ?>><?php esc_html_e( 'Remplir (Cover — recadré)', 'mr-tee-editor' ); ?></option>
 											</select>
+										</td>
+									</tr>
+
+									<!-- AI Image Specific Controls (Server-side only — NEVER visible to storefront shopper) -->
+									<tr class="mr-tee-row-ai-only" <?php echo $is_ai_image ? '' : 'style="display:none;"'; ?>>
+										<th><label for="mr_tee_field_ai_model_<?php echo esc_attr( $idx ); ?>" class="mr-tee-lbl-ai-model"><?php esc_html_e( 'Modèle IA', 'mr-tee-editor' ); ?></label></th>
+										<td>
+											<div class="mr-tee-ai-model-select-row">
+												<select
+													id="mr_tee_field_ai_model_<?php echo esc_attr( $idx ); ?>"
+													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][ai_model]"
+													class="mr-tee-field-ai-model"
+													data-field-index="<?php echo esc_attr( $idx ); ?>"
+												>
+													<option value=""><?php echo esc_html( $ai_default_label ); ?></option>
+													<?php foreach ( $ai_models as $m_id => $m ) : ?>
+														<option value="<?php echo esc_attr( $m_id ); ?>" <?php selected( $ai_model, $m_id ); ?>>
+															<?php echo esc_html( $m['name'] . ' [' . $m['air_id'] . ']' ); ?>
+														</option>
+													<?php endforeach; ?>
+												</select>
+												<button type="button" class="button button-small mr-tee-btn-open-ai-manager-tab" title="<?php esc_attr_e( 'Gérer la clé API et les modèles IA', 'mr-tee-editor' ); ?>">
+													✨ <?php esc_html_e( 'Gérer', 'mr-tee-editor' ); ?>
+												</button>
+											</div>
+											<?php if ( ! $ai_has_api_key ) : ?>
+												<p class="description mr-tee-ai-key-warn">
+													<?php esc_html_e( '⚠️ Aucune clé API Runware configurée. Ouvrez l\'onglet ✨ IA pour l\'ajouter.', 'mr-tee-editor' ); ?>
+												</p>
+											<?php endif; ?>
+										</td>
+									</tr>
+									<tr class="mr-tee-row-ai-only" <?php echo $is_ai_image ? '' : 'style="display:none;"'; ?>>
+										<th><span><?php esc_html_e( 'Références IA', 'mr-tee-editor' ); ?></span></th>
+										<td>
+											<div class="mr-tee-ai-refs-box" data-field-index="<?php echo esc_attr( $idx ); ?>">
+												<label class="mr-tee-ai-use-default-ref-label">
+													<input type="hidden" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][ai_use_default_as_ref]" value="0" />
+													<input
+														type="checkbox"
+														name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][ai_use_default_as_ref]"
+														value="1"
+														class="mr-tee-field-ai-use-def-ref"
+														data-field-index="<?php echo esc_attr( $idx ); ?>"
+														<?php checked( $ai_use_def_as_ref ); ?>
+													/>
+													<?php esc_html_e( 'Utiliser l\'aperçu par défaut comme Image 1', 'mr-tee-editor' ); ?>
+												</label>
+												<input
+													type="hidden"
+													name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][ai_reference_images]"
+													value="<?php echo esc_attr( wp_json_encode( $ai_ref_images ) ); ?>"
+													class="mr-tee-field-ai-refs-json"
+													data-field-index="<?php echo esc_attr( $idx ); ?>"
+												/>
+												<div class="mr-tee-ai-refs-strip" data-field-index="<?php echo esc_attr( $idx ); ?>">
+													<?php
+													$ref_num_offset = ( $ai_use_def_as_ref && '' !== $def_img_url ) ? 1 : 0;
+													foreach ( $ai_ref_images as $r_idx => $r_item ) :
+														$r_url = ! empty( $r_item['url'] ) ? SceneGraphSchema::normalize_url_scheme( (string) $r_item['url'] ) : '';
+														if ( '' === $r_url ) {
+															continue;
+														}
+														?>
+														<div class="mr-tee-ai-ref-thumb" data-ref-index="<?php echo esc_attr( $r_idx ); ?>">
+															<img src="<?php echo esc_url( $r_url ); ?>" alt="" loading="lazy" decoding="async" />
+															<span class="mr-tee-ai-ref-badge">#<?php echo esc_html( $ref_num_offset + $r_idx + 1 ); ?></span>
+															<button type="button" class="mr-tee-ai-ref-remove" data-field-index="<?php echo esc_attr( $idx ); ?>" data-ref-index="<?php echo esc_attr( $r_idx ); ?>" aria-label="<?php esc_attr_e( 'Retirer cette référence', 'mr-tee-editor' ); ?>">&times;</button>
+														</div>
+													<?php endforeach; ?>
+												</div>
+												<div class="mr-tee-ai-refs-actions">
+													<button type="button" class="button button-small mr-tee-btn-add-ai-ref" data-field-index="<?php echo esc_attr( $idx ); ?>">
+														<span aria-hidden="true">📁</span> <?php esc_html_e( '+ Référence IA', 'mr-tee-editor' ); ?>
+													</button>
+													<span class="description"><?php esc_html_e( 'Cachée au client.', 'mr-tee-editor' ); ?></span>
+												</div>
+											</div>
+										</td>
+									</tr>
+									<tr class="mr-tee-row-ai-only" <?php echo $is_ai_image ? '' : 'style="display:none;"'; ?>>
+										<th><label for="mr_tee_field_ai_prompt_<?php echo esc_attr( $idx ); ?>" class="mr-tee-lbl-ai-prompt"><?php esc_html_e( 'Prompt IA', 'mr-tee-editor' ); ?></label></th>
+										<td>
+											<div class="mr-tee-ai-prompt-legend" data-field-index="<?php echo esc_attr( $idx ); ?>">
+												<?php if ( $admin_ref_total > 0 ) : ?>
+													<span class="mr-tee-ai-legend-pill"><?php echo esc_html( 1 === $admin_ref_total ? __( 'Image 1 = Référence admin', 'mr-tee-editor' ) : sprintf( __( 'Images 1–%d = Références admin', 'mr-tee-editor' ), $admin_ref_total ) ); ?></span>
+												<?php endif; ?>
+												<span class="mr-tee-ai-legend-pill is-client"><?php echo esc_html( sprintf( __( 'Image %d = Photo importée par le client', 'mr-tee-editor' ), $client_img_num ) ); ?></span>
+											</div>
+											<textarea
+												rows="3"
+												id="mr_tee_field_ai_prompt_<?php echo esc_attr( $idx ); ?>"
+												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][ai_prompt]"
+												class="large-text mr-tee-field-ai-prompt"
+												data-field-index="<?php echo esc_attr( $idx ); ?>"
+												placeholder="<?php esc_attr_e( 'Ex : Swap the person wearing the blue t-shirt in image 1 with the person in image 2. Keep the celebrity, pose, lighting and background identical.', 'mr-tee-editor' ); ?>"
+											><?php echo esc_textarea( $ai_prompt ); ?></textarea>
+											<p class="description"><?php esc_html_e( 'Caché au client. Utilisez « image 1 », « image 2 » (ou {{customer_image}}) pour désigner chaque photo.', 'mr-tee-editor' ); ?></p>
+										</td>
+									</tr>
+									<tr class="mr-tee-row-ai-only" <?php echo $is_ai_image ? '' : 'style="display:none;"'; ?>>
+										<th><label for="mr_tee_field_ai_size_mode_<?php echo esc_attr( $idx ); ?>" class="mr-tee-lbl-ai-size-mode"><?php esc_html_e( 'Cadrage IA', 'mr-tee-editor' ); ?></label></th>
+										<td>
+											<select
+												id="mr_tee_field_ai_size_mode_<?php echo esc_attr( $idx ); ?>"
+												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][ai_size_mode]"
+												class="mr-tee-field-ai-size-mode"
+												data-field-index="<?php echo esc_attr( $idx ); ?>"
+											>
+												<option value="auto_box" <?php selected( $ai_size_mode, 'auto_box' ); ?>><?php esc_html_e( 'Adapter automatiquement à la zone définie', 'mr-tee-editor' ); ?></option>
+												<option value="match_reference" <?php selected( $ai_size_mode, 'match_reference' ); ?>><?php esc_html_e( 'Conserver le format de l\'image de référence', 'mr-tee-editor' ); ?></option>
+											</select>
+											<div class="mr-tee-ai-suboptions">
+												<label class="mr-tee-inline-check">
+													<input type="hidden" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][ai_remove_bg]" value="0" />
+													<input
+														type="checkbox"
+														name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][ai_remove_bg]"
+														value="1"
+														class="mr-tee-field-ai-remove-bg"
+														data-field-index="<?php echo esc_attr( $idx ); ?>"
+														<?php checked( $ai_remove_bg ); ?>
+													/>
+													<?php esc_html_e( 'Détourer automatiquement le fond (PNG transparent)', 'mr-tee-editor' ); ?>
+												</label>
+											</div>
+										</td>
+									</tr>
+									<tr class="mr-tee-row-ai-only" <?php echo $is_ai_image ? '' : 'style="display:none;"'; ?>>
+										<th><label for="mr_tee_field_ai_btn_label_<?php echo esc_attr( $idx ); ?>" class="mr-tee-lbl-ai-btn-label"><?php esc_html_e( 'Bouton client', 'mr-tee-editor' ); ?></label></th>
+										<td>
+											<input
+												type="text"
+												id="mr_tee_field_ai_btn_label_<?php echo esc_attr( $idx ); ?>"
+												name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][ai_button_label]"
+												value="<?php echo esc_attr( $ai_button_label ); ?>"
+												class="regular-text mr-tee-field-ai-btn-label"
+												data-field-index="<?php echo esc_attr( $idx ); ?>"
+												placeholder="<?php esc_attr_e( 'Générer', 'mr-tee-editor' ); ?>"
+											/>
+											<div class="mr-tee-ai-admin-test-row" data-field-index="<?php echo esc_attr( $idx ); ?>">
+												<label class="button button-small">
+													<span>📷 <?php esc_html_e( 'Photo test', 'mr-tee-editor' ); ?></span>
+													<input type="file" accept="image/png,image/jpeg,image/webp" class="screen-reader-text mr-tee-ai-admin-test-file" data-field-index="<?php echo esc_attr( $idx ); ?>" />
+												</label>
+												<button type="button" class="button button-secondary button-small mr-tee-btn-ai-admin-test" data-field-index="<?php echo esc_attr( $idx ); ?>">
+													<span aria-hidden="true">✨</span> <?php esc_html_e( 'Tester la génération', 'mr-tee-editor' ); ?>
+												</button>
+												<span class="mr-tee-ai-admin-test-status" aria-live="polite"></span>
+											</div>
 										</td>
 									</tr>
 
@@ -1034,7 +1214,7 @@ class VisualPlacementStage {
 													<?php esc_html_e( 'Autoriser retours à la ligne', 'mr-tee-editor' ); ?>
 												</label>
 											</span>
-											<span class="mr-tee-opt-image-only" <?php echo $is_image ? '' : 'style="display:none;"'; ?>>
+											<span class="mr-tee-opt-image-only" <?php echo $is_plain_image ? '' : 'style="display:none;"'; ?>>
 												<label>
 													<input type="hidden" name="mr_tee_config[text_lines][<?php echo esc_attr( $idx ); ?>][allow_image_upload]" value="0" />
 													<input

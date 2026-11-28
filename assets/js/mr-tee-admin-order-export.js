@@ -9,9 +9,9 @@
  * @package MrTeeEditor\Assets
  */
 
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.6.0';
-import { SvgRenderer } from './modules/svg-renderer.js?v=2.6.0';
-import { PrintExporter } from './modules/print-exporter.js?v=2.6.0';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.7.1';
+import { SvgRenderer } from './modules/svg-renderer.js?v=2.7.1';
+import { PrintExporter } from './modules/print-exporter.js?v=2.7.1';
 
 class MrTeeAdminOrderExporter {
 	constructor() {
@@ -290,7 +290,8 @@ class MrTeeAdminOrderExporter {
 
 		if (Array.isArray(payload.text_lines)) {
 			for (const tl of payload.text_lines) {
-				if (tl && tl.fontId) keys.add(String(tl.fontId));
+				if (!tl || tl.fieldType === 'image' || tl.fieldType === 'ai_image' || tl.field_type === 'image' || tl.field_type === 'ai_image') continue;
+				if (tl.fontId) keys.add(String(tl.fontId));
 			}
 		}
 
@@ -307,14 +308,19 @@ class MrTeeAdminOrderExporter {
 		walk(pv.references);
 		walk(pv.layers);
 
-		if (Array.isArray(config.allowed_fonts)) {
+		const hasAnyTextLine = (Array.isArray(config.text_lines) && config.text_lines.some(tl => tl && tl.field_type !== 'image' && tl.field_type !== 'ai_image'))
+			|| Boolean(config.repeater && config.repeater.enabled)
+			|| Boolean(editorData && editorData.repeater_enabled);
+
+		if (hasAnyTextLine && Array.isArray(config.allowed_fonts)) {
 			config.allowed_fonts.forEach((fid) => {
 				if (fid) keys.add(String(fid));
 			});
 		}
 		if (Array.isArray(config.text_lines)) {
 			config.text_lines.forEach((tl) => {
-				if (tl && tl.font) keys.add(String(tl.font));
+				if (!tl || tl.field_type === 'image' || tl.field_type === 'ai_image') return;
+				if (tl.font) keys.add(String(tl.font));
 			});
 		}
 

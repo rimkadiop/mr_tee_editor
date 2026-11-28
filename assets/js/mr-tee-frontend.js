@@ -8,11 +8,11 @@
  * @package MrTeeEditor\Assets
  */
 
-import { StateStore } from './modules/state-store.js?v=2.6.0';
-import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.6.0';
-import { SvgRenderer } from './modules/svg-renderer.js?v=2.6.0';
-import { GalleryStage } from './modules/gallery-stage.js?v=2.6.0';
-import { FormController } from './modules/form-controller.js?v=2.6.0';
+import { StateStore } from './modules/state-store.js?v=2.7.1';
+import { SceneGraphEngine } from './modules/scene-graph-engine.js?v=2.7.1';
+import { SvgRenderer } from './modules/svg-renderer.js?v=2.7.1';
+import { GalleryStage } from './modules/gallery-stage.js?v=2.7.1';
+import { FormController } from './modules/form-controller.js?v=2.7.1';
 
 window.mrTeeSvgRenderer = SvgRenderer;
 window.mrTeeSceneGraphEngine = SceneGraphEngine;
@@ -54,7 +54,7 @@ class MrTeeFrontendApp {
 			return this._printExporterClass;
 		}
 		if (!this._printExporterPromise) {
-			this._printExporterPromise = import('./modules/print-exporter.js?v=2.6.0')
+			this._printExporterPromise = import('./modules/print-exporter.js?v=2.7.1')
 				.then((mod) => {
 					this._printExporterClass = mod.PrintExporter;
 					window.mrTeePrintExporter = mod.PrintExporter;
@@ -625,7 +625,7 @@ class MrTeeFrontendApp {
 		const activeSideId = (activeMeta && activeMeta.sideId) ? String(activeMeta.sideId) : '';
 
 		for (const line of textLines) {
-			if (line.field_type === 'image') continue;
+			if (line.field_type === 'image' || line.field_type === 'ai_image') continue;
 			if (activeSideId && String(line.side_id || 'front') !== activeSideId) continue;
 			const activeFontId = line.font || (Array.isArray(line.allowed_fonts) && line.allowed_fonts[0]);
 			let defaultText = line.default_text || '';
@@ -656,7 +656,7 @@ class MrTeeFrontendApp {
 		const activeSideId = (activeMeta && activeMeta.sideId) ? String(activeMeta.sideId) : '';
 
 		for (const line of textLines) {
-			if (line.field_type === 'image') continue;
+			if (line.field_type === 'image' || line.field_type === 'ai_image') continue;
 			const lineSide = String(line.side_id || 'front');
 			if (activeSideId && lineSide !== activeSideId) continue;
 			const ref = (this.store && line.ref_id) ? this.store.getReference(line.ref_id) : null;
@@ -750,7 +750,7 @@ class MrTeeFrontendApp {
 		const fonts = (this.data && this.data.fonts) || {};
 		const textLines = this.config.text_lines || [];
 		for (const line of textLines) {
-			if (line.field_type === 'image') continue;
+			if (line.field_type === 'image' || line.field_type === 'ai_image') continue;
 			const activeFontId = line.font || (Array.isArray(line.allowed_fonts) && line.allowed_fonts[0]);
 			if (!activeFontId) continue;
 			const fDef = fonts[activeFontId];
@@ -866,7 +866,7 @@ class MrTeeFrontendApp {
 		const seen = new Set();
 
 		for (const line of textLines) {
-			if (line.field_type === 'image') continue;
+			if (line.field_type === 'image' || line.field_type === 'ai_image') continue;
 			const allowed = Array.isArray(line.allowed_fonts) ? line.allowed_fonts : Object.keys(fonts);
 			for (const fId of allowed) {
 				if (!fId || seen.has(fId)) continue;

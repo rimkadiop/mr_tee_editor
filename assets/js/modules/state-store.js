@@ -199,13 +199,14 @@ export class StateStore {
 	/**
 	 * Update image reference URL and track customization state.
 	 *
-	 * @param {string}      refId    Reference ID.
-	 * @param {string}      imageUrl New image URL or data URI.
-	 * @param {string}      fileName Optional uploaded file name.
-	 * @param {boolean}     isCustom Whether customer uploaded/changed from default.
-	 * @param {string|null} sideId   Optional explicit print side ID.
+	 * @param {string}      refId      Reference ID.
+	 * @param {string}      imageUrl   New full-res image URL or data URI (used for 300 DPI export).
+	 * @param {string}      fileName   Optional uploaded/generated file name.
+	 * @param {boolean}     isCustom   Whether customer uploaded/generated from default.
+	 * @param {string|null} sideId     Optional explicit print side ID.
+	 * @param {string|null} previewUrl Optional lightweight WebP preview URL for fast live rendering.
 	 */
-	setImageValue(refId, imageUrl, fileName = '', isCustom = true, sideId = null) {
+	setImageValue(refId, imageUrl, fileName = '', isCustom = true, sideId = null, previewUrl = null) {
 		const ref = this.getReference(refId);
 		if (!ref) return;
 
@@ -214,11 +215,14 @@ export class StateStore {
 		const editedProp = props.find(p => p.key === 'edited');
 		const wasEdited = Boolean(editedProp && editedProp.value);
 		const nextEdited = Boolean(isCustom);
+		const nextPreview = (previewUrl && typeof previewUrl === 'string') ? previewUrl : '';
 
-		if (ref.url === nextUrl && wasEdited === nextEdited) return;
+		if (ref.url === nextUrl && wasEdited === nextEdited && (ref.previewUrl || '') === nextPreview) return;
 
 		ref.url = nextUrl;
-		if (nextEdited || (ref._defaultUrl !== undefined && nextUrl !== ref._defaultUrl)) {
+		if (nextPreview) {
+			ref.previewUrl = nextPreview;
+		} else if (nextEdited || (ref._defaultUrl !== undefined && nextUrl !== ref._defaultUrl)) {
 			delete ref.previewUrl;
 		} else if (ref._defaultPreviewUrl) {
 			ref.previewUrl = ref._defaultPreviewUrl;
@@ -496,7 +500,9 @@ export class StateStore {
 	getExportPayload() {
 		const textLines = (this.config.text_lines || []).map(line => {
 			const ref = this.getReference(line.ref_id);
-			const fieldType = line.field_type === 'image' ? 'image' : 'text';
+			const rawFt = line.field_type || 'text';
+			const fieldType = rawFt === 'ai_image' ? 'ai_image' : (rawFt === 'image' ? 'image' : 'text');
+			const isImageLike = (fieldType === 'image' || fieldType === 'ai_image');
 			const sideId = line.side_id || line.sideId || 'front';
 			const placements = (line.placements && typeof line.placements === 'object') ? line.placements : {};
 			const boxRotate = parseFloat(line.box_rotate !== undefined ? line.box_rotate : (line.rotate !== undefined ? line.rotate : 0.0)) || 0.0;
@@ -514,21 +520,22 @@ export class StateStore {
 				boxGeometry.box_height = parseFloat(line.box_height);
 			}
 
-			if (fieldType === 'image') {
+			if (isImageLike) {
 				const props = (ref && Array.isArray(ref.customProperties)) ? ref.customProperties : [];
 				const fileProp = props.find(p => p.key === 'fileName');
 				const editedProp = props.find(p => p.key === 'edited');
 				const imageUrl = ref ? (ref.url || '') : (line.default_image || '');
 				const isEdited = Boolean(editedProp && editedProp.value);
 				const fileName = (fileProp && fileProp.value) ? fileProp.value : '';
+				const customLabel = fieldType === 'ai_image' ? 'Image IA générée' : 'Image personnalisée';
 				const displaySummary = isEdited
-					? (fileName ? `Image personnalisée (${fileName})` : 'Image personnalisée')
+					? (fileName ? `${customLabel} (${fileName})` : customLabel)
 					: (imageUrl ? 'Image par défaut' : '');
 				return {
 					id: line.id,
 					ref_id: line.ref_id || '',
 					label: line.label,
-					fieldType: 'image',
+					fieldType,
 					sideId,
 					placements,
 					value: displaySummary,

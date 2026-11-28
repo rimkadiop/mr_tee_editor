@@ -629,8 +629,10 @@ class CartIntegration {
 				if ( ! is_array( $line ) ) {
 					continue;
 				}
-				$is_image           = isset( $line['fieldType'] ) && 'image' === $line['fieldType'];
-				$line['fieldType']  = $is_image ? 'image' : 'text';
+				$raw_ft            = isset( $line['fieldType'] ) ? (string) $line['fieldType'] : 'text';
+				$is_ai_image       = ( 'ai_image' === $raw_ft );
+				$is_image          = ( 'image' === $raw_ft || $is_ai_image );
+				$line['fieldType'] = $is_ai_image ? 'ai_image' : ( $is_image ? 'image' : 'text' );
 				$line['label']      = isset( $line['label'] ) ? sanitize_text_field( (string) $line['label'] ) : '';
 				if ( isset( $line['sideId'] ) ) {
 					$line['sideId'] = substr( preg_replace( '/[^a-zA-Z0-9_-]/', '', (string) $line['sideId'] ), 0, 32 );
@@ -904,7 +906,7 @@ class CartIntegration {
 			if ( ! is_array( $line ) ) {
 				continue;
 			}
-			$is_image    = isset( $line['fieldType'] ) && 'image' === $line['fieldType'];
+			$is_image    = isset( $line['fieldType'] ) && in_array( $line['fieldType'], array( 'image', 'ai_image' ), true );
 			$raw_val     = isset( $line['value'] ) ? (string) $line['value'] : '';
 			$trimmed_val = trim( $raw_val );
 
